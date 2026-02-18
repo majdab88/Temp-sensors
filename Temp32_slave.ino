@@ -70,6 +70,10 @@ void goToSleep(int seconds) {
   esp_wifi_stop();        // Step 2: Stop WiFi radio
   delay(100);             // Step 3: Allow shutdown to settle
 
+  // Hold BOOT button while sleeping to wake the device and trigger factory reset.
+  // checkFactoryReset() in setup() handles the 3-second hold → erase pairing.
+  esp_sleep_enable_ext1_wakeup(1ULL << RESET_PIN, ESP_EXT1_WAKEUP_ANY_LOW);
+
   esp_sleep_enable_timer_wakeup((uint64_t)seconds * 1000000ULL);
   esp_deep_sleep_start(); // Step 4: Sleep
 }

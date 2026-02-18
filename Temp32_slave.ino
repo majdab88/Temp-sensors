@@ -1,0 +1,317 @@
+#include <esp_now.h>
+#include <WiFi.h>
+#include <Wire.h>
+#include <SensirionI2cSht4x.h>
+#include <Preferences.h>
+#include <esp_wifi.h>
+#include <esp_sleep.h>   // Explicit include needed on C6
+
+// --- XIAO ESP32-C6 PIN DEFINITIONS ---
+#define LED_PIN   15    // Built-in LED on XIAO ESP32-C6
+#define RESET_PIN  9    // BOOT button on XIAO ESP32-C6
+#define SDA_PIN   22    // I2C SDA (D4)
+#define SCL_PIN   23    // I2C SCL (D5)
+
+// --- SLEEP SETTINGS ---
+#define SLEEP_TIME 20   // Seconds (use 300+ for production)
+
+// --- RETRY SETTINGS ---
+#define MAX_RETRIES    5
+#define RETRY_DELAY_MS 100
+#define TX_TIMEOUT_MS  500
+
+// --- COMMUNICATION CHANNEL ---
+#define ESPNOW_CHANNEL 0  // 0 = auto-detect
+
+// --- MESSAGE TYPES ---
+#define MSG_PAIRING 1
+#define MSG_DATA    2
+
+// --- MESSAGE STRUCTURE ---
+typedef struct struct_message {
+  uint8_t msgType;
+  float temp;
+  float hum;
+} struct_message;
+
+// --- GLOBALS ---
+SensirionI2cSht4x sht4x;  // Lowercase 'c' !!
+Preferences preferences;
+esp_now_peer_info_t peerInfo;
+struct_message myData;
+
+uint8_t masterMac[6];
+bool isPaired = false;
+uint8_t broadcastAddress[] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF};
+
+volatile bool tx_success  = false;
+volatile bool tx_complete = false;
+
+// --- SAFE DEEP SLEEP ---
+// ESP32-C6 RISC-V requires proper WiFi/ESP-NOW shutdown before sleep
+// Skipping this causes the illegal instruction crash (MCAUSE: 0x18)
+void goToSleep(int seconds) {
+  Serial.printf("Sleeping for %d seconds...\n\n", seconds);
+  Serial.flush();         // Ensure serial output completes
+
+  esp_now_deinit();       // Step 1: Deinit ESP-NOW
+  esp_wifi_stop();        // Step 2: Stop WiFi radio
+  delay(100);             // Step 3: Allow shutdown to settle
+
+  esp_sleep_enable_timer_wakeup((uint64_t)seconds * 1000000ULL);
+  esp_deep_sleep_start(); // Step 4: Sleep
+}
+
+// --- CALLBACKS ---
+void OnDataSent(const uint8_t *mac_addr, esp_now_send_status_t status) {
+  tx_complete = true;
+  tx_success  = (status == ESP_NOW_SEND_SUCCESS);
+}
+
+void OnDataRecv(const esp_now_recv_info_t *esp_now_info, const uint8_t *incomingData, int len) {
+  struct_message *msg = (struct_message *)incomingData;
+
+  if (msg->msgType == MSG_PAIRING) {
+    Serial.println("\n✓ Master Found!");
+    Serial.printf("Master MAC: %02X:%02X:%02X:%02X:%02X:%02X\n",
+                  esp_now_info->src_addr[0], esp_now_info->src_addr[1],
+                  esp_now_info->src_addr[2], esp_now_info->src_addr[3],
+                  esp_now_info->src_addr[4], esp_now_info->src_addr[5]);
+
+    preferences.begin("network", false);
+    preferences.putBytes("masterMac", esp_now_info->src_addr, 6);
+    preferences.end();
+
+    for (int i = 0; i < 5; i++) {
+      digitalWrite(LED_PIN, HIGH); delay(150);
+      digitalWrite(LED_PIN, LOW);  delay(150);
+    }
+
+    Serial.println("Pairing saved! Restarting...");
+    delay(500);
+    ESP.restart();
+  }
+}
+
+// --- FACTORY RESET ---
+void checkFactoryReset() {
+  delay(50); // GPIO stabilization delay needed on C6
+
+  if (digitalRead(RESET_PIN) != LOW) return;
+
+  Serial.println("BOOT held... Hold 3s to factory reset.");
+  unsigned long startPress = millis();
+
+  while (digitalRead(RESET_PIN) == LOW) {
+    if (millis() - startPress > 3000) {
+      Serial.println("\n=== FACTORY RESET ===");
+      preferences.begin("network", false);
+      preferences.clear();
+      preferences.end();
+      Serial.println("✓ Pairing data erased");
+
+      for (int i = 0; i < 15; i++) {
+        digitalWrite(LED_PIN, HIGH); delay(80);
+        digitalWrite(LED_PIN, LOW);  delay(80);
+      }
+
+      Serial.println("Restarting...");
+      delay(500);
+      ESP.restart();
+    }
+    delay(50);
+  }
+}
+
+// --- READ SHT40 ---
+bool readSensor() {
+  Serial.println("Reading SHT40...");
+
+  Wire.begin(SDA_PIN, SCL_PIN);
+  Wire.setClock(100000);
+  delay(10); // I2C stabilization delay needed on C6
+
+  sht4x.begin(Wire, 0x44);
+
+  uint16_t error = sht4x.softReset();
+  if (error) {
+    Serial.printf("✗ SHT40 reset failed (error %d). Check wiring:\n", error);
+    Serial.println("  SDA → D4 (GPIO22)  SCL → D5 (GPIO23)  VCC → 3V3  GND → GND");
+    myData.temp = -999;
+    myData.hum  = -999;
+    return false;
+  }
+  delay(10);
+
+  float temp, hum;
+  error = sht4x.measureHighPrecision(temp, hum);
+
+  if (error) {
+    Serial.printf("✗ Measurement failed (error %d)\n", error);
+    myData.temp = -999;
+    myData.hum  = -999;
+    return false;
+  }
+
+  if (isnan(temp) || isnan(hum)) {
+    Serial.println("✗ Read failed (NaN)");
+    myData.temp = -999;
+    myData.hum  = -999;
+    return false;
+  }
+
+  if (temp < -40 || temp > 125 || hum < 0 || hum > 100) {
+    Serial.println("✗ Values out of range");
+    myData.temp = -999;
+    myData.hum  = -999;
+    return false;
+  }
+
+  myData.temp = temp;
+  myData.hum  = hum;
+  Serial.printf("✓ Temp: %.2f°C  Hum: %.2f%%\n", myData.temp, myData.hum);
+  return true;
+}
+
+// --- SEND WITH RETRIES ---
+bool sendDataWithRetry() {
+  for (int retry = 0; retry < MAX_RETRIES; retry++) {
+    tx_complete = false;
+    tx_success  = false;
+
+    esp_err_t result = esp_now_send(masterMac, (uint8_t *)&myData, sizeof(myData));
+
+    if (result != ESP_OK) {
+      Serial.printf("✗ Send error: 0x%X  Retry %d/%d\n", result, retry+1, MAX_RETRIES);
+      delay(RETRY_DELAY_MS);
+      continue;
+    }
+
+    // Wait for TX callback
+    unsigned long start = millis();
+    while (!tx_complete && (millis() - start < TX_TIMEOUT_MS)) {
+      delay(5);
+    }
+
+    if (tx_success) {
+      Serial.println("✓ Delivered!");
+      digitalWrite(LED_PIN, HIGH); delay(100); digitalWrite(LED_PIN, LOW);
+      return true;
+    }
+
+    Serial.printf("✗ %s  Retry %d/%d\n",
+      tx_complete ? "No ACK" : "Timeout",
+      retry+1, MAX_RETRIES);
+    delay(RETRY_DELAY_MS);
+  }
+
+  Serial.println("✗ All retries failed.");
+  return false;
+}
+
+// --- PAIRING MODE ---
+void enterPairingMode() {
+  Serial.println("\n=== PAIRING MODE ===");
+  digitalWrite(LED_PIN, HIGH);
+
+  memcpy(peerInfo.peer_addr, broadcastAddress, 6);
+  peerInfo.channel = ESPNOW_CHANNEL;
+  peerInfo.encrypt = false;
+
+  if (esp_now_add_peer(&peerInfo) != ESP_OK) {
+    Serial.println("✗ Failed to add broadcast peer");
+    goToSleep(10);
+    return;
+  }
+
+  myData.msgType = MSG_PAIRING;
+  myData.temp    = 0;
+  myData.hum     = 0;
+
+  Serial.println("Broadcasting...");
+  esp_now_send(broadcastAddress, (uint8_t *)&myData, sizeof(myData));
+
+  Serial.print("Waiting for master");
+  unsigned long startWait = millis();
+  while (millis() - startWait < 10000) {
+    if (millis() % 500 < 10) {
+      Serial.print(".");
+      digitalWrite(LED_PIN, !digitalRead(LED_PIN));
+    }
+    delay(10);
+  }
+
+  Serial.println();
+  digitalWrite(LED_PIN, LOW);
+  Serial.println("✗ Timeout. Retrying in 10s...");
+  goToSleep(10);
+}
+
+// --- SETUP ---
+void setup() {
+  Serial.begin(115200);
+  delay(500); // C6 needs extra time for serial to stabilize
+  Serial.println("\n=== XIAO ESP32-C6 Sensor (SHT40) ===");
+
+  pinMode(RESET_PIN, INPUT_PULLUP);
+  pinMode(LED_PIN, OUTPUT);
+  digitalWrite(LED_PIN, LOW);
+
+  checkFactoryReset();
+
+  // Load pairing
+  preferences.begin("network", true);
+  size_t len = preferences.getBytes("masterMac", masterMac, 6);
+  preferences.end();
+  isPaired = (len == 6);
+
+  if (isPaired) {
+    Serial.printf("✓ Paired to: %02X:%02X:%02X:%02X:%02X:%02X\n",
+                  masterMac[0], masterMac[1], masterMac[2],
+                  masterMac[3], masterMac[4], masterMac[5]);
+  } else {
+    Serial.println("Not paired.");
+  }
+
+  // WiFi + ESP-NOW
+  WiFi.mode(WIFI_STA);
+  WiFi.setTxPower(WIFI_POWER_19_5dBm);
+  esp_wifi_set_protocol(WIFI_IF_STA,
+    WIFI_PROTOCOL_11B | WIFI_PROTOCOL_11G |
+    WIFI_PROTOCOL_11N | WIFI_PROTOCOL_LR);
+
+  if (esp_now_init() != ESP_OK) {
+    Serial.println("✗ ESP-NOW init failed! Sleeping 10s...");
+    goToSleep(10);
+    return;
+  }
+
+  esp_now_register_send_cb(OnDataSent);
+  esp_now_register_recv_cb(OnDataRecv);
+  Serial.println("✓ ESP-NOW ready");
+
+  if (isPaired) {
+    Serial.println("\n--- Data Mode ---");
+
+    memcpy(peerInfo.peer_addr, masterMac, 6);
+    peerInfo.channel = ESPNOW_CHANNEL;
+    peerInfo.encrypt = false;
+
+    if (esp_now_add_peer(&peerInfo) != ESP_OK) {
+      Serial.println("✗ Peer add failed, restarting...");
+      ESP.restart();
+    }
+
+    myData.msgType = MSG_DATA;
+    readSensor();
+    sendDataWithRetry();
+    goToSleep(SLEEP_TIME);
+    //ESP.restart();  // Use this instead during testing
+  } else {
+    enterPairingMode();
+  }
+}
+
+void loop() {
+  // Never reached
+}

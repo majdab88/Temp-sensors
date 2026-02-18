@@ -13,6 +13,18 @@
 #define MSG_PAIRING 1
 #define MSG_DATA    2
 
+// --- ESP-NOW ENCRYPTION ---
+// IMPORTANT: These keys must be identical on all devices (master + all slaves)
+// Change both bytes below to your own secret values before deploying
+static const uint8_t PMK_KEY[16] = {
+  0x4A, 0x2F, 0x8C, 0x1E, 0x7B, 0x3D, 0x9A, 0x5F,
+  0x6E, 0x2C, 0x4B, 0x8D, 0x1A, 0x7F, 0x3E, 0x9C
+};
+static const uint8_t LMK_KEY[16] = {
+  0xE3, 0x4A, 0x7C, 0x91, 0xB5, 0x2D, 0xF8, 0x6E,
+  0x1A, 0x9F, 0x3C, 0x72, 0xD4, 0x5B, 0x8E, 0x20
+};
+
 // --- NTP CONFIGURATION ---
 const char* ntpServer = "pool.ntp.org";
 const long  gmtOffset_sec = 7200;
@@ -306,12 +318,20 @@ void OnDataRecv(const esp_now_recv_info_t * esp_now_info, const uint8_t *incomin
     
     if (result == ESP_OK) {
       Serial.println("✓ Pairing confirmation sent!");
-      
+
+      // Upgrade peer from unencrypted (pairing) to encrypted (data)
+      esp_now_peer_info_t encPeer = {};
+      memcpy(encPeer.peer_addr, esp_now_info->src_addr, 6);
+      encPeer.channel = 0;
+      encPeer.encrypt = true;
+      memcpy(encPeer.lmk, LMK_KEY, 16);
+      esp_now_mod_peer(&encPeer);
+
       int index = findSensor(esp_now_info->src_addr);
       if(index == -1) {
         addSensor(esp_now_info->src_addr);
       }
-      
+
       // LED blink on pairing
       digitalWrite(LED_PIN, HIGH);
       delay(200);
@@ -408,8 +428,9 @@ void setup() {
     Serial.println("✗ ESP-NOW init failed!");
     return;
   }
-  Serial.println("✓ ESP-NOW initialized");
-  
+  esp_now_set_pmk(PMK_KEY);
+  Serial.println("✓ ESP-NOW initialized (encrypted)");
+
   esp_now_register_recv_cb(OnDataRecv);
   
   // --- WEB SERVER SETUP ---

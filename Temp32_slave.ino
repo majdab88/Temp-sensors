@@ -271,12 +271,17 @@ BatteryInfo getBatteryInfo() {
   delay(50);  // Settle after wake
 
   float voltage = readADCVoltage();
-  int   pct     = voltageToPct(voltage);
+  int   pct;
+  if (voltage < 2.5f) {
+    pct = 255;  // implausible — circuit not connected or no battery
+  } else {
+    pct = voltageToPct(voltage);
+  }
 
   BatteryInfo info;
   info.voltage    = voltage;
   info.percentage = pct;
-  info.status     = getBatteryStatus(pct);
+  info.status     = (pct == 255) ? "ERR" : getBatteryStatus(pct);
   return info;
 }
 
@@ -370,9 +375,8 @@ void setup() {
   // Read battery BEFORE radio init — divider must be off during sleep
   BatteryInfo bat = getBatteryInfo();
   Serial.printf("Battery: %.2fV  %d%%  %s\n", bat.voltage, bat.percentage, bat.status);
-  if (bat.percentage <= CRITICAL_PCT) {
+  if (bat.percentage != 255 && bat.percentage <= CRITICAL_PCT) {
     Serial.println("Battery critical — sleeping to protect cell.");
-    esp_sleep_enable_ext1_wakeup(1ULL << RESET_PIN, ESP_EXT1_WAKEUP_ANY_LOW);
     esp_sleep_enable_timer_wakeup((uint64_t)SLEEP_TIME * 1000000ULL);
     esp_deep_sleep_start();
   }

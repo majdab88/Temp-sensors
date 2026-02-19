@@ -227,6 +227,8 @@ float readADCVoltage() {
   digitalWrite(DIVIDER_ENABLE_PIN, HIGH);
   delay(10);  // Let voltage settle
 
+  analogRead(BAT_ADC_PIN);   // discard first conversion (settling)
+  delay(5);
   long sum = 0;
   for (int i = 0; i < ADC_SAMPLES; i++) {
     sum += analogRead(BAT_ADC_PIN);
@@ -263,8 +265,8 @@ const char* getBatteryStatus(int pct) {
 }
 
 BatteryInfo getBatteryInfo() {
-  analogSetAttenuation(ADC_11db);
   analogReadResolution(12);
+  analogSetPinAttenuation(BAT_ADC_PIN, ADC_ATTEN_DB_12);
 
   pinMode(DIVIDER_ENABLE_PIN, OUTPUT);
   digitalWrite(DIVIDER_ENABLE_PIN, LOW);

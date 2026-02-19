@@ -238,7 +238,8 @@ float readADCVoltage() {
 
   float adcMv      = sum / (float)ADC_SAMPLES;
   float adcVoltage = adcMv / 1000.0f;
-  Serial.printf("[BAT] pin_mv=%.0f  bat_v=%.3f\n", adcMv, adcVoltage * 2.0f);
+  int   rawCount   = analogRead(BAT_ADC_PIN);  // diagnostic: raw 12-bit count
+  Serial.printf("[BAT] pin_mv=%.0f  raw=%d  bat_v=%.3f\n", adcMv, rawCount, adcVoltage * 2.0f);
   return adcVoltage * 2.0f;    // × 2 restores full voltage (equal-value divider)
 }
 

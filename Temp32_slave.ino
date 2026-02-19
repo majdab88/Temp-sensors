@@ -221,24 +221,28 @@ bool readSensor() {
 }
 
 // --- BATTERY MONITOR ---
-// Call BEFORE radio init — GPIO3 enables the divider only during measurement.
-// Wiring: GPIO3 → R1(120kΩ) → GPIO2(ADC) → R2(120kΩ) → GND  (+100nF cap to GND)
+// Call BEFORE radio init — OUT+ → R1(120kΩ) → GPIO2(ADC) → R2(120kΩ) → GPIO3
+// GPIO3=OUTPUT LOW enables divider; GPIO3=INPUT (Hi-Z) cuts current during sleep.
 float readADCVoltage() {
-  digitalWrite(DIVIDER_ENABLE_PIN, HIGH);
-  delay(10);  // Let voltage settle
+  // GPIO3 already set LOW by getBatteryInfo() — wait for RC settle
+  // τ = (R1‖R2) × C = 60kΩ × 100nF = 6 ms → 3τ ≈ 18 ms
+  delay(20);
 
-  analogRead(BAT_ADC_PIN);   // discard first conversion (settling)
+  analogReadMilliVolts(BAT_ADC_PIN);   // discard first conversion (settling)
   delay(5);
   long sum = 0;
   for (int i = 0; i < ADC_SAMPLES; i++) {
-    sum += analogRead(BAT_ADC_PIN);
+    sum += analogReadMilliVolts(BAT_ADC_PIN);
     delay(5);
   }
-  digitalWrite(DIVIDER_ENABLE_PIN, LOW);  // Cut divider current immediately
 
-  float avg        = sum / (float)ADC_SAMPLES;
-  float adcVoltage = (avg / 4095.0f) * 3.3f;
-  return adcVoltage * 2.0f;               // Restore full battery voltage
+  // Disable divider immediately after reading
+  pinMode(DIVIDER_ENABLE_PIN, INPUT);   // Hi-Z — zero current draw
+
+  float adcMv      = sum / (float)ADC_SAMPLES;
+  float adcVoltage = adcMv / 1000.0f;
+  Serial.printf("[BAT] pin_mv=%.0f  bat_v=%.3f\n", adcMv, adcVoltage * 2.0f);
+  return adcVoltage * 2.0f;    // × 2 restores full voltage (equal-value divider)
 }
 
 int voltageToPct(float voltage) {
@@ -266,11 +270,12 @@ const char* getBatteryStatus(int pct) {
 
 BatteryInfo getBatteryInfo() {
   analogReadResolution(12);
-  analogSetPinAttenuation(BAT_ADC_PIN, ADC_11db);
+  analogSetAttenuation(ADC_11db);   // global setter — reliably configures channel
 
+  // Enable divider: drive GPIO3 LOW to complete the GND path
   pinMode(DIVIDER_ENABLE_PIN, OUTPUT);
   digitalWrite(DIVIDER_ENABLE_PIN, LOW);
-  delay(50);  // Settle after wake
+  // (RC settle handled inside readADCVoltage)
 
   float voltage = readADCVoltage();
   int   pct;

@@ -110,7 +110,7 @@ void goToSleep(int seconds) {
 }
 
 // --- CALLBACKS ---
-void OnDataSent(const uint8_t *mac_addr, esp_now_send_status_t status) {
+void OnDataSent(const wifi_tx_info_t *info, esp_now_send_status_t status) {
   tx_complete = true;
   tx_success  = (status == ESP_NOW_SEND_SUCCESS);
 }
@@ -264,7 +264,7 @@ const char* getBatteryStatus(int pct) {
 
 BatteryInfo getBatteryInfo() {
   analogSetAttenuation(ADC_11db);
-  analogSetWidth(12);
+  analogReadResolution(12);
 
   pinMode(DIVIDER_ENABLE_PIN, OUTPUT);
   digitalWrite(DIVIDER_ENABLE_PIN, LOW);

@@ -36,10 +36,12 @@ unsigned long lastNtpSync = 0;
 const unsigned long NTP_SYNC_INTERVAL = 86400000;
 
 // --- MESSAGE STRUCTURE ---
+// IMPORTANT: must be byte-for-byte identical on master and all slaves
 typedef struct struct_message {
   uint8_t msgType;
   float temp;
   float hum;
+  uint8_t battery;   // 0–100 %; 255 = read error
 } struct_message;
 
 struct_message incomingData;
@@ -56,6 +58,7 @@ struct SensorData {
   unsigned long lastUpdate;
   bool active;
   char name[20];
+  uint8_t battery;   // 0–100 %; 255 = read error
 };
 
 SensorData sensors[MAX_SENSORS];
@@ -108,6 +111,7 @@ int addSensor(const uint8_t *mac) {
   sensors[sensorCount].temp = 0;
   sensors[sensorCount].hum = 0;
   sensors[sensorCount].rssi = 0;
+  sensors[sensorCount].battery = 0;
   sensors[sensorCount].lastUpdate = millis();
   
   sprintf(sensors[sensorCount].name, "Sensor-%02X%02X", mac[4], mac[5]);
@@ -117,12 +121,13 @@ int addSensor(const uint8_t *mac) {
   return sensorCount - 1;
 }
 
-void updateSensor(int index, float temp, float hum, int rssi) {
+void updateSensor(int index, float temp, float hum, int rssi, uint8_t battery) {
   if(index < 0 || index >= sensorCount) return;
-  
+
   sensors[index].temp = temp;
   sensors[index].hum = hum;
   sensors[index].rssi = rssi;
+  sensors[index].battery = battery;
   sensors[index].lastUpdate = millis();
   sensors[index].active = true;
 }
@@ -159,6 +164,11 @@ void handleRoot() {
   html += ".temp { color: #e74c3c; }";
   html += ".hum { color: #3498db; }";
   html += ".rssi { color: #27ae60; }";
+  html += ".battery { color: #f39c12; }";
+  html += ".battery-bar-bg { background:#ecf0f1; border-radius:4px; height:8px; margin-top:6px; }";
+  html += ".battery-bar-fill { height:8px; border-radius:4px; background:#2ecc71; }";
+  html += ".battery-bar-fill.mid { background:#f39c12; }";
+  html += ".battery-bar-fill.low { background:#e74c3c; }";
   html += ".status { display: inline-block; padding: 5px 15px; border-radius: 20px; font-size: 0.85em; font-weight: bold; }";
   html += ".status.active { background: #2ecc71; color: white; }";
   html += ".status.inactive { background: #e74c3c; color: white; }";
@@ -234,7 +244,29 @@ void handleRoot() {
       html += "<div class='data-value rssi'>" + String(sensors[i].rssi);
       html += "<span class='data-unit'>dBm</span>";
       html += "</div></div>";
-      
+
+      html += "<div class='data-item'>";
+      html += "<div class='data-label'>Battery</div>";
+      html += "<div class='data-value battery'>";
+      if(sensors[i].battery == 255) {
+        html += "ERR";
+      } else {
+        html += String(sensors[i].battery);
+        html += "<span class='data-unit'>%</span>";
+      }
+      html += "</div>";
+      {
+        String fillClass = "battery-bar-fill";
+        if(sensors[i].battery != 255) {
+          if(sensors[i].battery < 20)      fillClass += " low";
+          else if(sensors[i].battery < 50) fillClass += " mid";
+        }
+        html += "<div class='battery-bar-bg'><div class='" + fillClass + "' style='width:";
+        html += (sensors[i].battery == 255 ? "0" : String(sensors[i].battery));
+        html += "%'></div></div>";
+      }
+      html += "</div>";
+
       html += "</div>";
       
       unsigned long secAgo = (millis() - sensors[i].lastUpdate) / 1000;
@@ -279,6 +311,7 @@ void handleJSON() {
     json += "\"temp\":" + String(sensors[i].temp, 2) + ",";
     json += "\"hum\":" + String(sensors[i].hum, 2) + ",";
     json += "\"rssi\":" + String(sensors[i].rssi) + ",";
+    json += "\"battery\":" + String(sensors[i].battery) + ",";
     json += "\"active\":" + String(sensors[i].active ? "true" : "false") + ",";
     json += "\"lastUpdate\":" + String((millis() - sensors[i].lastUpdate) / 1000);
     json += "}";
@@ -313,7 +346,7 @@ void OnDataRecv(const esp_now_recv_info_t * esp_now_info, const uint8_t *incomin
       }
     }
 
-    struct_message reply = {.msgType = MSG_PAIRING, .temp = 0, .hum = 0};
+    struct_message reply = {.msgType = MSG_PAIRING, .temp = 0, .hum = 0, .battery = 0};
     esp_err_t result = esp_now_send(esp_now_info->src_addr, (uint8_t *)&reply, sizeof(reply));
     
     if (result == ESP_OK) {
@@ -352,15 +385,17 @@ void OnDataRecv(const esp_now_recv_info_t * esp_now_info, const uint8_t *incomin
     
     Serial.printf(" | Temp: %.2f°C", incomingData.temp);  // 2 decimals for SHT40
     Serial.printf(" | Hum: %.2f%%", incomingData.hum);
-    Serial.printf(" | RSSI: %d dBm | ", incomingRSSI);
+    Serial.printf(" | RSSI: %d dBm", incomingRSSI);
+    Serial.printf(" | Bat: %d%%", incomingData.battery);
+    Serial.print(" | ");
     printCurrentTime();
-    
+
     int index = findSensor(esp_now_info->src_addr);
     if(index == -1) {
       index = addSensor(esp_now_info->src_addr);
     }
     if(index != -1) {
-      updateSensor(index, incomingData.temp, incomingData.hum, incomingRSSI);
+      updateSensor(index, incomingData.temp, incomingData.hum, incomingRSSI, incomingData.battery);
     }
   }
 }

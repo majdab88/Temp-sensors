@@ -266,7 +266,7 @@ const char* getBatteryStatus(int pct) {
 
 BatteryInfo getBatteryInfo() {
   analogReadResolution(12);
-  analogSetPinAttenuation(BAT_ADC_PIN, ADC_ATTEN_DB_12);
+  analogSetPinAttenuation(BAT_ADC_PIN, ADC_11db);
 
   pinMode(DIVIDER_ENABLE_PIN, OUTPUT);
   digitalWrite(DIVIDER_ENABLE_PIN, LOW);

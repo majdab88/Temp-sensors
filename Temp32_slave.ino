@@ -224,10 +224,7 @@ bool readSensor() {
 // Call BEFORE radio init — OUT+ → R1(120kΩ) → GPIO2(ADC) → R2(120kΩ) → GPIO3
 // GPIO3=OUTPUT LOW enables divider; GPIO3=INPUT (Hi-Z) cuts current during sleep.
 float readADCVoltage() {
-  // GPIO3 already set LOW by getBatteryInfo() — wait for RC settle
-  // τ = (R1‖R2) × C = 60kΩ × 100nF = 6 ms → 3τ ≈ 18 ms
-  delay(20);
-
+  // Attenuation already set and latched in getBatteryInfo(); divider settled.
   analogReadMilliVolts(BAT_ADC_PIN);   // discard first conversion (settling)
   delay(5);
   long sum = 0;
@@ -270,12 +267,17 @@ const char* getBatteryStatus(int pct) {
 
 BatteryInfo getBatteryInfo() {
   analogReadResolution(12);
-  analogSetAttenuation(ADC_11db);   // global setter — reliably configures channel
 
   // Enable divider: drive GPIO3 LOW to complete the GND path
   pinMode(DIVIDER_ENABLE_PIN, OUTPUT);
   digitalWrite(DIVIDER_ENABLE_PIN, LOW);
-  // (RC settle handled inside readADCVoltage)
+  delay(10);  // let divider settle before warm-up reads
+
+  // On ESP32-C6 core 3.x the attenuation must be set AFTER the channel is
+  // first initialised by analogRead(), otherwise it silently no-ops.
+  analogRead(BAT_ADC_PIN);                        // initialise channel
+  analogSetPinAttenuation(BAT_ADC_PIN, ADC_11db); // switch to 11 dB
+  analogRead(BAT_ADC_PIN);                        // latch new attenuation
 
   float voltage = readADCVoltage();
   int   pct;

@@ -11,8 +11,8 @@
 #define RESET_PIN  9    // BOOT button on XIAO ESP32-C6
 #define SDA_PIN   22    // I2C SDA (D4)
 #define SCL_PIN   23    // I2C SCL (D5)
-#define BAT_ADC_PIN        2   // GPIO2 — ADC input (resistor divider midpoint)
-#define DIVIDER_ENABLE_PIN 4   // GPIO4/D2 — powers the divider; LOW during deep sleep
+#define BAT_ADC_PIN        2   // GPIO2/D2 — ADC input (resistor divider midpoint)
+#define DIVIDER_ENABLE_PIN 1   // GPIO1/D1 — ground switch; LOW enables divider, INPUT (Hi-Z) during sleep
 
 // --- SLEEP SETTINGS ---
 #define SLEEP_TIME 20   // Seconds (use 300+ for production)
@@ -221,8 +221,8 @@ bool readSensor() {
 }
 
 // --- BATTERY MONITOR ---
-// Call BEFORE radio init — OUT+ → R1(120kΩ) → GPIO2(ADC) → R2(120kΩ) → GPIO3
-// GPIO4=OUTPUT LOW enables divider; GPIO4=INPUT (Hi-Z) cuts current during sleep.
+// Circuit: BAT+ → R1(120kΩ) → GPIO2/D2(ADC) → R2(120kΩ) → GPIO1/D1(GND switch)
+// D1=OUTPUT LOW enables divider; D1=INPUT (Hi-Z) cuts current during sleep.
 float readADCVoltage() {
   // Attenuation already set and latched in getBatteryInfo(); divider settled.
   analogReadMilliVolts(BAT_ADC_PIN);   // discard first conversion (settling)

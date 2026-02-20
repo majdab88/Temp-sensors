@@ -12,7 +12,7 @@
 #define SDA_PIN   22    // I2C SDA (D4)
 #define SCL_PIN   23    // I2C SCL (D5)
 #define BAT_ADC_PIN        2   // GPIO2 — ADC input (resistor divider midpoint)
-#define DIVIDER_ENABLE_PIN 3   // GPIO3 — powers the divider; LOW during deep sleep
+#define DIVIDER_ENABLE_PIN 4   // GPIO4/D2 — powers the divider; LOW during deep sleep
 
 // --- SLEEP SETTINGS ---
 #define SLEEP_TIME 20   // Seconds (use 300+ for production)
@@ -222,7 +222,7 @@ bool readSensor() {
 
 // --- BATTERY MONITOR ---
 // Call BEFORE radio init — OUT+ → R1(120kΩ) → GPIO2(ADC) → R2(120kΩ) → GPIO3
-// GPIO3=OUTPUT LOW enables divider; GPIO3=INPUT (Hi-Z) cuts current during sleep.
+// GPIO4=OUTPUT LOW enables divider; GPIO4=INPUT (Hi-Z) cuts current during sleep.
 float readADCVoltage() {
   // Attenuation already set and latched in getBatteryInfo(); divider settled.
   analogReadMilliVolts(BAT_ADC_PIN);   // discard first conversion (settling)
@@ -269,7 +269,7 @@ const char* getBatteryStatus(int pct) {
 BatteryInfo getBatteryInfo() {
   analogReadResolution(12);
 
-  // Enable divider: drive GPIO3 LOW to complete the GND path
+  // Enable divider: drive GPIO4 LOW to complete the GND path
   pinMode(DIVIDER_ENABLE_PIN, OUTPUT);
   digitalWrite(DIVIDER_ENABLE_PIN, LOW);
   delay(10);  // let divider settle before warm-up reads

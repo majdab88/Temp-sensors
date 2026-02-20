@@ -10,13 +10,13 @@
  * ── Probe points ────────────────────────────────────────────────────
  *   TP4056 OUT+   expected: battery voltage (~4.2 V fully charged)
  *   GPIO2         expected: OUT+ ÷ 2 while divider is ON  (~2.1 V)
- *   GPIO3         expected: 0 V while divider is ON
+ *   GPIO4 (D2)    expected: 0 V while divider is ON
  *   3V3 pin       expected: ~3.30 V (ESP32 LDO output)
  *   GND           reference
  * ────────────────────────────────────────────────────────────────────
  *
  * Divider circuit:
- *   OUT+  ──R1(120k)──  GPIO2(ADC)  ──R2(120k)──  GPIO3(GND switch)
+ *   OUT+  ──R1(120k)──  GPIO2(ADC)  ──R2(120k)──  GPIO4/D2(GND switch)
  *
  * The sketch leaves the divider ON between printouts so you have a
  * full 2-second window to measure steady-state voltages.
@@ -24,7 +24,7 @@
 
 #define LED_PIN            15   // Built-in LED
 #define BAT_ADC_PIN         2   // Divider midpoint
-#define DIVIDER_ENABLE_PIN  3   // OUTPUT LOW → divider active
+#define DIVIDER_ENABLE_PIN  4   // OUTPUT LOW → divider active
                                 // INPUT Hi-Z  → divider off (zero current)
 
 // ── helpers ──────────────────────────────────────────────────────────
@@ -58,7 +58,7 @@ void setup() {
   Serial.println("\n╔══════════════════════════════════════════╗");
   Serial.println("║   Battery Debug Sketch — XIAO ESP32-C6  ║");
   Serial.println("╚══════════════════════════════════════════╝");
-  Serial.println("Probe TP4056 OUT+, GPIO2, GPIO3, and 3V3 with multimeter.");
+  Serial.println("Probe TP4056 OUT+, GPIO2, GPIO4 (D2), and 3V3 with multimeter.");
   Serial.println("Divider stays ON between prints — 2-second window to probe.");
   Serial.println();
 }
@@ -83,7 +83,7 @@ void loop() {
 
   int raw_off = analogRead(BAT_ADC_PIN);
   int mv_off  = analogReadMilliVolts(BAT_ADC_PIN);
-  Serial.printf("[Divider OFF]  GPIO3=Hi-Z   raw=%4d  pin_mv=%4d\n",
+  Serial.printf("[Divider OFF]  GPIO4=Hi-Z   raw=%4d  pin_mv=%4d\n",
                 raw_off, mv_off);
   Serial.println("  (GPIO2 should read ~0 V or float; bat_v meaningless here)");
 
@@ -92,7 +92,7 @@ void loop() {
   digitalWrite(DIVIDER_ENABLE_PIN, LOW);
   delay(20);   // let RC settle before first read
 
-  Serial.println("[Divider ON ]  GPIO3=0 V");
+  Serial.println("[Divider ON ]  GPIO4=0 V");
   printAtten("0dB   (0 – 750 mV)", ADC_0db);
   printAtten("6dB   (0 – 1750 mV)", ADC_6db);
   printAtten("11dB  (0 – 3100 mV)", ADC_11db);

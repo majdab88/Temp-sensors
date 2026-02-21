@@ -102,8 +102,9 @@ void goToSleep(int seconds) {
   delay(100);             // Step 3: Allow shutdown to settle
 
   // Hold BOOT button while sleeping to wake the device and trigger factory reset.
-  // checkFactoryReset() in setup() handles the 3-second hold → erase pairing.
-  esp_sleep_enable_ext1_wakeup(1ULL << RESET_PIN, ESP_EXT1_WAKEUP_ANY_LOW);
+  // GPIO9 is an HP GPIO on C6 — must use esp_deep_sleep_enable_gpio_wakeup()
+  // instead of esp_sleep_enable_ext1_wakeup() (EXT1 only supports LP GPIO 0-7).
+  esp_deep_sleep_enable_gpio_wakeup(1ULL << RESET_PIN, ESP_GPIO_WAKEUP_GPIO_LOW);
 
   esp_sleep_enable_timer_wakeup((uint64_t)seconds * 1000000ULL);
   esp_deep_sleep_start(); // Step 4: Sleep

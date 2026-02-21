@@ -53,7 +53,7 @@ Temp-sensors/
 - Persists master MAC address in **NVS** (`Preferences`) across reboots.
 - **Pairing mode**: broadcast → master replies → slave saves MAC → restart.
 - Hold BOOT button (GPIO 9) for 3 s to erase pairing and enter pairing mode.
-  - The BOOT button is also configured as an **EXT1 wake source** (`esp_sleep_enable_ext1_wakeup`), so holding it during deep sleep wakes the device and triggers `checkFactoryReset()` without needing to catch the brief awake window at startup.
+  - The BOOT button is also configured as a **deep sleep GPIO wake source** (`esp_deep_sleep_enable_gpio_wakeup`), so holding it during deep sleep wakes the device and triggers `checkFactoryReset()` without needing to catch the brief awake window at startup.
 - Retries transmission up to `MAX_RETRIES` (5) times before sleeping.
 - Properly deinits ESP-NOW and WiFi before deep sleep (required on ESP32-C6 RISC-V to avoid illegal instruction crash, `MCAUSE: 0x18`).
 - Data-mode peer registered as **encrypted** (`peerInfo.encrypt = true` + LMK).
@@ -80,7 +80,7 @@ typedef struct struct_message {
 ### Slave (XIAO ESP32-C6)
 | Pin | GPIO | Function |
 |-----|------|----------|
-| BOOT button | 9 | Factory reset (hold 3 s); EXT1 wake source during deep sleep |
+| BOOT button | 9 | Factory reset (hold 3 s); GPIO deep sleep wake source |
 | Built-in LED | 15 | Status indicator |
 | SDA | 22 (D4) | SHT40 I2C data |
 | SCL | 23 (D5) | SHT40 I2C clock |
@@ -167,7 +167,7 @@ Install third-party libraries via Arduino Library Manager or `platformio.ini`.
 ### Resetting
 - **Master WiFi:** Hold BOOT (GPIO 9) for 3 s → WiFiManager portal reopens.
 - **Slave pairing:** Hold BOOT (GPIO 9) for 3 s → NVS erased → pairing mode.
-  - Works even during deep sleep: the BOOT button is an EXT1 wake source, so holding it wakes the device and `checkFactoryReset()` handles the 3-second hold.
+  - Works even during deep sleep: `esp_deep_sleep_enable_gpio_wakeup()` is used (GPIO9 is an HP GPIO on C6 — EXT1 only supports LP GPIOs 0–7), so holding the button wakes the device and `checkFactoryReset()` handles the 3-second hold.
 
 ---
 
@@ -209,7 +209,7 @@ Install third-party libraries via Arduino Library Manager or `platformio.ini`.
 - Use `SensirionI2cSht4x` (lowercase 'c') — not `SensirionI2CSht4x`.
 - Sensor error values use `-999` as a sentinel for failed reads.
 - `loop()` is intentionally empty in the slave — all logic runs in `setup()` followed by deep sleep.
-- When enabling EXT1 wakeup, always use `ESP_EXT1_WAKEUP_ANY_LOW` (active-low BOOT button with pull-up).
+- GPIO9 (BOOT) is an HP GPIO on the C6 — **do not use `esp_sleep_enable_ext1_wakeup()`** (EXT1 only supports LP GPIOs 0–7 and will log `Not an RTC IO`). Use `esp_deep_sleep_enable_gpio_wakeup(1ULL << RESET_PIN, ESP_GPIO_WAKEUP_GPIO_LOW)` instead.
 
 ### Encryption
 - `PMK_KEY` and `LMK_KEY` are defined in both files and **must be kept in sync**.

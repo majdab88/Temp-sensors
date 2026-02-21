@@ -344,6 +344,11 @@ void OnDataRecv(const esp_now_recv_info_t * esp_now_info, const uint8_t *incomin
         Serial.printf("Failed to add peer: %d\n", addStatus);
         return;
       }
+    } else {
+      // Peer exists from a previous session (likely registered as encrypted).
+      // Downgrade to unencrypted so the pairing reply is sent in plaintext —
+      // the slave has no peer registered for us yet and cannot decrypt it.
+      esp_now_mod_peer(&tempPeerInfo);
     }
 
     struct_message reply = {.msgType = MSG_PAIRING, .temp = 0, .hum = 0, .battery = 0};

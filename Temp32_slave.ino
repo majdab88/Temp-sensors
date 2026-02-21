@@ -25,6 +25,16 @@
 // --- COMMUNICATION CHANNEL ---
 #define ESPNOW_CHANNEL 0  // 0 = auto-detect
 
+// --- OFFLINE BUFFER ---
+#define MAX_BUFFER 10   // 10 × 15 min = 2.5 h of coverage; each slot is ~16 bytes in NVS
+
+struct BufferedReading {
+  float    temp;
+  float    hum;
+  uint32_t age_s;
+  uint8_t  battery;
+};
+
 // --- BATTERY MONITOR ---
 #define ADC_SAMPLES      20  // Readings to average for a stable result
 #define LOW_BATTERY_PCT  15  // "LOW" status below this %
@@ -71,10 +81,11 @@ struct BatteryInfo {
 // --- MESSAGE STRUCTURE ---
 // IMPORTANT: must be byte-for-byte identical on master and all slaves
 typedef struct struct_message {
-  uint8_t msgType;
-  float temp;
-  float hum;
-  uint8_t battery;   // 0–100 %; 255 = read error
+  uint8_t  msgType;
+  float    temp;
+  float    hum;
+  uint8_t  battery;   // 0–100 %; 255 = read error
+  uint32_t age_s;     // seconds since measurement; 0 = current reading
 } struct_message;
 
 // --- GLOBALS ---
@@ -89,6 +100,74 @@ uint8_t broadcastAddress[] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF};
 
 volatile bool tx_success  = false;
 volatile bool tx_complete = false;
+
+int             bufCount = 0;
+BufferedReading buf[MAX_BUFFER];
+
+// --- OFFLINE BUFFER MANAGEMENT ---
+
+void loadBuffer() {
+  preferences.begin("buf", true);
+  bufCount = (int)preferences.getUChar("n", 0);
+  if (bufCount < 0 || bufCount > MAX_BUFFER) bufCount = 0;  // guard vs NVS corruption
+  if (bufCount > 0) preferences.getBytes("data", buf, sizeof(buf));
+  preferences.end();
+  if (bufCount > 0) Serial.printf("Buffer: %d pending reading(s)\n", bufCount);
+}
+
+void saveBuffer() {
+  preferences.begin("buf", false);
+  preferences.putUChar("n", (uint8_t)bufCount);
+  preferences.putBytes("data", buf, sizeof(buf));
+  preferences.end();
+}
+
+// Increment the age of every buffered reading by one sleep cycle.
+// Called at the start of every wake so ages stay accurate.
+void ageBuffer() {
+  for (int i = 0; i < bufCount; i++) buf[i].age_s += SLEEP_TIME;
+}
+
+void addToBuffer(float temp, float hum, uint8_t battery, uint32_t age_s) {
+  if (bufCount >= MAX_BUFFER) {
+    // Buffer full — drop the oldest reading to make room for the newer one
+    memmove(&buf[0], &buf[1], (MAX_BUFFER - 1) * sizeof(BufferedReading));
+    bufCount = MAX_BUFFER - 1;
+    Serial.println("Buffer full — oldest reading dropped");
+  }
+  buf[bufCount++] = { temp, hum, age_s, battery };
+  Serial.printf("Buffered (age %lus). Pending: %d/%d\n",
+                (unsigned long)age_s, bufCount, MAX_BUFFER);
+}
+
+// Try to send all buffered readings (oldest first). Stops at first failure so we
+// don't waste retries when the master is still unreachable. Successfully sent
+// entries are removed from the front of the buffer.
+void drainBuffer() {
+  if (bufCount == 0) return;
+  Serial.printf("Draining %d buffered reading(s)...\n", bufCount);
+
+  int sent = 0;
+  for (int i = 0; i < bufCount; i++) {
+    myData.msgType = MSG_DATA;
+    myData.temp    = buf[i].temp;
+    myData.hum     = buf[i].hum;
+    myData.battery = buf[i].battery;
+    myData.age_s   = buf[i].age_s;
+
+    if (sendDataWithRetry()) {
+      sent++;
+    } else {
+      break;  // master still unreachable — keep the rest
+    }
+  }
+
+  if (sent > 0) {
+    memmove(&buf[0], &buf[sent], (bufCount - sent) * sizeof(BufferedReading));
+    bufCount -= sent;
+    Serial.printf("Drained %d. Remaining: %d\n", sent, bufCount);
+  }
+}
 
 // --- SAFE DEEP SLEEP ---
 // ESP32-C6 RISC-V requires proper WiFi/ESP-NOW shutdown before sleep
@@ -436,10 +515,19 @@ void setup() {
       ESP.restart();
     }
 
-    myData.msgType  = MSG_DATA;
-    myData.battery  = (uint8_t)bat.percentage;
-    readSensor();
-    sendDataWithRetry();
+    loadBuffer();
+    ageBuffer();
+    drainBuffer();
+
+    myData.msgType = MSG_DATA;
+    myData.battery = (uint8_t)bat.percentage;
+    myData.age_s   = 0;
+    bool sensorOk  = readSensor();
+    if (!sendDataWithRetry() && sensorOk) {
+      // Only buffer valid readings — error readings (-999) are not useful to replay
+      addToBuffer(myData.temp, myData.hum, myData.battery, 0);
+    }
+    saveBuffer();
     goToSleep(SLEEP_TIME);
     //ESP.restart();  // Use this instead during testing
   } else {

@@ -39,10 +39,11 @@ const unsigned long NTP_SYNC_INTERVAL = 86400000;
 // --- MESSAGE STRUCTURE ---
 // IMPORTANT: must be byte-for-byte identical on master and all slaves
 typedef struct struct_message {
-  uint8_t msgType;
-  float temp;
-  float hum;
-  uint8_t battery;   // 0–100 %; 255 = read error
+  uint8_t  msgType;
+  float    temp;
+  float    hum;
+  uint8_t  battery;   // 0–100 %; 255 = read error
+  uint32_t age_s;     // seconds since measurement; 0 = current reading
 } struct_message;
 
 struct_message incomingData;
@@ -56,7 +57,8 @@ struct SensorData {
   float temp;
   float hum;
   int rssi;
-  unsigned long lastUpdate;
+  unsigned long lastUpdate;    // millis() adjusted to actual measurement time
+  unsigned long lastReceived;  // millis() when the packet arrived; drives active/offline
   bool active;
   char name[20];
   uint8_t battery;   // 0–100 %; 255 = read error
@@ -111,12 +113,13 @@ int addSensor(const uint8_t *mac) {
   }
   
   memcpy(sensors[sensorCount].mac, mac, 6);
-  sensors[sensorCount].active = true;
-  sensors[sensorCount].temp = 0;
-  sensors[sensorCount].hum = 0;
-  sensors[sensorCount].rssi = 0;
-  sensors[sensorCount].battery = 0;
-  sensors[sensorCount].lastUpdate = millis();
+  sensors[sensorCount].active       = true;
+  sensors[sensorCount].temp         = 0;
+  sensors[sensorCount].hum          = 0;
+  sensors[sensorCount].rssi         = 0;
+  sensors[sensorCount].battery      = 0;
+  sensors[sensorCount].lastUpdate   = millis();
+  sensors[sensorCount].lastReceived = millis();
   
   sprintf(sensors[sensorCount].name, "Sensor-%02X%02X", mac[4], mac[5]);
   
@@ -134,21 +137,25 @@ int addSensor(const uint8_t *mac) {
   return sensorCount - 1;
 }
 
-void updateSensor(int index, float temp, float hum, int rssi, uint8_t battery) {
+void updateSensor(int index, float temp, float hum, int rssi, uint8_t battery, uint32_t age_s) {
   if(index < 0 || index >= sensorCount) return;
 
-  sensors[index].temp = temp;
-  sensors[index].hum = hum;
-  sensors[index].rssi = rssi;
-  sensors[index].battery = battery;
-  sensors[index].lastUpdate = millis();
-  sensors[index].active = true;
+  sensors[index].temp         = temp;
+  sensors[index].hum          = hum;
+  sensors[index].rssi         = rssi;
+  sensors[index].battery      = battery;
+  sensors[index].lastReceived = millis();
+  sensors[index].active       = true;
+
+  // Shift lastUpdate back so "X minutes ago" reflects actual measurement time
+  unsigned long ago = (unsigned long)age_s * 1000UL;
+  sensors[index].lastUpdate = (ago < millis()) ? (millis() - ago) : 0;
 }
 
 void checkInactiveSensors() {
   unsigned long now = millis();
   for(int i = 0; i < sensorCount; i++) {
-    if(now - sensors[i].lastUpdate > 600000) {
+    if(now - sensors[i].lastReceived > 600000) {
       sensors[i].active = false;
     }
   }
@@ -170,12 +177,13 @@ void loadPairedSensors() {
     if (prefs.getBytes(key, mac, 6) != 6) continue;
 
     memcpy(sensors[sensorCount].mac, mac, 6);
-    sensors[sensorCount].active      = false;  // no data yet
-    sensors[sensorCount].temp        = 0;
-    sensors[sensorCount].hum         = 0;
-    sensors[sensorCount].rssi        = 0;
-    sensors[sensorCount].battery     = 0;
-    sensors[sensorCount].lastUpdate  = 0;
+    sensors[sensorCount].active       = false;  // no data yet
+    sensors[sensorCount].temp         = 0;
+    sensors[sensorCount].hum          = 0;
+    sensors[sensorCount].rssi         = 0;
+    sensors[sensorCount].battery      = 0;
+    sensors[sensorCount].lastUpdate   = 0;
+    sensors[sensorCount].lastReceived = 0;
     sprintf(sensors[sensorCount].name, "Sensor-%02X%02X", mac[4], mac[5]);
     sensorCount++;
 
@@ -447,6 +455,9 @@ void OnDataRecv(const esp_now_recv_info_t * esp_now_info, const uint8_t *incomin
     Serial.printf(" | Hum: %.2f%%", incomingData.hum);
     Serial.printf(" | RSSI: %d dBm", incomingRSSI);
     Serial.printf(" | Bat: %d%%", incomingData.battery);
+    if (incomingData.age_s > 0) {
+      Serial.printf(" | REPLAYED (measured %lus ago)", (unsigned long)incomingData.age_s);
+    }
     Serial.print(" | ");
     printCurrentTime();
 
@@ -455,7 +466,8 @@ void OnDataRecv(const esp_now_recv_info_t * esp_now_info, const uint8_t *incomin
       index = addSensor(esp_now_info->src_addr);
     }
     if(index != -1) {
-      updateSensor(index, incomingData.temp, incomingData.hum, incomingRSSI, incomingData.battery);
+      updateSensor(index, incomingData.temp, incomingData.hum, incomingRSSI,
+                   incomingData.battery, incomingData.age_s);
     }
   }
 }

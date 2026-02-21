@@ -3,6 +3,7 @@
 #include <esp_wifi.h>
 #include <WiFiManager.h>
 #include <WebServer.h>
+#include <Preferences.h>
 #include "time.h"
 
 // --- XIAO ESP32-C6 PIN DEFINITIONS ---
@@ -67,6 +68,9 @@ int sensorCount = 0;
 // --- WEB SERVER ---
 WebServer server(80);
 
+// --- NVS STORAGE ---
+Preferences prefs;
+
 // --- FUNCTIONS ---
 
 void printCurrentTime() {
@@ -118,6 +122,15 @@ int addSensor(const uint8_t *mac) {
   
   sensorCount++;
   Serial.printf("Sensor added. Total: %d\n", sensorCount);
+
+  // Persist MAC so the peer can be re-registered after master reboot
+  char key[8];
+  snprintf(key, sizeof(key), "mac%d", sensorCount - 1);
+  prefs.begin("sensors", false);
+  prefs.putBytes(key, mac, 6);
+  prefs.putInt("count", sensorCount);
+  prefs.end();
+
   return sensorCount - 1;
 }
 
@@ -139,6 +152,48 @@ void checkInactiveSensors() {
       sensors[i].active = false;
     }
   }
+}
+
+// --- RESTORE PAIRED SENSORS FROM NVS ---
+// Called once in setup() after esp_now_init(). Registers each saved MAC as an
+// encrypted peer so that the master can decrypt data frames immediately after
+// reboot without requiring the slaves to re-pair.
+void loadPairedSensors() {
+  prefs.begin("sensors", true);
+  int count = prefs.getInt("count", 0);
+  Serial.printf("Restoring %d saved sensor(s) from NVS...\n", count);
+
+  for (int i = 0; i < count && sensorCount < MAX_SENSORS; i++) {
+    char key[8];
+    snprintf(key, sizeof(key), "mac%d", i);
+    uint8_t mac[6] = {};
+    if (prefs.getBytes(key, mac, 6) != 6) continue;
+
+    memcpy(sensors[sensorCount].mac, mac, 6);
+    sensors[sensorCount].active      = false;  // no data yet
+    sensors[sensorCount].temp        = 0;
+    sensors[sensorCount].hum         = 0;
+    sensors[sensorCount].rssi        = 0;
+    sensors[sensorCount].battery     = 0;
+    sensors[sensorCount].lastUpdate  = 0;
+    sprintf(sensors[sensorCount].name, "Sensor-%02X%02X", mac[4], mac[5]);
+    sensorCount++;
+
+    // Register as encrypted peer so incoming data frames can be decrypted
+    esp_now_peer_info_t peer = {};
+    memcpy(peer.peer_addr, mac, 6);
+    peer.channel = 0;
+    peer.encrypt = true;
+    memcpy(peer.lmk, LMK_KEY, 16);
+    if (esp_now_add_peer(&peer) == ESP_OK) {
+      Serial.printf("  ✓ %02X:%02X:%02X:%02X:%02X:%02X restored\n",
+                    mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
+    } else {
+      Serial.printf("  ✗ Failed to re-register peer %02X:%02X:%02X:%02X:%02X:%02X\n",
+                    mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
+    }
+  }
+  prefs.end();
 }
 
 // --- WEB PAGE HTML ---
@@ -470,6 +525,8 @@ void setup() {
   }
   esp_now_set_pmk(PMK_KEY);
   Serial.println("✓ ESP-NOW initialized (encrypted)");
+
+  loadPairedSensors();
 
   esp_now_register_recv_cb(OnDataRecv);
   

@@ -11,6 +11,8 @@
 #define RESET_PIN  9    // BOOT button on XIAO ESP32-C6
 #define SDA_PIN   22    // I2C SDA (D4)
 #define SCL_PIN   23    // I2C SCL (D5)
+#define BAT_ADC_PIN        2   // GPIO2/D2 — ADC input (resistor divider midpoint)
+#define DIVIDER_ENABLE_PIN 1   // GPIO1/D1 — ground switch; LOW enables divider, INPUT (Hi-Z) during sleep
 
 // --- SLEEP SETTINGS ---
 #define SLEEP_TIME 20   // Seconds (use 300+ for production)
@@ -22,6 +24,11 @@
 
 // --- COMMUNICATION CHANNEL ---
 #define ESPNOW_CHANNEL 0  // 0 = auto-detect
+
+// --- BATTERY MONITOR ---
+#define ADC_SAMPLES      20  // Readings to average for a stable result
+#define LOW_BATTERY_PCT  15  // "LOW" status below this %
+#define CRITICAL_PCT      5  // Sleep immediately below this % to protect the cell
 
 // --- MESSAGE TYPES ---
 #define MSG_PAIRING 1
@@ -39,11 +46,35 @@ static const uint8_t LMK_KEY[16] = {
   0x1A, 0x9F, 0x3C, 0x72, 0xD4, 0x5B, 0x8E, 0x20
 };
 
+// --- BATTERY LOOKUP TABLE ---
+// {voltage, percentage} for 3.7V Li-ion / 18650 measured at rest
+struct BatteryPoint {
+  float voltage;
+  int   percentage;
+};
+const BatteryPoint batteryTable[] = {
+  { 4.20, 100 }, { 4.15,  95 }, { 4.10,  90 }, { 4.05,  85 },
+  { 4.00,  80 }, { 3.95,  75 }, { 3.90,  70 }, { 3.85,  65 },
+  { 3.80,  60 }, { 3.75,  55 }, { 3.70,  50 }, { 3.65,  45 },
+  { 3.60,  40 }, { 3.55,  35 }, { 3.50,  30 }, { 3.45,  25 },
+  { 3.40,  20 }, { 3.30,  15 }, { 3.20,  10 }, { 3.10,   5 },
+  { 3.00,   0 }
+};
+const int TABLE_SIZE = sizeof(batteryTable) / sizeof(batteryTable[0]);
+
+struct BatteryInfo {
+  float       voltage;
+  int         percentage;
+  const char* status;
+};
+
 // --- MESSAGE STRUCTURE ---
+// IMPORTANT: must be byte-for-byte identical on master and all slaves
 typedef struct struct_message {
   uint8_t msgType;
   float temp;
   float hum;
+  uint8_t battery;   // 0–100 %; 255 = read error
 } struct_message;
 
 // --- GLOBALS ---
@@ -70,16 +101,15 @@ void goToSleep(int seconds) {
   esp_wifi_stop();        // Step 2: Stop WiFi radio
   delay(100);             // Step 3: Allow shutdown to settle
 
-  // Hold BOOT button while sleeping to wake the device and trigger factory reset.
-  // checkFactoryReset() in setup() handles the 3-second hold → erase pairing.
-  esp_sleep_enable_ext1_wakeup(1ULL << RESET_PIN, ESP_EXT1_WAKEUP_ANY_LOW);
-
+  // GPIO9 (BOOT) is an HP GPIO on C6 — it cannot wake the device from deep sleep.
+  // Neither EXT1 nor esp_deep_sleep_enable_gpio_wakeup() support HP GPIOs.
+  // Factory reset is handled by checkFactoryReset() at the start of every boot.
   esp_sleep_enable_timer_wakeup((uint64_t)seconds * 1000000ULL);
   esp_deep_sleep_start(); // Step 4: Sleep
 }
 
 // --- CALLBACKS ---
-void OnDataSent(const uint8_t *mac_addr, esp_now_send_status_t status) {
+void OnDataSent(const wifi_tx_info_t *info, esp_now_send_status_t status) {
   tx_complete = true;
   tx_success  = (status == ESP_NOW_SEND_SUCCESS);
 }
@@ -189,6 +219,81 @@ bool readSensor() {
   return true;
 }
 
+// --- BATTERY MONITOR ---
+// Circuit: BAT+ → R1(120kΩ) → GPIO2/D2(ADC) → R2(120kΩ) → GPIO1/D1(GND switch)
+// D1=OUTPUT LOW enables divider; D1=INPUT (Hi-Z) cuts current during sleep.
+float readADCVoltage() {
+  // Attenuation already set and latched in getBatteryInfo(); divider settled.
+  analogReadMilliVolts(BAT_ADC_PIN);   // discard first conversion (settling)
+  delay(5);
+  long sum = 0;
+  for (int i = 0; i < ADC_SAMPLES; i++) {
+    sum += analogReadMilliVolts(BAT_ADC_PIN);
+    delay(5);
+  }
+
+  // Disable divider immediately after reading
+  pinMode(DIVIDER_ENABLE_PIN, INPUT);   // Hi-Z — zero current draw
+
+  float adcMv      = sum / (float)ADC_SAMPLES;
+  float adcVoltage = adcMv / 1000.0f;
+  int   rawCount   = analogRead(BAT_ADC_PIN);  // diagnostic: raw 12-bit count
+  Serial.printf("[BAT] pin_mv=%.0f  raw=%d  bat_v=%.3f\n", adcMv, rawCount, adcVoltage * 2.0f);
+  return adcVoltage * 2.0f;    // × 2 restores full voltage (equal-value divider)
+}
+
+int voltageToPct(float voltage) {
+  if (voltage >= batteryTable[0].voltage)              return 100;
+  if (voltage <= batteryTable[TABLE_SIZE - 1].voltage) return 0;
+  for (int i = 0; i < TABLE_SIZE - 1; i++) {
+    if (voltage <= batteryTable[i].voltage && voltage > batteryTable[i + 1].voltage) {
+      float vHigh = batteryTable[i].voltage;
+      float vLow  = batteryTable[i + 1].voltage;
+      int   pHigh = batteryTable[i].percentage;
+      int   pLow  = batteryTable[i + 1].percentage;
+      float ratio = (voltage - vLow) / (vHigh - vLow);
+      return pLow + (int)(ratio * (pHigh - pLow));
+    }
+  }
+  return 0;
+}
+
+const char* getBatteryStatus(int pct) {
+  if (pct > 60)              return "GOOD";
+  if (pct > LOW_BATTERY_PCT) return "LOW";
+  if (pct > CRITICAL_PCT)    return "WARNING";
+  return "CRITICAL";
+}
+
+BatteryInfo getBatteryInfo() {
+  analogReadResolution(12);
+
+  // Enable divider: drive GPIO4 LOW to complete the GND path
+  pinMode(DIVIDER_ENABLE_PIN, OUTPUT);
+  digitalWrite(DIVIDER_ENABLE_PIN, LOW);
+  delay(10);  // let divider settle before warm-up reads
+
+  // On ESP32-C6 core 3.x the attenuation must be set AFTER the channel is
+  // first initialised by analogRead(), otherwise it silently no-ops.
+  analogRead(BAT_ADC_PIN);                        // initialise channel
+  analogSetPinAttenuation(BAT_ADC_PIN, ADC_11db); // switch to 11 dB
+  analogRead(BAT_ADC_PIN);                        // latch new attenuation
+
+  float voltage = readADCVoltage();
+  int   pct;
+  if (voltage < 2.5f) {
+    pct = 255;  // implausible — circuit not connected or no battery
+  } else {
+    pct = voltageToPct(voltage);
+  }
+
+  BatteryInfo info;
+  info.voltage    = voltage;
+  info.percentage = pct;
+  info.status     = (pct == 255) ? "ERR" : getBatteryStatus(pct);
+  return info;
+}
+
 // --- SEND WITH RETRIES ---
 bool sendDataWithRetry() {
   for (int retry = 0; retry < MAX_RETRIES; retry++) {
@@ -240,9 +345,10 @@ void enterPairingMode() {
     return;
   }
 
-  myData.msgType = MSG_PAIRING;
-  myData.temp    = 0;
-  myData.hum     = 0;
+  myData.msgType  = MSG_PAIRING;
+  myData.temp     = 0;
+  myData.hum      = 0;
+  myData.battery  = 0;
 
   Serial.println("Broadcasting...");
   esp_now_send(broadcastAddress, (uint8_t *)&myData, sizeof(myData));
@@ -274,6 +380,15 @@ void setup() {
   digitalWrite(LED_PIN, LOW);
 
   checkFactoryReset();
+
+  // Read battery BEFORE radio init — divider must be off during sleep
+  BatteryInfo bat = getBatteryInfo();
+  Serial.printf("Battery: %.2fV  %d%%  %s\n", bat.voltage, bat.percentage, bat.status);
+  if (bat.percentage != 255 && bat.percentage <= CRITICAL_PCT) {
+    Serial.println("Battery critical — sleeping to protect cell.");
+    esp_sleep_enable_timer_wakeup((uint64_t)SLEEP_TIME * 1000000ULL);
+    esp_deep_sleep_start();
+  }
 
   // Load pairing
   preferences.begin("network", true);
@@ -320,7 +435,8 @@ void setup() {
       ESP.restart();
     }
 
-    myData.msgType = MSG_DATA;
+    myData.msgType  = MSG_DATA;
+    myData.battery  = (uint8_t)bat.percentage;
     readSensor();
     sendDataWithRetry();
     goToSleep(SLEEP_TIME);

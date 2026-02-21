@@ -350,17 +350,18 @@ void enterPairingMode() {
   myData.hum      = 0;
   myData.battery  = 0;
 
-  Serial.println("Broadcasting...");
-  esp_now_send(broadcastAddress, (uint8_t *)&myData, sizeof(myData));
-
   Serial.print("Waiting for master");
-  unsigned long startWait = millis();
+  unsigned long startWait    = millis();
+  unsigned long lastBroadcast = 0;
   while (millis() - startWait < 10000) {
-    if (millis() % 500 < 10) {
+    // Re-broadcast every 2 s so the master doesn't need to catch the very first packet
+    if (millis() - lastBroadcast >= 2000) {
+      esp_now_send(broadcastAddress, (uint8_t *)&myData, sizeof(myData));
+      lastBroadcast = millis();
       Serial.print(".");
-      digitalWrite(LED_PIN, !digitalRead(LED_PIN));
     }
-    delay(10);
+    digitalWrite(LED_PIN, !digitalRead(LED_PIN));
+    delay(250);
   }
 
   Serial.println();

@@ -20,10 +20,11 @@ This is a wireless temperature/humidity monitoring system. One **master** statio
 
 ```
 Temp-sensors/
-├── Temp32_master.ino   # Master station firmware (receiver + web dashboard)
-├── Temp32_slave.ino    # Slave sensor node firmware (SHT40 + deep sleep)
-├── README.md           # Project title placeholder
-└── CLAUDE.md           # This file
+├── Temp32_master.ino        # Master station firmware (receiver + web dashboard)
+├── Temp32_slave.ino         # Slave sensor node firmware (SHT40 + deep sleep)
+├── CLOUD_MIGRATION_PLAN.md  # Plan to migrate to custom cloud + BLE provisioning
+├── README.md                # Project title placeholder
+└── CLAUDE.md                # This file
 ```
 
 ---
@@ -37,8 +38,14 @@ Temp-sensors/
 [Slave Node N]  ──ESP-NOW──┘         (JSON API)
 ```
 
+> **Planned migration:** `CLOUD_MIGRATION_PLAN.md` documents a full migration to
+> a custom cloud backend with MQTT, PostgreSQL, a React web dashboard, and a
+> React Native mobile app. The mobile app will replace WiFiManager with
+> **BLE provisioning** (NimBLE-Arduino) so end users never need to type an IP
+> address. The firmware below reflects the **current implemented state**.
+
 ### Master (`Temp32_master.ino`)
-- Connects to WiFi via **WiFiManager** (captive portal AP on first boot).
+- Connects to WiFi via **WiFiManager** (captive portal AP on first boot). *(Planned: replaced by BLE provisioning — see CLOUD_MIGRATION_PLAN.md)*
 - Receives sensor data via **ESP-NOW** (encrypted with shared PMK/LMK).
 - Serves an HTML dashboard at `http://<IP>/` (auto-refreshes every 10 s).
 - Serves a JSON API at `http://<IP>/api/sensors`.
@@ -143,8 +150,10 @@ SHT40 I2C address: `0x44`.
 | `Preferences.h` | Built-in (ESP32 core) | Slave |
 | `WebServer.h` | Built-in (ESP32 core) | Master |
 | `time.h` | Built-in (ESP32 core) | Master |
-| **WiFiManager** | Third-party (tzapu/WiFiManager) | Master |
+| **WiFiManager** | Third-party (tzapu/WiFiManager) | Master *(planned: replaced by NimBLE-Arduino)* |
 | **SensirionI2cSht4x** | Third-party (Sensirion Arduino Core) | Slave |
+| **NimBLE-Arduino** | Third-party (h2zero/NimBLE-Arduino) | Master *(planned: BLE provisioning)* |
+| **PubSubClient** | Third-party (knolleary/pubsubclient) | Master *(planned: MQTT cloud uplink)* |
 
 Install third-party libraries via Arduino Library Manager or `platformio.ini`.
 
@@ -159,13 +168,20 @@ Install third-party libraries via Arduino Library Manager or `platformio.ini`.
 5. After pairing, slaves deep-sleep and send readings on each wake cycle.
 6. Monitor output via Serial (115200 baud).
 
-### First-Time Setup
+### First-Time Setup (Current — WiFiManager)
 1. Flash master → connect to `Temp-sensor-Master` AP → enter your WiFi credentials.
 2. Master prints its IP to Serial; open `http://<IP>/` in a browser.
 3. Flash slave(s) → they auto-pair to the master.
 
+### First-Time Setup (Planned — BLE provisioning)
+1. Flash master → open mobile app → tap "Add Device" → select `TempMaster-XXXXXX`.
+2. Enter WiFi SSID + password in the app; app pushes credentials via BLE.
+3. Master connects to WiFi + cloud; app shows "Done!".
+4. Flash slave(s) → they auto-pair (or approve pairing via app/dashboard).
+
 ### Resetting
-- **Master WiFi:** Hold BOOT (GPIO 9) for 3 s → WiFiManager portal reopens.
+- **Master WiFi (current):** Hold BOOT (GPIO 9) for 3 s → WiFiManager portal reopens.
+- **Master WiFi (planned BLE):** Hold BOOT (GPIO 9) for 3 s → NVS erased → device re-enters BLE provisioning mode.
 - **Slave pairing:** Hold BOOT (GPIO 9) for 3 s → NVS erased → pairing mode.
   - **Does not work during deep sleep**: GPIO9 is an HP GPIO on C6 — no deep sleep wakeup API supports it. Hold BOOT during the active window at the start of any boot cycle instead.
 

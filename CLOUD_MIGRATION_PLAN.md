@@ -7,7 +7,8 @@ Migrate from a fully local system to a custom, self-hosted cloud solution that p
 - Remote dashboard accessible from anywhere (not just the local network)
 - Cloud-controlled pairing management (approve/reject from a web UI)
 - Time-series data logging with historical charts
-- WiFi provisioning via captive-portal AP (unchanged from current behaviour)
+- **App-based BLE provisioning** — end user provisions WiFi credentials from a
+  mobile app with no IP addresses, no captive portals, and no network switching
 
 ---
 
@@ -17,41 +18,171 @@ Migrate from a fully local system to a custom, self-hosted cloud solution that p
 
 ```
 [Slave 1..N]  ──ESP-NOW──►  [Master ESP32-C6]  ──LAN──►  Browser (local only)
-                               (local web server)
+                               WiFiManager AP (first boot)
 ```
 
 ### Target
 
 ```
-[Slave 1..N]  ──ESP-NOW──►  [Master ESP32-C6]
-                               │  WiFiManager AP (unchanged, first boot only)
-                               │  MQTT/TLS (new)
-                               ▼
-                         [Cloud Server]
-                    ┌──────────┼──────────┐
-              [Mosquitto]  [Backend]  [PostgreSQL]
-                               │
-                         [Dashboard]  ◄── Browser (anywhere)
+[Phone App]  ──BLE──►  [Master ESP32-C6]  ──MQTT/TLS──►  [Cloud Server]
+(provisioning)           ││                          ┌────────┼────────┐
+                         ││ ESP-NOW               [Mosquitto][Backend][PostgreSQL]
+                         ▼▼                                   │
+                    [Slave 1..N]                        [Web Dashboard]
+                                                         (browser, anywhere)
 ```
 
-Slaves never connect to the internet. All cloud communication goes through the master only.
+Slaves never connect to the internet. All cloud communication goes through the
+master only. BLE is used only during the initial setup; after provisioning the
+master operates over WiFi exclusively.
 
 ---
 
 ## Technology Stack
 
+### Cloud + Firmware
+
 | Layer | Choice | Rationale |
 |-------|--------|-----------|
-| Device protocol | MQTT over TLS (port 8883) | Low overhead, bidirectional, perfect for IoT; master can receive commands |
+| Device–cloud protocol | MQTT over TLS (port 8883) | Low overhead, bidirectional, perfect for IoT |
 | MQTT broker | Eclipse Mosquitto | Lightweight, battle-tested, Docker-friendly |
-| Backend | Node.js 20 + Express | Wide ESP32 community examples; good MQTT/WS/SQL libs |
+| Backend | Node.js 20 + Express | Good MQTT/WS/SQL libs; shares JS knowledge with frontend |
 | Real-time push | Socket.IO (WebSocket) | Live dashboard updates without polling |
-| Database | PostgreSQL 16 | Relational, solid; TimescaleDB extension optional for time-series queries |
-| Frontend | React 18 + Vite + Chart.js | SPA, easy chart integration |
+| Database | PostgreSQL 16 | Solid relational DB; TimescaleDB extension optional |
+| Frontend | React 18 + Vite + Chart.js | SPA, easy charts, same language as backend |
 | Containers | Docker + Docker Compose | Reproducible deployment on any VPS |
-| Reverse proxy / TLS | Nginx + Let's Encrypt | HTTPS for dashboard, WSS for Socket.IO |
-| Master MQTT lib | PubSubClient (Arduino) | Mature, well-documented ESP32 MQTT client |
-| Master TLS lib | WiFiClientSecure (built-in) | No new hardware required |
+| Reverse proxy / TLS | Nginx + Let's Encrypt | HTTPS + WSS |
+| Master MQTT lib | PubSubClient (Arduino) | Mature ESP32 MQTT client |
+| Master TLS lib | WiFiClientSecure (built-in) | No extra hardware |
+
+### Mobile Provisioning App
+
+| Layer | Choice | Rationale |
+|-------|--------|-----------|
+| Framework | React Native + Expo | Cross-platform (iOS + Android); shares React knowledge with web dashboard |
+| BLE | `react-native-ble-plx` | Most widely used RN BLE library; works with Expo dev client |
+| HTTP | `axios` | REST calls to cloud backend for device registration + API key fetch |
+| Master BLE lib | **NimBLE-Arduino** | Replaces WiFiManager; much lighter than Bluedroid (~50 KB vs ~300 KB RAM) |
+
+> **Alternative app framework:** Flutter + `flutter_blue_plus` is equally viable
+> if you prefer Dart. Choose based on team familiarity.
+
+---
+
+## BLE Provisioning Protocol
+
+The master advertises a custom GATT service while in provisioning mode.
+
+### Device Advertisement Name
+
+```
+TempMaster-AABBCC    (last 3 octets of MAC, uppercase)
+```
+
+This lets the app list multiple devices unambiguously and lets the user identify
+which physical unit they are setting up.
+
+### GATT Service
+
+| Item | Value |
+|------|-------|
+| Service UUID | `4fafc201-1fb5-459e-8fcc-c5c9c331914b` |
+| Security | BLE bonding required before any write (prevents rogue devices from pushing credentials) |
+
+### Characteristics
+
+| Name | UUID | Properties | Payload |
+|------|------|------------|---------|
+| `PROV_WIFI` | `beb5483e-36e1-4688-b7f5-ea07361b26a8` | Write | `{"ssid":"...","pass":"..."}` |
+| `PROV_CLOUD` | `1c95d5e3-d8f7-413a-bf3d-7a2e5d7be87e` | Write | `{"host":"...","port":8883,"user":"...","pass":"..."}` |
+| `PROV_STATUS` | `6e400003-b5a3-f393-e0a9-e50e24dcca9e` | Read + Notify | `{"state":"idle"\|"connecting"\|"connected"\|"failed","detail":"..."}` |
+
+The master notifies `PROV_STATUS` as it progresses so the app can show a live
+status indicator without polling.
+
+### Provisioning State Machine (firmware)
+
+```
+[Boot]
+  │
+  ├─ WiFi creds in NVS? ──Yes──► Connect to WiFi ──► Normal operation
+  │
+  └─ No ──► Start BLE advertising ("TempMaster-AABBCC")
+                │
+                ├─ App writes PROV_WIFI ──► save SSID+pass to NVS
+                ├─ App writes PROV_CLOUD ──► save MQTT creds to NVS
+                └─ Notify PROV_STATUS "connecting"
+                         │
+                         ├─ WiFi OK + MQTT OK ──► Notify "connected" ──► stop BLE ──► Normal
+                         └─ Failure ──► Notify "failed" ──► keep advertising
+```
+
+**BOOT button held 3 s** at any time: erase WiFi + cloud NVS keys → restart →
+device re-enters BLE provisioning mode. This is the reset / re-provisioning path
+for end users.
+
+---
+
+## Mobile App — Provisioning + Monitoring
+
+The app serves two purposes: initial device provisioning (BLE) and ongoing
+remote monitoring / pairing control (cloud REST + WebSocket).
+
+### Screens
+
+| Screen | Description |
+|--------|-------------|
+| **Login** | Authenticate to the cloud backend; JWT stored securely |
+| **Home / Dashboard** | Live sensor grid for all paired sensors (Socket.IO) |
+| **Add Device** | BLE scan → select device → enter WiFi creds → auto-fetch MQTT creds from cloud → push via BLE → show progress |
+| **Sensor History** | Chart.js line chart for a selected sensor (24 h / 7 d / 30 d) |
+| **Pairing Requests** | Pending slave pairing requests; Approve / Reject |
+| **Settings** | Rename sensors, remove devices, account |
+
+### Add Device Flow (end-user perspective)
+
+```
+1. Tap "Add Device"
+2. App scans BLE → shows list of nearby "TempMaster-XXXXXX" devices
+3. User taps the correct device
+4. App prompts: "Enter your WiFi network name and password"
+5. User types SSID + password → taps "Connect"
+6. App calls backend: POST /api/devices/register → receives MQTT API key
+7. App writes PROV_WIFI then PROV_CLOUD to device via BLE
+8. App subscribes to PROV_STATUS notifications
+9. Progress bar: "Connecting to WiFi..." → "Connecting to cloud..." → "Done!"
+10. App navigates to Home; device appears online
+```
+
+The user never sees an IP address, never switches WiFi networks, never
+types a URL.
+
+### App Project Structure
+
+```
+temp-sensors-app/
+├── app.json                        # Expo config
+├── package.json
+└── src/
+    ├── App.tsx
+    ├── navigation/
+    │   └── AppNavigator.tsx
+    ├── screens/
+    │   ├── LoginScreen.tsx
+    │   ├── DashboardScreen.tsx
+    │   ├── AddDeviceScreen.tsx     # BLE scan + provisioning flow
+    │   ├── HistoryScreen.tsx
+    │   ├── PairingScreen.tsx
+    │   └── SettingsScreen.tsx
+    ├── services/
+    │   ├── ble.ts                  # react-native-ble-plx wrapper; scan, connect, write, notify
+    │   ├── api.ts                  # axios wrapper for cloud REST calls
+    │   └── socket.ts               # Socket.IO client for live updates
+    └── components/
+        ├── SensorCard.tsx
+        ├── ReadingChart.tsx
+        └── PairingCard.tsx
+```
 
 ---
 
@@ -60,10 +191,10 @@ Slaves never connect to the internet. All cloud communication goes through the m
 ```sql
 -- Master devices (one row per physical master ESP32)
 CREATE TABLE devices (
-  id           SERIAL PRIMARY KEY,
-  mac          VARCHAR(17) UNIQUE NOT NULL,   -- master MAC, e.g. "AA:BB:CC:DD:EE:FF"
-  name         VARCHAR(64),
-  api_key      VARCHAR(64) UNIQUE NOT NULL,   -- MQTT password / API credential
+  id            SERIAL PRIMARY KEY,
+  mac           VARCHAR(17) UNIQUE NOT NULL,   -- e.g. "AA:BB:CC:DD:EE:FF"
+  name          VARCHAR(64),
+  api_key       VARCHAR(64) UNIQUE NOT NULL,   -- MQTT password + app auth token
   registered_at TIMESTAMPTZ DEFAULT NOW()
 );
 
@@ -82,24 +213,24 @@ CREATE TABLE sensors (
 CREATE TABLE readings (
   id          BIGSERIAL PRIMARY KEY,
   sensor_id   INT REFERENCES sensors(id) ON DELETE CASCADE,
-  temp        FLOAT,          -- degrees C; NULL if read error
-  hum         FLOAT,          -- %; NULL if read error
-  battery     SMALLINT,       -- 0-100; 255 = read error
-  rssi        SMALLINT,       -- dBm
+  temp        FLOAT,        -- °C; NULL if read error
+  hum         FLOAT,        -- %; NULL if read error
+  battery     SMALLINT,     -- 0–100; 255 = read error
+  rssi        SMALLINT,     -- dBm
   recorded_at TIMESTAMPTZ DEFAULT NOW()
 );
 CREATE INDEX ON readings (sensor_id, recorded_at DESC);
--- Optional TimescaleDB: SELECT create_hypertable('readings', 'recorded_at');
+-- Optional: SELECT create_hypertable('readings', 'recorded_at');  -- TimescaleDB
 
 -- Pending/resolved pairing requests
 CREATE TABLE pairing_requests (
   id           SERIAL PRIMARY KEY,
   device_id    INT REFERENCES devices(id),
   slave_mac    VARCHAR(17) NOT NULL,
-  status       VARCHAR(10) DEFAULT 'pending', -- pending | approved | rejected
+  status       VARCHAR(10) DEFAULT 'pending',  -- pending | approved | rejected
   requested_at TIMESTAMPTZ DEFAULT NOW(),
   resolved_at  TIMESTAMPTZ,
-  resolved_by  VARCHAR(64)   -- dashboard user who acted
+  resolved_by  VARCHAR(64)
 );
 ```
 
@@ -110,12 +241,10 @@ CREATE TABLE pairing_requests (
 | Topic | Direction | Payload (JSON) | Description |
 |-------|-----------|----------------|-------------|
 | `sensors/{master_mac}/data` | Master → Cloud | `{slave_mac, temp, hum, battery, rssi, ts}` | Sensor reading |
-| `sensors/{master_mac}/status` | Master → Cloud | `{online, ip, firmware, ts}` | Online/offline (also used as LWT) |
+| `sensors/{master_mac}/status` | Master → Cloud | `{online, ip, hostname, firmware, ts}` | Online/offline + LWT |
 | `sensors/{master_mac}/pairing/request` | Master → Cloud | `{slave_mac, ts}` | New slave pairing request |
-| `sensors/{master_mac}/pairing/response` | Cloud → Master | `{slave_mac, approved}` | Dashboard decision |
+| `sensors/{master_mac}/pairing/response` | Cloud → Master | `{slave_mac, approved}` | Dashboard/app decision |
 | `sensors/{master_mac}/command` | Cloud → Master | `{cmd, params}` | Reserved for future commands |
-
-All topics use the master's MAC as a namespace so multiple masters can coexist.
 
 ---
 
@@ -123,17 +252,17 @@ All topics use the master's MAC as a namespace so multiple masters can coexist.
 
 | Method | Path | Description |
 |--------|------|-------------|
-| POST | `/api/auth/login` | Dashboard login → returns JWT |
+| POST | `/api/auth/login` | App/dashboard login → JWT |
 | GET | `/api/devices` | List registered masters |
-| POST | `/api/devices/register` | Register a new master (generates API key) |
-| GET | `/api/sensors` | List all sensors (all masters) |
-| PUT | `/api/sensors/:id` | Rename a sensor |
-| DELETE | `/api/sensors/:id` | Remove a sensor |
+| POST | `/api/devices/register` | Register new master; returns generated API key (called by app during BLE provisioning) |
+| GET | `/api/sensors` | List all sensors |
+| PUT | `/api/sensors/:id` | Rename sensor |
+| DELETE | `/api/sensors/:id` | Remove sensor |
 | GET | `/api/sensors/:id/readings` | Historical readings (`?from=&to=&limit=`) |
 | GET | `/api/sensors/:id/readings/latest` | Most recent reading |
 | GET | `/api/pairing/requests?status=pending` | List pairing requests |
-| POST | `/api/pairing/requests/:id/approve` | Approve a pairing request |
-| POST | `/api/pairing/requests/:id/reject` | Reject a pairing request |
+| POST | `/api/pairing/requests/:id/approve` | Approve pairing |
+| POST | `/api/pairing/requests/:id/reject` | Reject pairing |
 
 ---
 
@@ -143,15 +272,15 @@ All topics use the master's MAC as a namespace so multiple masters can coexist.
 temp-sensors-cloud/
 ├── docker-compose.yml
 ├── nginx/
-│   └── nginx.conf                  # Reverse proxy, HTTPS redirect, WebSocket passthrough
+│   └── nginx.conf                  # Reverse proxy, HTTPS, WebSocket passthrough
 ├── mosquitto/
-│   ├── mosquitto.conf              # TLS, auth, ACL
+│   ├── mosquitto.conf              # TLS, per-device auth, ACL
 │   └── passwd                      # Hashed broker credentials
 ├── backend/
 │   ├── package.json
 │   └── src/
-│       ├── index.js                # Express server + Socket.IO init
-│       ├── mqtt.js                 # MQTT bridge: subscribe, persist, forward to WS
+│       ├── index.js                # Express + Socket.IO
+│       ├── mqtt.js                 # MQTT bridge: subscribe → persist → WS push
 │       ├── db.js                   # PostgreSQL pool + query helpers
 │       ├── routes/
 │       │   ├── auth.js
@@ -160,16 +289,16 @@ temp-sensors-cloud/
 │       │   ├── readings.js
 │       │   └── pairing.js
 │       └── middleware/
-│           └── auth.js             # JWT validation middleware
-└── frontend/
+│           └── auth.js             # JWT validation
+└── frontend/                       # Web dashboard (admin / power users)
     ├── package.json
     └── src/
         ├── App.jsx
         ├── pages/
-        │   ├── Dashboard.jsx       # Live sensor grid (Socket.IO)
-        │   ├── History.jsx         # Per-sensor chart (Chart.js)
-        │   ├── Pairing.jsx         # Pending requests, approve/reject
-        │   └── Devices.jsx         # Master management
+        │   ├── Dashboard.jsx
+        │   ├── History.jsx
+        │   ├── Pairing.jsx
+        │   └── Devices.jsx
         └── components/
             ├── SensorCard.jsx
             ├── ReadingChart.jsx
@@ -178,131 +307,114 @@ temp-sensors-cloud/
 
 ---
 
-## Device Discovery — How End Users Find the Device
-
-The device has two operating states with different discovery mechanisms:
-
-### During AP mode (WiFi provisioning — first boot or after BOOT reset)
-
-The master creates the "Temp-sensor-Master" AP. When a user connects to it,
-WiFiManager's captive portal is always at the **fixed address `192.168.4.1`** —
-the user never needs to know a dynamic IP. This state is unchanged.
-
-### After provisioning (device is on the home network)
-
-Once the device joins the home network it gets a DHCP-assigned IP the user
-cannot know in advance. The standard solution for ESP32 is **mDNS
-(Multicast DNS)**, which lets the device advertise a hostname so the user can
-access it by name rather than by IP.
-
-| Approach | User types | Notes |
-|----------|-----------|-------|
-| **mDNS** _(recommended)_ | `http://temp-master.local/` | Works natively on macOS, iOS, Linux; Windows 10+ with Bonjour (usually pre-installed); requires a `.local`-capable browser on Android |
-| Static IP | e.g. `http://192.168.1.50/` | Must match the router's DHCP reservation; can conflict with other devices |
-
-`ESPmDNS.h` is built into the ESP32 Arduino core — no new library to install.
-For a single master the hostname `temp-master` is sufficient. For deployments
-with multiple masters, the last three octets of the MAC address are used:
-`sensor-aabbcc.local` so each device is uniquely addressable.
-
-After the cloud migration the local IP matters only for the initial MQTT
-credential provisioning step. Once the `/provision` endpoint is hit (or MQTT
-credentials are entered via the WiFiManager portal) the end user never needs
-the local address again — they access the cloud dashboard at the domain name.
-
----
-
 ## Firmware Changes — Master (`Temp32_master.ino`)
 
-### New Libraries
+### Libraries Changed
 
-| Library | Purpose |
-|---------|---------|
-| `ESPmDNS` | mDNS hostname advertisement — built into ESP32 core, no install needed |
-| `PubSubClient` | MQTT client |
-| `WiFiClientSecure` | TLS socket (built-in) |
+| Change | Library | Notes |
+|--------|---------|-------|
+| **Remove** | `WiFiManager` | Replaced by BLE provisioning |
+| **Add** | `NimBLE-Arduino` | BLE GATT server for provisioning; install via Arduino Library Manager |
+| **Add** | `PubSubClient` | MQTT client; install via Arduino Library Manager |
+| Add | `WiFiClientSecure` | TLS socket; already built into ESP32 core |
+| Add | `ESPmDNS` | `http://temp-master.local/` for LAN fallback; built into ESP32 core |
 
-### New NVS Keys (stored via `Preferences`)
+### NVS Keys
 
-| Key (namespace: `cloud`) | Type | Description |
-|--------------------------|------|-------------|
-| `mqtt_host` | String | MQTT broker hostname / IP |
-| `mqtt_port` | Int | Default 8883 |
-| `mqtt_user` | String | Device MQTT username (= master MAC) |
-| `mqtt_pass` | String | Device API key from cloud registration |
+| Namespace | Key | Type | Written by | Description |
+|-----------|-----|------|-----------|-------------|
+| `wifi` | `ssid` | String | BLE provisioning | WiFi network name |
+| `wifi` | `pass` | String | BLE provisioning | WiFi password |
+| `cloud` | `mqtt_host` | String | BLE provisioning | MQTT broker hostname |
+| `cloud` | `mqtt_port` | Int | BLE provisioning | Default 8883 |
+| `cloud` | `mqtt_user` | String | BLE provisioning | Device username (= MAC) |
+| `cloud` | `mqtt_pass` | String | BLE provisioning | API key from cloud |
+| `sensors` | `mac0`…`mac9` | Bytes | Auto (pairing) | Saved slave MACs |
+| `sensors` | `count` | Int | Auto (pairing) | Number of saved slaves |
 
 ### Behaviour Changes
 
-1. **WiFi provisioning** — unchanged. WiFiManager captive portal.
+1. **Boot** — check `wifi/ssid` in NVS.
+   - Not found → start NimBLE GATT server, advertise as `TempMaster-AABBCC`.
+   - Found → call `WiFi.begin(ssid, pass)` directly (no WiFiManager).
 
-   Optional enhancement: add custom parameters to the WiFiManager portal for
-   MQTT host, MQTT user, MQTT password so the device is fully provisioned
-   in a single step without a separate `/provision` call.
+2. **BLE provisioning mode**:
+   - Advertise GATT service with `PROV_WIFI`, `PROV_CLOUD`, `PROV_STATUS`
+     characteristics.
+   - On `PROV_WIFI` write: parse JSON, save `ssid` + `pass` to NVS.
+   - On `PROV_CLOUD` write: parse JSON, save MQTT credentials to NVS.
+     Notify `PROV_STATUS` = `"connecting"`.
+   - Call `WiFi.begin()` + `connectCloud()`. On success: notify `"connected"`,
+     stop BLE advertising. On failure: notify `"failed"`, keep advertising.
 
-2. **After WiFi connects — start mDNS** so the device is reachable at a known
-   hostname without the user needing to know the DHCP-assigned IP:
-   ```cpp
-   // Single-master deployment
-   MDNS.begin("temp-master");
-   // → http://temp-master.local/
+3. **After WiFi connects** — start mDNS (`MDNS.begin("temp-master")`), then
+   connect to MQTT broker with TLS, subscribe to
+   `sensors/{mac}/pairing/response` and `sensors/{mac}/command`.
 
-   // Multi-master deployment (hostname derived from MAC)
-   String mac = WiFi.macAddress();  mac.replace(":", "");  mac.toLowerCase();
-   MDNS.begin(("sensor-" + mac.substring(6)).c_str());
-   // → http://sensor-aabbcc.local/
-   ```
-   Also include the mDNS hostname in the MQTT `status` payload so the cloud
-   dashboard can display a "Open local dashboard" link for LAN users.
+4. **On sensor data received from slave** — publish to `sensors/{mac}/data`;
+   update local in-memory store and local web server.
 
-   Also load MQTT credentials from NVS, connect to broker with TLS, subscribe
-   to `sensors/{mac}/pairing/response` and `sensors/{mac}/command`.
+5. **On pairing request received from slave**:
+   - Cloud connected: publish to `sensors/{mac}/pairing/request`, wait up to
+     60 s for `pairing/response`.
+   - Cloud disconnected: fall back to auto-accept.
 
-3. **On sensor data received from slave** — publish to
-   `sensors/{mac}/data` in addition to updating local memory / local dashboard.
+6. **On `pairing/response` from cloud**:
+   - `approved = true`: complete ESP-NOW handshake as today.
+   - `approved = false`: do not register peer; slave retries on next boot.
 
-4. **On pairing request received from slave**:
-   - If cloud connected: publish to `sensors/{mac}/pairing/request`,
-     start 60-second timer waiting for a `pairing/response` message.
-   - If cloud disconnected: fall back to auto-accept (current behaviour)
-     to avoid stranding sensors when internet is unavailable.
+7. **LWT** — set Last Will `sensors/{mac}/status` = `{online:false}` on MQTT
+   connect so the cloud marks the device offline if MQTT drops unexpectedly.
 
-5. **On `pairing/response` received from cloud**:
-   - `approved = true`: complete the ESP-NOW handshake (same as today).
-   - `approved = false`: do not register the peer; slave retries on next boot.
+8. **BOOT button held 3 s** — erase `wifi` and `cloud` NVS namespaces, restart
+   → device re-enters BLE provisioning mode. (Same GPIO9 / `checkFactoryReset()`
+   pattern; existing slave reset logic is unaffected.)
 
-6. **Last Will and Testament (LWT)** — configure Mosquitto LWT on connect:
-   `sensors/{mac}/status` with payload `{online: false}` so the cloud marks
-   the device offline automatically if MQTT drops.
-
-7. **Local web server** — kept as-is. It remains useful as a LAN fallback
-   when internet is unavailable.
-
-### New local endpoint
-
-`POST /provision`
-Accepts JSON body `{mqtt_host, mqtt_port, mqtt_user, mqtt_pass}`, writes to NVS,
-responds 200, restarts. Allows post-deployment reconfiguration without
-reflashing.
+9. **Local web server** — kept as-is; useful for LAN power users via
+   `http://temp-master.local/`.
 
 ---
 
 ## Firmware Changes — Slave (`Temp32_slave.ino`)
 
-**No changes required.** The slave communicates only via ESP-NOW to the master.
-All cloud interaction is the master's responsibility.
+**No changes required.** Slaves communicate only via ESP-NOW to the master.
 
 ---
 
-## WiFi AP Provisioning Flow (Unchanged)
+## BLE Provisioning Flow (end-to-end)
 
 ```
-First boot:
-  1. Master creates AP "Temp-sensor-Master" (password: 12345678)
-  2. User connects a phone or laptop to that AP
-  3. WiFiManager captive portal opens automatically
-  4. User enters WiFi SSID + password
-     (+ optionally MQTT host/user/pass via custom portal params)
-  5. Master saves credentials to NVS, restarts, connects to WiFi + cloud
+Phone App               Master ESP32              Cloud Backend
+    │                        │                         │
+    │  BLE scan              │                         │
+    │─────────────────────►  │ advertising             │
+    │  "TempMaster-AABBCC"   │ TempMaster-AABBCC       │
+    │                        │                         │
+    │  connect + bond        │                         │
+    │◄──────────────────────►│                         │
+    │                        │                         │
+    │  POST /devices/register│                         │
+    │──────────────────────────────────────────────►   │
+    │◄──────────────────────────────────────────────   │
+    │  { api_key: "..." }    │                         │
+    │                        │                         │
+    │  write PROV_WIFI       │                         │
+    │  {ssid, pass}          │                         │
+    │──────────────────────► │ save to NVS             │
+    │                        │                         │
+    │  write PROV_CLOUD      │                         │
+    │  {host,port,user,pass} │                         │
+    │──────────────────────► │ save to NVS             │
+    │                        │ notify "connecting"     │
+    │◄──────────────────────  │                         │
+    │                        │──── WiFi.begin ─────────│
+    │                        │──── MQTT connect ──────►│
+    │                        │                        │
+    │                        │ notify "connected"      │
+    │◄──────────────────────  │                         │
+    │                        │                         │
+    │  App shows "Done!"     │  BLE advertising stops  │
+    │  Navigates to dashboard│  Normal operation       │
 ```
 
 ---
@@ -310,44 +422,46 @@ First boot:
 ## Cloud-Controlled Pairing Flow
 
 ```
-Slave            Master             Cloud Backend     Dashboard
+Slave            Master             Cloud Backend     App / Dashboard
   │                │                     │                │
   │─── ESP-NOW ───►│                     │                │
   │  MSG_PAIRING   │                     │                │
   │                │─── MQTT publish ───►│                │
-  │                │   pairing/request   │                │
+  │                │  pairing/request    │                │
   │                │                     │── WebSocket ──►│
   │                │                     │  show pending  │
   │                │                     │                │
   │                │                     │◄── approve ────│
-  │                │◄── MQTT subscribe ──│                │
-  │                │   pairing/response  │                │
-  │                │   {approved: true}  │                │
+  │                │◄── MQTT sub ────────│                │
+  │                │  pairing/response   │                │
+  │                │  {approved: true}   │                │
   │◄─── ESP-NOW ───│                     │                │
   │  MSG_PAIRING   │                     │                │
   │  (confirm)     │                     │                │
 ```
 
-- If no response arrives within **60 seconds**, the master auto-rejects.
-- The slave will retry pairing on its next wake cycle.
-- If the cloud is unreachable, the master falls back to auto-accept.
+- No cloud response within **60 s** → master auto-rejects; slave retries next boot.
+- Cloud unreachable → master falls back to auto-accept.
 
 ---
 
 ## Security Checklist
 
 | Item | Implementation |
-|------|---------------|
-| Transport encryption | MQTT over TLS (port 8883); HTTPS for dashboard and API |
+|------|----------------|
+| BLE provisioning | Bonding required before writes; credentials never re-transmitted after provisioning |
+| WiFi credentials at rest | Stored in ESP32 NVS (flash-encrypted if ESP32 secure boot enabled) |
+| MQTT transport | TLS (port 8883) |
 | MQTT authentication | Per-device username + password; ACL restricts each device to its own topics |
-| API authentication | JWT (1 h access token, 7 d refresh token) for dashboard |
+| App–cloud authentication | JWT (1 h access token, 7 d refresh); stored in Expo SecureStore |
+| Dashboard authentication | Same JWT; `httpOnly` cookie option for web |
 | HTTPS certificate | Let's Encrypt via Certbot, auto-renewed |
-| XSS prevention | Sensor names sanitised before rendering; React escapes by default |
-| SQL injection | Parameterised queries only (no raw string concatenation) |
-| Rate limiting | 60 req/min per IP on login endpoint; 600 req/min on other endpoints |
-| Secret management | `.env` file excluded from git; never commit API keys or WiFi credentials |
+| XSS prevention | Sensor names sanitised before rendering; React/RN escape by default |
+| SQL injection | Parameterised queries only |
+| Rate limiting | 10 req/min on `/api/auth/login`; 600 req/min on other endpoints |
+| Secret management | `.env` excluded from git; no credentials committed |
 | Database isolation | PostgreSQL not exposed outside Docker network |
-| PMK/LMK keys | Unchanged; must be replaced before production (see CLAUDE.md) |
+| PMK/LMK keys | Must be replaced before production deployment (see CLAUDE.md) |
 
 ---
 
@@ -355,77 +469,92 @@ Slave            Master             Cloud Backend     Dashboard
 
 ### Phase 1 — Cloud Infrastructure
 
-1. Provision a VPS (1 GB RAM minimum; Hetzner/DigitalOcean/Linode all work).
-2. Install Docker and Docker Compose.
-3. Write `docker-compose.yml` with services: `mosquitto`, `postgres`, `backend`, `frontend` (Nginx).
-4. Configure Mosquitto:
-   - TLS with Let's Encrypt certificate.
-   - Password file with one entry per master device.
-   - ACL file restricting each device to `sensors/{its_mac}/#`.
-5. Point a domain to the VPS; obtain Let's Encrypt certificate.
-6. Initialise the PostgreSQL schema.
+1. Provision a VPS (1 GB RAM min; Hetzner/DigitalOcean/Linode).
+2. Install Docker + Docker Compose.
+3. Write `docker-compose.yml`: `mosquitto`, `postgres`, `backend`, `frontend` (Nginx).
+4. Configure Mosquitto: TLS cert, per-device password file, ACL.
+5. Point domain to VPS; obtain Let's Encrypt certificate.
+6. Initialise PostgreSQL schema.
 
-**Deliverable:** `docker-compose.yml`, `mosquitto/`, Postgres init SQL, bare Nginx config.
+**Deliverable:** Running `docker-compose up` brings the full stack online.
 
 ---
 
 ### Phase 2 — Backend API
 
 1. Scaffold Node.js + Express project.
-2. MQTT bridge in `mqtt.js`:
-   - Subscribe to `sensors/+/data`, `sensors/+/status`, `sensors/+/pairing/request`.
-   - On `data`: upsert sensor row, insert reading row, emit via Socket.IO to dashboard.
-   - On `pairing/request`: insert `pairing_requests` row (status = pending), emit to dashboard.
-   - On `pairing/response` decision: publish to broker, update `pairing_requests` row.
-3. REST routes (see endpoint table above).
+2. MQTT bridge (`mqtt.js`):
+   - Subscribe `sensors/+/data`, `sensors/+/status`, `sensors/+/pairing/request`.
+   - Persist to DB; emit live events via Socket.IO.
+3. REST routes (see endpoint table above), including `POST /api/devices/register`
+   which is called by the mobile app during BLE provisioning.
 4. JWT middleware for all routes except `/api/auth/login`.
-5. Socket.IO room per master MAC for targeted live updates.
+5. Socket.IO room per master MAC.
 
-**Deliverable:** Working backend that persists data from MQTT and exposes REST + WebSocket.
+**Deliverable:** Backend persists MQTT data and serves REST + WebSocket.
 
 ---
 
-### Phase 3 — Dashboard Frontend
+### Phase 3 — Web Dashboard
 
-1. React SPA with four pages:
-   - **Dashboard** — live sensor grid (Socket.IO), status badges, battery bars.
-   - **History** — select a sensor + time range, render a Chart.js line chart.
-   - **Pairing** — list pending requests; Approve / Reject buttons that hit the REST API.
-   - **Devices** — list registered masters, show online/offline, copy API key.
-2. Responsive layout (mobile-friendly).
-3. Login screen with JWT storage in `localStorage` (or `httpOnly` cookie).
+1. React SPA:
+   - **Dashboard** — live sensor grid (Socket.IO).
+   - **History** — Chart.js per sensor (24 h / 7 d / 30 d).
+   - **Pairing** — pending requests, approve / reject.
+   - **Devices** — master list, online/offline, copy API key.
+2. Mobile-responsive layout.
+3. Login screen; JWT in `localStorage` or `httpOnly` cookie.
 
-**Deliverable:** Vite build served by Nginx container.
+**Deliverable:** Vite build served by Nginx.
 
 ---
 
 ### Phase 4 — Master Firmware Update
 
-1. Add `#include <ESPmDNS.h>` and call `MDNS.begin(hostname)` immediately after WiFi connects.
-2. Add `PubSubClient` to the Arduino sketch.
-3. Add `loadCloudConfig()` helper (reads MQTT credentials from NVS).
-4. Add `connectCloud()` helper (TLS connect + subscribe + LWT setup).
-5. Modify `OnDataRecv` pairing branch to call `publishPairingRequest()` and
-   wait on a semaphore/flag that the MQTT callback sets.
-6. Add `publishSensorData()` called from the existing `updateSensor()` path.
-7. Add `/provision` HTTP endpoint.
-8. Optionally add WiFiManager custom parameters for MQTT credentials.
+1. Remove `WiFiManager`; add `NimBLE-Arduino` and `PubSubClient` via Library Manager.
+2. Add `#include <NimBLEDevice.h>`, `#include <ESPmDNS.h>`.
+3. Implement `checkProvisioningMode()`: reads NVS; if no WiFi creds → starts BLE.
+4. Implement GATT server with `PROV_WIFI`, `PROV_CLOUD`, `PROV_STATUS` characteristics.
+5. Replace `wm.autoConnect(...)` with `WiFi.begin(ssid, pass)`.
+6. Add `MDNS.begin("temp-master")` after WiFi connects.
+7. Add `loadCloudConfig()` + `connectCloud()` (MQTT TLS + LWT + subscribe).
+8. Add `publishSensorData()` called from `updateSensor()`.
+9. Modify pairing branch in `OnDataRecv` to gate on cloud response.
+10. Update BOOT-button reset path to erase `wifi` + `cloud` NVS namespaces.
 
-**File modified:** `Temp32_master.ino`
-**New library:** `PubSubClient` (install via Arduino Library Manager).
-`ESPmDNS` is already part of the ESP32 Arduino core — no extra install.
+**Files modified:** `Temp32_master.ino`
+**New libraries:** `NimBLE-Arduino`, `PubSubClient` (Arduino Library Manager).
 
 ---
 
-### Phase 5 — Testing & Cutover
+### Phase 5 — Mobile App
 
-1. Flash the updated master firmware to a test device.
-2. Verify sensor readings appear in the cloud database and dashboard.
-3. Verify the pairing flow works end-to-end (new slave → pending in UI → approve → slave starts sending data).
-4. Verify the local web server still works as LAN fallback.
-5. Verify the master reconnects to MQTT automatically after a broker restart.
-6. Verify LWT marks the device offline in the dashboard when the master loses power.
-7. Cutover remaining master devices.
+1. `npx create-expo-app temp-sensors-app --template blank-typescript`.
+2. Install `react-native-ble-plx`, `axios`, `socket.io-client`.
+3. Build `ble.ts` service: scan, connect, bond, write characteristic, subscribe to notify.
+4. Build `AddDeviceScreen`:
+   - Scan BLE → list devices → user selects.
+   - Prompt WiFi SSID + password.
+   - Call `POST /api/devices/register` to get API key.
+   - Write `PROV_WIFI` then `PROV_CLOUD`.
+   - Subscribe `PROV_STATUS` → show progress → navigate on `"connected"`.
+5. Build remaining screens (Dashboard, History, Pairing, Settings).
+6. Submit to App Store / Play Store or distribute via TestFlight / internal track.
+
+**Deliverable:** App provisioning flow works end-to-end on iOS and Android.
+
+---
+
+### Phase 6 — Testing & Cutover
+
+1. Flash updated master firmware to a test unit.
+2. Provision it using the app; verify it appears online in cloud dashboard.
+3. Verify sensor readings flow from slave → master → cloud → app.
+4. Verify cloud-controlled pairing flow.
+5. Verify BOOT-button reset re-enters BLE provisioning mode.
+6. Verify MQTT LWT marks device offline in dashboard on power loss.
+7. Verify `http://temp-master.local/` works as LAN fallback.
+8. Roll out to remaining master devices.
 
 ---
 
@@ -434,14 +563,16 @@ Slave            Master             Cloud Backend     Dashboard
 | Component | Status | Notes |
 |-----------|--------|-------|
 | Slave firmware | **Unchanged** | No internet access required |
-| Master — WiFiManager AP | **Unchanged** | WiFi provisioning identical |
+| Master — WiFiManager | **Removed** | Replaced by NimBLE-Arduino provisioning |
 | Master — ESP-NOW receive | **Unchanged** | Protocol unchanged |
-| Master — local web server | **Kept** | LAN fallback, no removal needed |
-| Master — mDNS hostname | **New** | `ESPmDNS` (built-in); `http://temp-master.local/` |
-| Master — MQTT uplink | **New** | Requires `PubSubClient` + NVS creds |
+| Master — local web server | **Kept** | LAN fallback via `http://temp-master.local/` |
+| Master — BLE provisioning | **New** | NimBLE-Arduino GATT server; active only until provisioned |
+| Master — mDNS | **New** | ESPmDNS (built-in); LAN hostname after provisioning |
+| Master — MQTT uplink | **New** | PubSubClient + TLS |
 | Master — cloud pairing gate | **Modified** | Was auto-accept; now cloud-gated with local fallback |
 | Cloud backend | **New** | Node.js + PostgreSQL + Mosquitto |
-| Cloud dashboard | **New** | React SPA served by Nginx |
+| Web dashboard | **New** | React SPA (admin / power users) |
+| Mobile app | **New** | React Native + Expo (end users; provisioning + monitoring) |
 | PMK / LMK keys | **Unchanged** | Must be rotated before production (see CLAUDE.md) |
 
 ---
@@ -449,10 +580,12 @@ Slave            Master             Cloud Backend     Dashboard
 ## Open Decisions (Resolve Before Implementation)
 
 | Question | Options | Recommendation |
-|----------|---------|---------------|
-| Cloud host | Self-hosted VPS vs AWS/GCP managed | Self-hosted VPS (most control, fixed cost) |
-| Database scale | Plain PostgreSQL vs TimescaleDB | Plain PostgreSQL for now; add TimescaleDB if queries slow down after millions of rows |
-| WiFiManager MQTT params | Add MQTT params to portal vs use `/provision` endpoint | Add to portal — simplest single-step setup |
-| Pairing fallback policy | Auto-accept vs auto-reject when cloud unreachable | Auto-accept; avoids stranding sensors during outages |
-| Dashboard auth | Single admin account vs multi-user | Single admin for V1 |
-| Data retention | Keep all readings vs prune after N days | 90-day rolling window, configurable |
+|----------|---------|----------------|
+| Cloud host | Self-hosted VPS vs AWS/GCP managed | Self-hosted VPS — most control, fixed monthly cost |
+| App framework | React Native (Expo) vs Flutter | React Native — reuses React knowledge from web dashboard |
+| Database scale | Plain PostgreSQL vs TimescaleDB | Plain PostgreSQL for now; add TimescaleDB if performance degrades |
+| Pairing fallback | Auto-accept vs auto-reject when cloud unreachable | Auto-accept — avoids stranding sensors during outages |
+| Dashboard auth | Single admin vs multi-user | Single admin for V1 |
+| App distribution | App Store / Play Store vs TestFlight / internal | Internal track first; public stores after polish |
+| Data retention | Keep all vs prune after N days | 90-day rolling window, configurable |
+| BLE security | Just Works vs numeric comparison passkey | Numeric comparison for V1 — simple but prevents rogue writes |

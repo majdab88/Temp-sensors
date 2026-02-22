@@ -1,0 +1,670 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>TempSensor Device Setup</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      background: #f5f5f7;
+      color: #1d1d1f;
+      min-height: 100vh;
+      padding: 24px 16px;
+    }
+
+    .container {
+      max-width: 480px;
+      margin: 0 auto;
+    }
+
+    h1 {
+      font-size: 1.6rem;
+      font-weight: 700;
+      margin-bottom: 4px;
+    }
+
+    .subtitle {
+      color: #6e6e73;
+      font-size: 0.95rem;
+      margin-bottom: 28px;
+    }
+
+    /* ── Browser compatibility warning ── */
+    #compat-warning {
+      background: #fff3cd;
+      border: 1px solid #ffc107;
+      border-radius: 10px;
+      padding: 14px 16px;
+      margin-bottom: 20px;
+      font-size: 0.9rem;
+      display: none;
+    }
+
+    #compat-warning strong { display: block; margin-bottom: 4px; }
+
+    /* ── Cards ── */
+    .card {
+      background: #fff;
+      border-radius: 14px;
+      padding: 20px;
+      margin-bottom: 16px;
+      box-shadow: 0 1px 4px rgba(0,0,0,0.08);
+    }
+
+    .card-title {
+      font-size: 0.78rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      color: #6e6e73;
+      margin-bottom: 14px;
+    }
+
+    /* ── Steps ── */
+    .step-badge {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 24px;
+      height: 24px;
+      border-radius: 50%;
+      background: #e8e8ed;
+      color: #6e6e73;
+      font-size: 0.8rem;
+      font-weight: 700;
+      margin-right: 8px;
+      flex-shrink: 0;
+      transition: background 0.2s, color 0.2s;
+    }
+
+    .step-badge.active   { background: #0071e3; color: #fff; }
+    .step-badge.done     { background: #34c759; color: #fff; }
+
+    .step-header {
+      display: flex;
+      align-items: center;
+      margin-bottom: 14px;
+    }
+
+    .step-header h2 {
+      font-size: 1rem;
+      font-weight: 600;
+    }
+
+    /* ── Device info ── */
+    #device-info {
+      display: none;
+      background: #f0f8ff;
+      border: 1px solid #b3d9ff;
+      border-radius: 8px;
+      padding: 10px 14px;
+      font-size: 0.88rem;
+      margin-bottom: 14px;
+    }
+
+    #device-info span { font-weight: 600; }
+
+    /* ── Form fields ── */
+    label {
+      display: block;
+      font-size: 0.85rem;
+      font-weight: 500;
+      color: #3a3a3c;
+      margin-bottom: 4px;
+      margin-top: 12px;
+    }
+
+    label:first-of-type { margin-top: 0; }
+
+    input[type="text"],
+    input[type="password"],
+    input[type="number"] {
+      width: 100%;
+      padding: 10px 12px;
+      border: 1px solid #d2d2d7;
+      border-radius: 8px;
+      font-size: 0.95rem;
+      background: #fafafa;
+      outline: none;
+      transition: border-color 0.15s;
+    }
+
+    input:focus { border-color: #0071e3; background: #fff; }
+
+    .password-wrap {
+      position: relative;
+    }
+
+    .password-wrap input { padding-right: 44px; }
+
+    .toggle-pass {
+      position: absolute;
+      right: 12px;
+      top: 50%;
+      transform: translateY(-50%);
+      background: none;
+      border: none;
+      cursor: pointer;
+      font-size: 1rem;
+      color: #6e6e73;
+      padding: 0;
+    }
+
+    /* ── Fieldset for optional section ── */
+    details {
+      margin-top: 14px;
+    }
+
+    details summary {
+      cursor: pointer;
+      font-size: 0.88rem;
+      font-weight: 500;
+      color: #0071e3;
+      list-style: none;
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      user-select: none;
+    }
+
+    details summary::before {
+      content: "▶";
+      font-size: 0.7rem;
+      transition: transform 0.2s;
+    }
+
+    details[open] summary::before { transform: rotate(90deg); }
+
+    .details-body {
+      margin-top: 10px;
+    }
+
+    /* ── Buttons ── */
+    .btn {
+      display: block;
+      width: 100%;
+      padding: 12px;
+      border: none;
+      border-radius: 10px;
+      font-size: 1rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: opacity 0.15s, transform 0.1s;
+    }
+
+    .btn:active { transform: scale(0.98); }
+
+    .btn:disabled {
+      opacity: 0.4;
+      cursor: not-allowed;
+      transform: none;
+    }
+
+    .btn-primary   { background: #0071e3; color: #fff; }
+    .btn-success   { background: #34c759; color: #fff; }
+    .btn-danger    { background: #ff3b30; color: #fff; }
+    .btn-secondary { background: #e8e8ed; color: #1d1d1f; }
+
+    /* ── Status badge ── */
+    .status-row {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      margin-top: 14px;
+    }
+
+    .status-pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 5px 12px;
+      border-radius: 20px;
+      font-size: 0.82rem;
+      font-weight: 600;
+    }
+
+    .status-pill.idle        { background: #e8e8ed; color: #6e6e73; }
+    .status-pill.connecting  { background: #fff3cd; color: #856404; }
+    .status-pill.connected   { background: #d4edda; color: #155724; }
+    .status-pill.failed      { background: #f8d7da; color: #721c24; }
+
+    .dot {
+      width: 8px; height: 8px;
+      border-radius: 50%;
+      background: currentColor;
+    }
+
+    .dot.pulse {
+      animation: pulse 1s infinite;
+    }
+
+    @keyframes pulse {
+      0%, 100% { opacity: 1; }
+      50%       { opacity: 0.3; }
+    }
+
+    /* ── Log ── */
+    #log {
+      background: #1c1c1e;
+      color: #d1d1d6;
+      border-radius: 10px;
+      padding: 14px;
+      font-family: "SF Mono", Menlo, Consolas, monospace;
+      font-size: 0.78rem;
+      line-height: 1.6;
+      height: 180px;
+      overflow-y: auto;
+      margin-top: 14px;
+    }
+
+    .log-ts  { color: #8e8e93; margin-right: 6px; }
+    .log-ok  { color: #30d158; }
+    .log-err { color: #ff453a; }
+    .log-inf { color: #64d2ff; }
+
+    /* ── Success screen ── */
+    #success-screen {
+      display: none;
+      text-align: center;
+      padding: 32px 20px;
+    }
+
+    .success-icon {
+      font-size: 4rem;
+      margin-bottom: 12px;
+    }
+
+    #success-screen h2 {
+      font-size: 1.4rem;
+      margin-bottom: 8px;
+    }
+
+    #success-screen p {
+      color: #6e6e73;
+      margin-bottom: 24px;
+      font-size: 0.95rem;
+    }
+
+    /* ── Responsive tweaks ── */
+    @media (min-width: 520px) {
+      .row-2 {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 12px;
+      }
+      .row-2 label:first-of-type { margin-top: 0; }
+    }
+  </style>
+</head>
+<body>
+<div class="container">
+
+  <h1>Device Setup</h1>
+  <p class="subtitle">Connect your TempSensor master to WiFi and the cloud.</p>
+
+  <!-- Browser compatibility notice -->
+  <div id="compat-warning">
+    <strong>⚠️ Web Bluetooth not supported</strong>
+    This page requires <strong>Chrome or Edge on Android, Windows, or macOS</strong>.
+    Safari and Firefox do not support Web Bluetooth.
+    For iOS use the React Native app instead.
+  </div>
+
+  <!-- ── STEP 1: Connect ── -->
+  <div class="card" id="card-connect">
+    <div class="step-header">
+      <span class="step-badge active" id="badge-1">1</span>
+      <h2>Find Your Device</h2>
+    </div>
+
+    <div id="device-info">
+      Connected to <span id="device-name">—</span>
+    </div>
+
+    <button class="btn btn-primary" id="btn-connect" onclick="connect()">
+      Scan for Devices
+    </button>
+
+    <button class="btn btn-danger" id="btn-disconnect" onclick="disconnect()"
+            style="margin-top:10px; display:none;">
+      Disconnect
+    </button>
+  </div>
+
+  <!-- ── STEP 2: WiFi Credentials ── -->
+  <div class="card" id="card-wifi" style="opacity:0.45; pointer-events:none;">
+    <div class="step-header">
+      <span class="step-badge" id="badge-2">2</span>
+      <h2>WiFi Network</h2>
+    </div>
+
+    <label for="ssid">Network name (SSID)</label>
+    <input type="text" id="ssid" placeholder="My Home WiFi" autocomplete="off">
+
+    <label for="wifi-pass">Password</label>
+    <div class="password-wrap">
+      <input type="password" id="wifi-pass" placeholder="WiFi password" autocomplete="current-password">
+      <button class="toggle-pass" onclick="togglePass('wifi-pass', this)" tabindex="-1">👁</button>
+    </div>
+  </div>
+
+  <!-- ── STEP 3: Cloud / MQTT ── -->
+  <div class="card" id="card-cloud" style="opacity:0.45; pointer-events:none;">
+    <div class="step-header">
+      <span class="step-badge" id="badge-3">3</span>
+      <h2>Cloud Config</h2>
+    </div>
+
+    <p style="font-size:0.85rem; color:#6e6e73; margin-bottom:12px;">
+      Enter your MQTT broker details. Leave blank to skip cloud setup
+      and provision WiFi only (useful for local-only testing).
+    </p>
+
+    <details id="cloud-details">
+      <summary>MQTT broker credentials (optional)</summary>
+      <div class="details-body">
+        <label for="mqtt-host">Broker hostname or IP</label>
+        <input type="text" id="mqtt-host" placeholder="mqtt.example.com" autocomplete="off">
+
+        <div class="row-2">
+          <div>
+            <label for="mqtt-port">Port</label>
+            <input type="number" id="mqtt-port" value="8883" min="1" max="65535">
+          </div>
+          <div>
+            <label for="mqtt-user">Username</label>
+            <input type="text" id="mqtt-user" placeholder="device MAC" autocomplete="off">
+          </div>
+        </div>
+
+        <label for="mqtt-pass">API key / password</label>
+        <div class="password-wrap">
+          <input type="password" id="mqtt-pass" placeholder="API key from cloud" autocomplete="off">
+          <button class="toggle-pass" onclick="togglePass('mqtt-pass', this)" tabindex="-1">👁</button>
+        </div>
+      </div>
+    </details>
+
+    <button class="btn btn-success" id="btn-provision" onclick="provision()"
+            style="margin-top:16px;" disabled>
+      Provision Device
+    </button>
+
+    <div class="status-row">
+      <div class="status-pill idle" id="status-pill">
+        <div class="dot"></div>
+        <span id="status-text">Idle</span>
+      </div>
+    </div>
+
+    <div id="log"></div>
+  </div>
+
+  <!-- ── Success screen ── -->
+  <div class="card" id="success-screen">
+    <div class="success-icon">✅</div>
+    <h2>Device Ready!</h2>
+    <p id="success-msg">Your TempSensor master is connected and sending data to the cloud.</p>
+    <button class="btn btn-secondary" onclick="resetUI()">Set Up Another Device</button>
+  </div>
+
+</div>
+
+<script>
+  // ── GATT UUIDs (must match firmware) ──────────────────────────────────────
+  const SERVICE_UUID  = '4fafc201-1fb5-459e-8fcc-c5c9c331914b';
+  const CHAR_WIFI     = 'beb5483e-36e1-4688-b7f5-ea07361b26a8';
+  const CHAR_CLOUD    = '1c95d5e3-d8f7-413a-bf3d-7a2e5d7be87e';
+  const CHAR_STATUS   = '6e400003-b5a3-f393-e0a9-e50e24dcca9e';
+
+  // ── State ─────────────────────────────────────────────────────────────────
+  let bleDevice     = null;
+  let gattServer    = null;
+  let charWifi      = null;
+  let charCloud     = null;
+  let charStatus    = null;
+
+  // ── Init ──────────────────────────────────────────────────────────────────
+  document.addEventListener('DOMContentLoaded', () => {
+    if (!navigator.bluetooth) {
+      document.getElementById('compat-warning').style.display = 'block';
+      document.getElementById('btn-connect').disabled = true;
+    }
+  });
+
+  // ── BLE Connect ───────────────────────────────────────────────────────────
+  async function connect() {
+    log('Scanning for TempMaster devices...', 'inf');
+    setConnectBusy(true);
+    try {
+      bleDevice = await navigator.bluetooth.requestDevice({
+        filters: [{ namePrefix: 'TempMaster-' }],
+        optionalServices: [SERVICE_UUID]
+      });
+
+      bleDevice.addEventListener('gattserverdisconnected', onDisconnected);
+      log(`Found: ${bleDevice.name}`, 'inf');
+
+      gattServer = await bleDevice.gatt.connect();
+      log('GATT connected', 'inf');
+
+      const service = await gattServer.getPrimaryService(SERVICE_UUID);
+      charWifi   = await service.getCharacteristic(CHAR_WIFI);
+      charCloud  = await service.getCharacteristic(CHAR_CLOUD);
+      charStatus = await service.getCharacteristic(CHAR_STATUS);
+
+      // Subscribe to status notifications
+      await charStatus.startNotifications();
+      charStatus.addEventListener('characteristicvaluechanged', onStatusNotify);
+
+      log('Characteristics ready', 'ok');
+      onConnected();
+    } catch (err) {
+      log(`Connection failed: ${err.message}`, 'err');
+      setConnectBusy(false);
+    }
+  }
+
+  function onConnected() {
+    document.getElementById('device-name').textContent = bleDevice.name;
+    document.getElementById('device-info').style.display = 'block';
+    document.getElementById('btn-connect').style.display = 'none';
+    document.getElementById('btn-disconnect').style.display = 'block';
+
+    setBadgeDone(1);
+    unlockCard('card-wifi', 2);
+    unlockCard('card-cloud', 3);
+
+    document.getElementById('btn-provision').disabled = false;
+    log(`Ready to provision ${bleDevice.name}`, 'ok');
+  }
+
+  function onDisconnected() {
+    log('Device disconnected', 'err');
+    setStatus('idle');
+    setConnectBusy(false);
+    document.getElementById('btn-connect').style.display = 'block';
+    document.getElementById('btn-disconnect').style.display = 'none';
+    document.getElementById('device-info').style.display = 'none';
+    lockCard('card-wifi');
+    lockCard('card-cloud');
+    document.getElementById('btn-provision').disabled = true;
+    resetBadge(1); resetBadge(2); resetBadge(3);
+  }
+
+  async function disconnect() {
+    if (gattServer && gattServer.connected) {
+      gattServer.disconnect();
+    }
+  }
+
+  // ── Provision ─────────────────────────────────────────────────────────────
+  async function provision() {
+    const ssid     = document.getElementById('ssid').value.trim();
+    const wifiPass = document.getElementById('wifi-pass').value;
+
+    if (!ssid) { log('SSID is required', 'err'); return; }
+
+    document.getElementById('btn-provision').disabled = true;
+    setStatus('connecting');
+    log('Sending WiFi credentials...', 'inf');
+
+    try {
+      // 1. Write WiFi credentials
+      const wifiPayload = JSON.stringify({ ssid, pass: wifiPass });
+      await writeCharacteristic(charWifi, wifiPayload);
+      log('WiFi credentials written', 'ok');
+
+      // 2. Write cloud credentials (optional)
+      const mqttHost = document.getElementById('mqtt-host').value.trim();
+      if (mqttHost) {
+        log('Sending cloud credentials...', 'inf');
+        const cloudPayload = JSON.stringify({
+          host: mqttHost,
+          port: parseInt(document.getElementById('mqtt-port').value) || 8883,
+          user: document.getElementById('mqtt-user').value.trim(),
+          pass: document.getElementById('mqtt-pass').value
+        });
+        await writeCharacteristic(charCloud, cloudPayload);
+        log('Cloud credentials written', 'ok');
+      } else {
+        log('No MQTT host entered — skipping cloud config', 'inf');
+      }
+
+      log('Waiting for device to connect...', 'inf');
+      // onStatusNotify handles the rest
+
+    } catch (err) {
+      log(`Error during provisioning: ${err.message}`, 'err');
+      setStatus('failed');
+      document.getElementById('btn-provision').disabled = false;
+    }
+  }
+
+  function onStatusNotify(event) {
+    const raw = new TextDecoder().decode(event.target.value);
+    log(`Device reported: ${raw}`, 'inf');
+
+    let status;
+    try { status = JSON.parse(raw); }
+    catch { log('Could not parse status JSON', 'err'); return; }
+
+    setStatus(status.state);
+
+    if (status.state === 'connected') {
+      setBadgeDone(2); setBadgeDone(3);
+      log('Provisioning complete!', 'ok');
+      setTimeout(showSuccess, 800);
+    } else if (status.state === 'failed') {
+      log(`Failed: ${status.detail || 'unknown reason'}`, 'err');
+      document.getElementById('btn-provision').disabled = false;
+    }
+  }
+
+  // ── Helpers ───────────────────────────────────────────────────────────────
+  async function writeCharacteristic(char, jsonString) {
+    const encoded = new TextEncoder().encode(jsonString);
+
+    // Web Bluetooth has a 512-byte MTU limit per write.
+    // Split into chunks if needed (unlikely for credential payloads).
+    const CHUNK = 512;
+    for (let i = 0; i < encoded.length; i += CHUNK) {
+      await char.writeValueWithResponse(encoded.slice(i, i + CHUNK));
+    }
+  }
+
+  function setStatus(state) {
+    const pill = document.getElementById('status-pill');
+    const text = document.getElementById('status-text');
+    const dot  = pill.querySelector('.dot');
+
+    pill.className = `status-pill ${state}`;
+    dot.className  = `dot${state === 'connecting' ? ' pulse' : ''}`;
+
+    const labels = {
+      idle: 'Idle', connecting: 'Connecting…',
+      connected: 'Connected', failed: 'Failed'
+    };
+    text.textContent = labels[state] || state;
+  }
+
+  function log(msg, type = '') {
+    const el  = document.getElementById('log');
+    const ts  = new Date().toLocaleTimeString();
+    const cls = type === 'ok' ? 'log-ok' : type === 'err' ? 'log-err' : 'log-inf';
+    const prefix = type === 'ok' ? '✓' : type === 'err' ? '✗' : '→';
+    el.innerHTML += `<div><span class="log-ts">${ts}</span><span class="${cls}">${prefix} ${msg}</span></div>`;
+    el.scrollTop = el.scrollHeight;
+  }
+
+  function setConnectBusy(busy) {
+    document.getElementById('btn-connect').disabled = busy;
+    document.getElementById('btn-connect').textContent = busy ? 'Connecting…' : 'Scan for Devices';
+  }
+
+  function unlockCard(id, stepNum) {
+    const card = document.getElementById(id);
+    card.style.opacity = '1';
+    card.style.pointerEvents = 'auto';
+    document.getElementById(`badge-${stepNum}`).classList.add('active');
+  }
+
+  function lockCard(id) {
+    const card = document.getElementById(id);
+    card.style.opacity = '0.45';
+    card.style.pointerEvents = 'none';
+  }
+
+  function setBadgeDone(n) {
+    const b = document.getElementById(`badge-${n}`);
+    b.className = 'step-badge done';
+    b.textContent = '✓';
+  }
+
+  function resetBadge(n) {
+    const b = document.getElementById(`badge-${n}`);
+    b.className = `step-badge${n === 1 ? ' active' : ''}`;
+    b.textContent = n;
+  }
+
+  function togglePass(inputId, btn) {
+    const input = document.getElementById(inputId);
+    if (input.type === 'password') { input.type = 'text';     btn.textContent = '🙈'; }
+    else                           { input.type = 'password'; btn.textContent = '👁';  }
+  }
+
+  function showSuccess() {
+    const hasMqtt = document.getElementById('mqtt-host').value.trim() !== '';
+    document.getElementById('success-msg').textContent = hasMqtt
+      ? 'Your device is connected to WiFi and the cloud. It will appear in the dashboard shortly.'
+      : 'Your device is connected to WiFi. Cloud credentials were not set — provision again to add them.';
+    document.getElementById('card-connect').style.display  = 'none';
+    document.getElementById('card-wifi').style.display     = 'none';
+    document.getElementById('card-cloud').style.display    = 'none';
+    document.getElementById('success-screen').style.display = 'block';
+  }
+
+  function resetUI() {
+    disconnect();
+    document.getElementById('card-connect').style.display   = '';
+    document.getElementById('card-wifi').style.display      = '';
+    document.getElementById('card-cloud').style.display     = '';
+    document.getElementById('success-screen').style.display = 'none';
+    document.getElementById('log').innerHTML = '';
+    setStatus('idle');
+    document.getElementById('btn-connect').style.display    = 'block';
+    document.getElementById('btn-disconnect').style.display = 'none';
+    document.getElementById('device-info').style.display    = 'none';
+    document.getElementById('ssid').value      = '';
+    document.getElementById('wifi-pass').value = '';
+    lockCard('card-wifi'); lockCard('card-cloud');
+    resetBadge(1); resetBadge(2); resetBadge(3);
+    document.getElementById('badge-1').classList.add('active');
+    document.getElementById('btn-provision').disabled = true;
+  }
+</script>
+</body>
+</html>

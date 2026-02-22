@@ -178,12 +178,47 @@ temp-sensors-cloud/
 
 ---
 
+## Device Discovery — How End Users Find the Device
+
+The device has two operating states with different discovery mechanisms:
+
+### During AP mode (WiFi provisioning — first boot or after BOOT reset)
+
+The master creates the "Temp-sensor-Master" AP. When a user connects to it,
+WiFiManager's captive portal is always at the **fixed address `192.168.4.1`** —
+the user never needs to know a dynamic IP. This state is unchanged.
+
+### After provisioning (device is on the home network)
+
+Once the device joins the home network it gets a DHCP-assigned IP the user
+cannot know in advance. The standard solution for ESP32 is **mDNS
+(Multicast DNS)**, which lets the device advertise a hostname so the user can
+access it by name rather than by IP.
+
+| Approach | User types | Notes |
+|----------|-----------|-------|
+| **mDNS** _(recommended)_ | `http://temp-master.local/` | Works natively on macOS, iOS, Linux; Windows 10+ with Bonjour (usually pre-installed); requires a `.local`-capable browser on Android |
+| Static IP | e.g. `http://192.168.1.50/` | Must match the router's DHCP reservation; can conflict with other devices |
+
+`ESPmDNS.h` is built into the ESP32 Arduino core — no new library to install.
+For a single master the hostname `temp-master` is sufficient. For deployments
+with multiple masters, the last three octets of the MAC address are used:
+`sensor-aabbcc.local` so each device is uniquely addressable.
+
+After the cloud migration the local IP matters only for the initial MQTT
+credential provisioning step. Once the `/provision` endpoint is hit (or MQTT
+credentials are entered via the WiFiManager portal) the end user never needs
+the local address again — they access the cloud dashboard at the domain name.
+
+---
+
 ## Firmware Changes — Master (`Temp32_master.ino`)
 
 ### New Libraries
 
 | Library | Purpose |
 |---------|---------|
+| `ESPmDNS` | mDNS hostname advertisement — built into ESP32 core, no install needed |
 | `PubSubClient` | MQTT client |
 | `WiFiClientSecure` | TLS socket (built-in) |
 
@@ -204,9 +239,23 @@ temp-sensors-cloud/
    MQTT host, MQTT user, MQTT password so the device is fully provisioned
    in a single step without a separate `/provision` call.
 
-2. **After WiFi connects** — load MQTT credentials from NVS, connect to broker
-   with TLS, subscribe to `sensors/{mac}/pairing/response` and
-   `sensors/{mac}/command`.
+2. **After WiFi connects — start mDNS** so the device is reachable at a known
+   hostname without the user needing to know the DHCP-assigned IP:
+   ```cpp
+   // Single-master deployment
+   MDNS.begin("temp-master");
+   // → http://temp-master.local/
+
+   // Multi-master deployment (hostname derived from MAC)
+   String mac = WiFi.macAddress();  mac.replace(":", "");  mac.toLowerCase();
+   MDNS.begin(("sensor-" + mac.substring(6)).c_str());
+   // → http://sensor-aabbcc.local/
+   ```
+   Also include the mDNS hostname in the MQTT `status` payload so the cloud
+   dashboard can display a "Open local dashboard" link for LAN users.
+
+   Also load MQTT credentials from NVS, connect to broker with TLS, subscribe
+   to `sensors/{mac}/pairing/response` and `sensors/{mac}/command`.
 
 3. **On sensor data received from slave** — publish to
    `sensors/{mac}/data` in addition to updating local memory / local dashboard.
@@ -352,17 +401,19 @@ Slave            Master             Cloud Backend     Dashboard
 
 ### Phase 4 — Master Firmware Update
 
-1. Add `PubSubClient` to the Arduino sketch.
-2. Add `loadCloudConfig()` helper (reads MQTT credentials from NVS).
-3. Add `connectCloud()` helper (TLS connect + subscribe + LWT setup).
-4. Modify `OnDataRecv` pairing branch to call `publishPairingRequest()` and
+1. Add `#include <ESPmDNS.h>` and call `MDNS.begin(hostname)` immediately after WiFi connects.
+2. Add `PubSubClient` to the Arduino sketch.
+3. Add `loadCloudConfig()` helper (reads MQTT credentials from NVS).
+4. Add `connectCloud()` helper (TLS connect + subscribe + LWT setup).
+5. Modify `OnDataRecv` pairing branch to call `publishPairingRequest()` and
    wait on a semaphore/flag that the MQTT callback sets.
-5. Add `publishSensorData()` called from the existing `updateSensor()` path.
-6. Add `/provision` HTTP endpoint.
-7. Optionally add WiFiManager custom parameters for MQTT credentials.
+6. Add `publishSensorData()` called from the existing `updateSensor()` path.
+7. Add `/provision` HTTP endpoint.
+8. Optionally add WiFiManager custom parameters for MQTT credentials.
 
 **File modified:** `Temp32_master.ino`
 **New library:** `PubSubClient` (install via Arduino Library Manager).
+`ESPmDNS` is already part of the ESP32 Arduino core — no extra install.
 
 ---
 
@@ -386,6 +437,7 @@ Slave            Master             Cloud Backend     Dashboard
 | Master — WiFiManager AP | **Unchanged** | WiFi provisioning identical |
 | Master — ESP-NOW receive | **Unchanged** | Protocol unchanged |
 | Master — local web server | **Kept** | LAN fallback, no removal needed |
+| Master — mDNS hostname | **New** | `ESPmDNS` (built-in); `http://temp-master.local/` |
 | Master — MQTT uplink | **New** | Requires `PubSubClient` + NVS creds |
 | Master — cloud pairing gate | **Modified** | Was auto-accept; now cloud-gated with local fallback |
 | Cloud backend | **New** | Node.js + PostgreSQL + Mosquitto |

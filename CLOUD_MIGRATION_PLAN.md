@@ -96,6 +96,10 @@ which physical unit they are setting up.
 | `PROV_WIFI` | `beb5483e-36e1-4688-b7f5-ea07361b26a8` | Write | `{"ssid":"...","pass":"..."}` |
 | `PROV_CLOUD` | `1c95d5e3-d8f7-413a-bf3d-7a2e5d7be87e` | Write | `{"host":"...","port":8883,"user":"...","pass":"..."}` |
 | `PROV_STATUS` | `6e400003-b5a3-f393-e0a9-e50e24dcca9e` | Read + Notify | `{"state":"idle"\|"connecting"\|"connected"\|"failed","detail":"..."}` |
+| `PROV_NETWORKS` | `d5913036-2d8a-41ee-85b9-4e361aa5c8a3` | Write + Notify | Write any byte to trigger scan; notifies with `{"networks":[{"ssid":"...","rssi":-45,"enc":3},...]}` |
+
+`enc` values map to `wifi_auth_mode_t`: `0` = open (no password), non-zero = secured (WPA/WPA2/WPA3).
+Results are sorted by RSSI descending and capped at the top 10 networks to stay within the 512-byte BLE MTU.
 
 The master notifies `PROV_STATUS` as it progresses so the app can show a live
 status indicator without polling.

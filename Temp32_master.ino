@@ -1,22 +1,25 @@
+// Requires NimBLE-Arduino v2.x (h2zero/NimBLE-Arduino)
+// Install via Arduino Library Manager. v1.x has different callback signatures.
+#include <NimBLEDevice.h>
 #include <WiFi.h>
 #include <esp_now.h>
 #include <esp_wifi.h>
-#include <WiFiManager.h>
 #include <WebServer.h>
 #include <Preferences.h>
+#include <ESPmDNS.h>
 #include "time.h"
 
 // --- XIAO ESP32-C6 PIN DEFINITIONS ---
-#define TRIGGER_PIN 9   // BOOT button on XIAO ESP32-C6
-#define LED_PIN 15      // Built-in LED on XIAO ESP32-C6
+#define TRIGGER_PIN 9   // BOOT button
+#define LED_PIN     15  // Built-in LED
 
 // --- MESSAGE TYPES ---
 #define MSG_PAIRING 1
 #define MSG_DATA    2
 
 // --- ESP-NOW ENCRYPTION ---
-// IMPORTANT: These keys must be identical on all devices (master + all slaves)
-// Change both bytes below to your own secret values before deploying
+// IMPORTANT: Change both keys to your own secret values before deploying.
+// Keys must be identical on the master and all slaves.
 static const uint8_t PMK_KEY[16] = {
   0x4A, 0x2F, 0x8C, 0x1E, 0x7B, 0x3D, 0x9A, 0x5F,
   0x6E, 0x2C, 0x4B, 0x8D, 0x1A, 0x7F, 0x3E, 0x9C
@@ -26,59 +29,426 @@ static const uint8_t LMK_KEY[16] = {
   0x1A, 0x9F, 0x3C, 0x72, 0xD4, 0x5B, 0x8E, 0x20
 };
 
+// --- BLE GATT UUIDs (must match ble-provision.html) ---
+#define PROV_SERVICE_UUID  "4fafc201-1fb5-459e-8fcc-c5c9c331914b"
+#define PROV_CHAR_WIFI     "beb5483e-36e1-4688-b7f5-ea07361b26a8"  // Write: {ssid,pass}
+#define PROV_CHAR_CLOUD    "1c95d5e3-d8f7-413a-bf3d-7a2e5d7be87e"  // Write: {host,port,user,pass}
+#define PROV_CHAR_STATUS   "6e400003-b5a3-f393-e0a9-e50e24dcca9e"  // Read+Notify: {state,detail}
+#define PROV_CHAR_NETWORKS "d5913036-2d8a-41ee-85b9-4e361aa5c8a3"  // Write=scan trigger, Notify=results
+
+// --- TIMEOUTS ---
+#define WIFI_CONNECT_TIMEOUT_MS 15000  // ms to wait for WiFi after credentials received
+
 // --- NTP CONFIGURATION ---
-const char* ntpServer = "pool.ntp.org";
-const long  gmtOffset_sec = 7200;
-const int   daylightOffset_sec = 3600;
+const char*         ntpServer          = "pool.ntp.org";
+const long          gmtOffset_sec      = 7200;
+const int           daylightOffset_sec = 3600;
+const unsigned long NTP_SYNC_INTERVAL  = 86400000;  // 24 h
 
-// --- TIME SYNC MANAGEMENT ---
-bool timeConfigured = false;
-unsigned long lastNtpSync = 0;
-const unsigned long NTP_SYNC_INTERVAL = 86400000;
+bool          timeConfigured = false;
+unsigned long lastNtpSync    = 0;
 
-// --- MESSAGE STRUCTURE ---
-// IMPORTANT: must be byte-for-byte identical on master and all slaves
+// --- MESSAGE STRUCTURE (must be byte-for-byte identical on master and all slaves) ---
 typedef struct struct_message {
   uint8_t msgType;
-  float temp;
-  float hum;
-  uint8_t battery;   // 0–100 %; 255 = read error
+  float   temp;
+  float   hum;
+  uint8_t battery;  // 0–100 %; 255 = read error
 } struct_message;
 
 struct_message incomingData;
-volatile int incomingRSSI = 0;
+volatile int   incomingRSSI = 0;
 
 // --- SENSOR DATA STORAGE ---
 #define MAX_SENSORS 10
 
 struct SensorData {
-  uint8_t mac[6];
-  float temp;
-  float hum;
-  int rssi;
+  uint8_t       mac[6];
+  float         temp;
+  float         hum;
+  int           rssi;
   unsigned long lastUpdate;
-  bool active;
-  char name[20];
-  uint8_t battery;   // 0–100 %; 255 = read error
+  bool          active;
+  char          name[20];
+  uint8_t       battery;
 };
 
 SensorData sensors[MAX_SENSORS];
-int sensorCount = 0;
+int        sensorCount = 0;
 
 // --- WEB SERVER ---
 WebServer server(80);
 
-// --- NVS STORAGE ---
+// --- NVS (used for "sensors" namespace — persisting paired slave MACs) ---
 Preferences prefs;
 
-// --- FUNCTIONS ---
+// --- BLE PROVISIONING STATE ---
+NimBLEServer*         pBleServer    = nullptr;
+NimBLECharacteristic* pCharStatus   = nullptr;
+NimBLECharacteristic* pCharNetworks = nullptr;
+
+volatile bool scanRequested    = false;
+volatile bool wifiProvReceived = false;
+
+char provSsid[65] = "";
+char provPass[65] = "";
+
+// ─────────────────────────────────────────────────────────────────────────────
+// JSON HELPERS
+// Simple key-value extraction for the structured payloads we receive.
+// Does not handle escaped quotes in values — sufficient for WiFi/MQTT creds.
+// ─────────────────────────────────────────────────────────────────────────────
+
+String jsonGetStr(const String& json, const String& key) {
+  String search = "\"" + key + "\":\"";
+  int start = json.indexOf(search);
+  if (start == -1) return "";
+  start += search.length();
+  int end = json.indexOf('"', start);
+  if (end == -1) return "";
+  return json.substring(start, end);
+}
+
+int jsonGetInt(const String& json, const String& key) {
+  String search = "\"" + key + "\":";
+  int start = json.indexOf(search);
+  if (start == -1) return 0;
+  start += search.length();
+  int end = json.indexOf(',', start);
+  int end2 = json.indexOf('}', start);
+  if (end == -1 || (end2 != -1 && end2 < end)) end = end2;
+  if (end == -1) return 0;
+  return json.substring(start, end).toInt();
+}
+
+// Escapes a String for safe inclusion as a JSON string value.
+String jsonEscStr(const String& s) {
+  String out;
+  out.reserve(s.length() + 8);
+  for (unsigned int i = 0; i < s.length(); i++) {
+    char c = s[i];
+    if      (c == '"')  out += "\\\"";
+    else if (c == '\\') out += "\\\\";
+    else if (c == '\n') out += "\\n";
+    else if (c == '\r') out += "\\r";
+    else if ((uint8_t)c < 0x20) { char buf[7]; snprintf(buf,7,"\\u%04x",(uint8_t)c); out += buf; }
+    else out += c;
+  }
+  return out;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// BLE STATUS NOTIFICATION
+// ─────────────────────────────────────────────────────────────────────────────
+
+void notifyStatus(const char* state, const char* detail = "") {
+  if (!pCharStatus) return;
+
+  String json = "{\"state\":\"";
+  json += state;
+  json += "\"";
+  if (detail && strlen(detail) > 0) {
+    json += ",\"detail\":\"";
+    json += jsonEscStr(String(detail));
+    json += "\"";
+  }
+  json += "}";
+
+  pCharStatus->setValue(json.c_str());
+  pCharStatus->notify();
+  Serial.printf("[BLE] Status: %s\n", json.c_str());
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// WIFI SCAN (called from provisioning loop when scanRequested flag is set)
+// ─────────────────────────────────────────────────────────────────────────────
+
+void performWifiScan() {
+  if (!pCharNetworks) return;
+  Serial.println("[BLE] Scanning WiFi networks...");
+
+  // Synchronous scan: no hidden SSIDs, 300 ms per channel
+  int n = WiFi.scanNetworks(/*async=*/false, /*show_hidden=*/false,
+                             /*passive=*/false, /*max_ms_per_chan=*/300);
+
+  if (n < 0) {
+    Serial.printf("[BLE] Scan failed (err %d)\n", n);
+    WiFi.scanDelete();
+    return;
+  }
+  Serial.printf("[BLE] Scan found %d network(s)\n", n);
+
+  // Sort up to 10 results by RSSI descending (insertion sort)
+  const int MAX_RESULTS = 10;
+  int indices[MAX_RESULTS];
+  int count = min(n, MAX_RESULTS);
+  for (int i = 0; i < count; i++) indices[i] = i;
+  for (int i = 1; i < count; i++) {
+    int key = indices[i];
+    int j = i - 1;
+    while (j >= 0 && WiFi.RSSI(indices[j]) < WiFi.RSSI(key)) {
+      indices[j + 1] = indices[j];
+      j--;
+    }
+    indices[j + 1] = key;
+  }
+
+  String json = "{\"networks\":[";
+  for (int i = 0; i < count; i++) {
+    int idx = indices[i];
+    if (i > 0) json += ",";
+    json += "{\"ssid\":\"";
+    json += jsonEscStr(WiFi.SSID(idx));
+    json += "\",\"rssi\":";
+    json += WiFi.RSSI(idx);
+    json += ",\"enc\":";
+    json += (int)WiFi.encryptionType(idx);
+    json += "}";
+  }
+  json += "]}";
+
+  WiFi.scanDelete();
+
+  // BLE characteristic value size is limited — warn if payload is large
+  if (json.length() > 512) {
+    Serial.printf("[BLE] Warning: network JSON %d bytes, truncating\n", json.length());
+    // Trim trailing entries until it fits
+    while (json.length() > 512 && count > 1) {
+      count--;
+      // Rebuild with fewer entries
+      json = "{\"networks\":[";
+      for (int i = 0; i < count; i++) {
+        int idx = indices[i];
+        if (i > 0) json += ",";
+        json += "{\"ssid\":\"" + jsonEscStr(WiFi.SSID(idx))
+             + "\",\"rssi\":" + WiFi.RSSI(idx)
+             + ",\"enc\":" + (int)WiFi.encryptionType(idx) + "}";
+      }
+      json += "]}";
+    }
+  }
+
+  pCharNetworks->setValue(json.c_str());
+  pCharNetworks->notify();
+  Serial.printf("[BLE] Networks notified (%d entries, %d bytes)\n", count, json.length());
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// BLE GATT CALLBACKS
+// ─────────────────────────────────────────────────────────────────────────────
+
+class ProvServerCallbacks : public NimBLEServerCallbacks {
+  void onConnect(NimBLEServer* s, NimBLEConnInfo& connInfo) override {
+    Serial.printf("[BLE] Client connected: %s\n",
+                  connInfo.getAddress().toString().c_str());
+    digitalWrite(LED_PIN, HIGH);
+  }
+  void onDisconnect(NimBLEServer* s, NimBLEConnInfo& connInfo, int reason) override {
+    Serial.printf("[BLE] Client disconnected (reason %d), restarting advertising\n", reason);
+    digitalWrite(LED_PIN, LOW);
+    NimBLEDevice::startAdvertising();
+  }
+};
+
+class ProvWifiCallbacks : public NimBLECharacteristicCallbacks {
+  void onWrite(NimBLECharacteristic* pChar, NimBLEConnInfo& connInfo) override {
+    String val = String(pChar->getValue().c_str());
+    Serial.printf("[BLE] PROV_WIFI received (%d bytes)\n", val.length());
+
+    String ssid = jsonGetStr(val, "ssid");
+    String pass = jsonGetStr(val, "pass");
+
+    if (ssid.isEmpty()) {
+      Serial.println("[BLE] PROV_WIFI: SSID empty, ignoring");
+      notifyStatus("failed", "SSID cannot be empty");
+      return;
+    }
+
+    // Persist immediately so a crash/reset doesn't lose them
+    Preferences wPrefs;
+    wPrefs.begin("wifi", false);
+    wPrefs.putString("ssid", ssid);
+    wPrefs.putString("pass", pass);
+    wPrefs.end();
+
+    ssid.toCharArray(provSsid, sizeof(provSsid));
+    pass.toCharArray(provPass, sizeof(provPass));
+
+    wifiProvReceived = true;
+    notifyStatus("connecting", "WiFi credentials received");
+    Serial.printf("[BLE] WiFi creds saved — SSID: %s\n", provSsid);
+  }
+};
+
+class ProvCloudCallbacks : public NimBLECharacteristicCallbacks {
+  void onWrite(NimBLECharacteristic* pChar, NimBLEConnInfo& connInfo) override {
+    String val = String(pChar->getValue().c_str());
+    Serial.printf("[BLE] PROV_CLOUD received (%d bytes)\n", val.length());
+
+    String host = jsonGetStr(val, "host");
+    if (host.isEmpty()) {
+      Serial.println("[BLE] PROV_CLOUD: no host, ignoring");
+      return;
+    }
+
+    Preferences cPrefs;
+    cPrefs.begin("cloud", false);
+    cPrefs.putString("mqtt_host", host);
+    cPrefs.putInt   ("mqtt_port", jsonGetInt(val, "port"));
+    cPrefs.putString("mqtt_user", jsonGetStr(val, "user"));
+    cPrefs.putString("mqtt_pass", jsonGetStr(val, "pass"));
+    cPrefs.end();
+
+    Serial.printf("[BLE] Cloud creds saved — host: %s\n", host.c_str());
+  }
+};
+
+class ProvNetworksCallbacks : public NimBLECharacteristicCallbacks {
+  void onWrite(NimBLECharacteristic* pChar, NimBLEConnInfo& connInfo) override {
+    Serial.println("[BLE] WiFi scan requested");
+    scanRequested = true;
+  }
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
+// BLE PROVISIONING MODE
+// Blocks until valid WiFi credentials are received and connection succeeds,
+// then calls ESP.restart() to boot into normal operation.
+// ─────────────────────────────────────────────────────────────────────────────
+
+void startBleProvisioning() {
+  Serial.println("\n=== BLE PROVISIONING MODE ===");
+
+  // Need WiFi in STA mode to scan and to attempt connection
+  WiFi.mode(WIFI_STA);
+
+  // Build device name from last 3 MAC octets so it's unique and identifiable
+  uint8_t mac[6];
+  WiFi.macAddress(mac);
+  char bleName[24];
+  snprintf(bleName, sizeof(bleName), "TempMaster-%02X%02X%02X", mac[3], mac[4], mac[5]);
+  Serial.printf("BLE name: %s\n", bleName);
+
+  // Initialise NimBLE
+  NimBLEDevice::init(bleName);
+  NimBLEDevice::setPower(3);  // +3 dBm — enough for typical room range
+
+  pBleServer = NimBLEDevice::createServer();
+  pBleServer->setCallbacks(new ProvServerCallbacks());
+
+  NimBLEService* pService = pBleServer->createService(PROV_SERVICE_UUID);
+
+  // PROV_WIFI — app writes WiFi credentials
+  NimBLECharacteristic* pCharWifi =
+    pService->createCharacteristic(PROV_CHAR_WIFI, NIMBLE_PROPERTY::WRITE);
+  pCharWifi->setCallbacks(new ProvWifiCallbacks());
+
+  // PROV_CLOUD — app writes MQTT credentials
+  NimBLECharacteristic* pCharCloud =
+    pService->createCharacteristic(PROV_CHAR_CLOUD, NIMBLE_PROPERTY::WRITE);
+  pCharCloud->setCallbacks(new ProvCloudCallbacks());
+
+  // PROV_STATUS — device notifies app of progress
+  pCharStatus =
+    pService->createCharacteristic(PROV_CHAR_STATUS,
+                                   NIMBLE_PROPERTY::READ | NIMBLE_PROPERTY::NOTIFY);
+  pCharStatus->setValue("{\"state\":\"idle\"}");
+
+  // PROV_NETWORKS — app writes to trigger scan; device notifies results
+  pCharNetworks =
+    pService->createCharacteristic(PROV_CHAR_NETWORKS,
+                                   NIMBLE_PROPERTY::WRITE | NIMBLE_PROPERTY::NOTIFY);
+  pCharNetworks->setCallbacks(new ProvNetworksCallbacks());
+
+  pService->start();
+
+  // Advertise with the provisioning service UUID so the web app filter matches
+  NimBLEAdvertising* pAdv = NimBLEDevice::getAdvertising();
+  pAdv->addServiceUUID(PROV_SERVICE_UUID);
+  pAdv->setScanResponse(true);
+  NimBLEDevice::startAdvertising();
+
+  Serial.println("BLE advertising. Waiting for app to connect...");
+  Serial.println("Open ble-provision.html in Chrome to provision this device.");
+
+  // ── Provisioning event loop ──────────────────────────────────────────────
+  while (true) {
+
+    // WiFi scan requested by app
+    if (scanRequested) {
+      scanRequested = false;
+      performWifiScan();
+    }
+
+    // WiFi credentials written by app
+    if (wifiProvReceived) {
+      wifiProvReceived = false;
+
+      Serial.printf("Attempting WiFi connection to: %s\n", provSsid);
+      WiFi.begin(provSsid, provPass);
+
+      unsigned long start = millis();
+      while (WiFi.status() != WL_CONNECTED &&
+             millis() - start < WIFI_CONNECT_TIMEOUT_MS) {
+        delay(200);
+      }
+
+      if (WiFi.status() == WL_CONNECTED) {
+        Serial.printf("WiFi connected! IP: %s\n", WiFi.localIP().toString().c_str());
+        notifyStatus("connected", "");
+        delay(1200);  // Give app time to receive notification before BLE tears down
+        NimBLEDevice::deinit(true);
+        delay(100);
+        ESP.restart();
+
+      } else {
+        Serial.println("WiFi connection failed — wrong password or out of range?");
+        WiFi.disconnect(true);
+
+        // Erase bad credentials so a retry starts clean
+        Preferences wPrefs;
+        wPrefs.begin("wifi", false);
+        wPrefs.remove("ssid");
+        wPrefs.remove("pass");
+        wPrefs.end();
+        provSsid[0] = '\0';
+        provPass[0] = '\0';
+
+        notifyStatus("failed", "Wrong password or network unreachable");
+
+        // Resume advertising for another attempt
+        NimBLEDevice::startAdvertising();
+      }
+    }
+
+    // BOOT button: erase all provisioning data and restart
+    if (digitalRead(TRIGGER_PIN) == LOW) {
+      delay(50);
+      unsigned long press = millis();
+      while (digitalRead(TRIGGER_PIN) == LOW) {
+        if (millis() - press > 3000) {
+          Serial.println("Factory reset from BLE provisioning mode");
+          Preferences wPrefs; wPrefs.begin("wifi",  false); wPrefs.clear(); wPrefs.end();
+          Preferences cPrefs; cPrefs.begin("cloud", false); cPrefs.clear(); cPrefs.end();
+          delay(500);
+          ESP.restart();
+        }
+        delay(10);
+      }
+    }
+
+    delay(10);
+  }
+  // unreachable — loop exits only via ESP.restart()
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// EXISTING FUNCTIONS (unchanged)
+// ─────────────────────────────────────────────────────────────────────────────
 
 void printCurrentTime() {
   struct tm timeinfo;
-  if(!getLocalTime(&timeinfo)){
-    Serial.println("Failed to obtain time");
-    return;
-  }
+  if (!getLocalTime(&timeinfo)) { Serial.println("Failed to obtain time"); return; }
   Serial.println(&timeinfo, "%d/%m/%y - %H:%M:%S");
 }
 
@@ -87,77 +457,60 @@ void resyncNTP() {
     Serial.println("Resyncing NTP...");
     configTime(gmtOffset_sec, daylightOffset_sec, ntpServer);
     lastNtpSync = millis();
-    
     struct tm timeinfo;
-    if(getLocalTime(&timeinfo)) {
-      Serial.println("NTP resync successful!");
-    }
+    if (getLocalTime(&timeinfo)) Serial.println("NTP resync successful!");
   }
 }
 
-int findSensor(const uint8_t *mac) {
-  for(int i = 0; i < sensorCount; i++) {
-    if(memcmp(sensors[i].mac, mac, 6) == 0) {
-      return i;
-    }
+int findSensor(const uint8_t* mac) {
+  for (int i = 0; i < sensorCount; i++) {
+    if (memcmp(sensors[i].mac, mac, 6) == 0) return i;
   }
   return -1;
 }
 
-int addSensor(const uint8_t *mac) {
-  if(sensorCount >= MAX_SENSORS) {
+int addSensor(const uint8_t* mac) {
+  if (sensorCount >= MAX_SENSORS) {
     Serial.println("WARNING: Max sensors reached!");
     return -1;
   }
-  
   memcpy(sensors[sensorCount].mac, mac, 6);
-  sensors[sensorCount].active = true;
-  sensors[sensorCount].temp = 0;
-  sensors[sensorCount].hum = 0;
-  sensors[sensorCount].rssi = 0;
-  sensors[sensorCount].battery = 0;
+  sensors[sensorCount].active     = true;
+  sensors[sensorCount].temp       = 0;
+  sensors[sensorCount].hum        = 0;
+  sensors[sensorCount].rssi       = 0;
+  sensors[sensorCount].battery    = 0;
   sensors[sensorCount].lastUpdate = millis();
-  
   sprintf(sensors[sensorCount].name, "Sensor-%02X%02X", mac[4], mac[5]);
-  
   sensorCount++;
   Serial.printf("Sensor added. Total: %d\n", sensorCount);
 
-  // Persist MAC so the peer can be re-registered after master reboot
   char key[8];
   snprintf(key, sizeof(key), "mac%d", sensorCount - 1);
   prefs.begin("sensors", false);
   prefs.putBytes(key, mac, 6);
   prefs.putInt("count", sensorCount);
   prefs.end();
-
   return sensorCount - 1;
 }
 
 void updateSensor(int index, float temp, float hum, int rssi, uint8_t battery) {
-  if(index < 0 || index >= sensorCount) return;
-
-  sensors[index].temp = temp;
-  sensors[index].hum = hum;
-  sensors[index].rssi = rssi;
-  sensors[index].battery = battery;
+  if (index < 0 || index >= sensorCount) return;
+  sensors[index].temp       = temp;
+  sensors[index].hum        = hum;
+  sensors[index].rssi       = rssi;
+  sensors[index].battery    = battery;
   sensors[index].lastUpdate = millis();
-  sensors[index].active = true;
+  sensors[index].active     = true;
 }
 
 void checkInactiveSensors() {
   unsigned long now = millis();
-  for(int i = 0; i < sensorCount; i++) {
-    if(now - sensors[i].lastUpdate > 600000) {
-      sensors[i].active = false;
-    }
+  for (int i = 0; i < sensorCount; i++) {
+    if (now - sensors[i].lastUpdate > 600000) sensors[i].active = false;
   }
 }
 
-// --- RESTORE PAIRED SENSORS FROM NVS ---
-// Called once in setup() after esp_now_init(). Registers each saved MAC as an
-// encrypted peer so that the master can decrypt data frames immediately after
-// reboot without requiring the slaves to re-pair.
 void loadPairedSensors() {
   prefs.begin("sensors", true);
   int count = prefs.getInt("count", 0);
@@ -170,16 +523,15 @@ void loadPairedSensors() {
     if (prefs.getBytes(key, mac, 6) != 6) continue;
 
     memcpy(sensors[sensorCount].mac, mac, 6);
-    sensors[sensorCount].active      = false;  // no data yet
-    sensors[sensorCount].temp        = 0;
-    sensors[sensorCount].hum         = 0;
-    sensors[sensorCount].rssi        = 0;
-    sensors[sensorCount].battery     = 0;
-    sensors[sensorCount].lastUpdate  = 0;
+    sensors[sensorCount].active     = false;
+    sensors[sensorCount].temp       = 0;
+    sensors[sensorCount].hum        = 0;
+    sensors[sensorCount].rssi       = 0;
+    sensors[sensorCount].battery    = 0;
+    sensors[sensorCount].lastUpdate = 0;
     sprintf(sensors[sensorCount].name, "Sensor-%02X%02X", mac[4], mac[5]);
     sensorCount++;
 
-    // Register as encrypted peer so incoming data frames can be decrypted
     esp_now_peer_info_t peer = {};
     memcpy(peer.peer_addr, mac, 6);
     peer.channel = 0;
@@ -196,7 +548,10 @@ void loadPairedSensors() {
   prefs.end();
 }
 
-// --- WEB PAGE HTML ---
+// ─────────────────────────────────────────────────────────────────────────────
+// WEB HANDLERS (unchanged)
+// ─────────────────────────────────────────────────────────────────────────────
+
 void handleRoot() {
   String html = "<!DOCTYPE html><html><head>";
   html += "<meta charset='UTF-8'>";
@@ -216,10 +571,8 @@ void handleRoot() {
   html += ".data-label { font-size: 0.9em; color: #7f8c8d; margin-bottom: 5px; }";
   html += ".data-value { font-size: 2em; font-weight: bold; color: #2c3e50; }";
   html += ".data-unit { font-size: 0.7em; color: #95a5a6; }";
-  html += ".temp { color: #e74c3c; }";
-  html += ".hum { color: #3498db; }";
-  html += ".rssi { color: #27ae60; }";
-  html += ".battery { color: #f39c12; }";
+  html += ".temp { color: #e74c3c; } .hum { color: #3498db; }";
+  html += ".rssi { color: #27ae60; } .battery { color: #f39c12; }";
   html += ".battery-bar-bg { background:#ecf0f1; border-radius:4px; height:8px; margin-top:6px; }";
   html += ".battery-bar-fill { height:8px; border-radius:4px; background:#2ecc71; }";
   html += ".battery-bar-fill.mid { background:#f39c12; }";
@@ -232,187 +585,137 @@ void handleRoot() {
   html += ".hardware-info { background: #3498db; color: white; padding: 10px; border-radius: 5px; margin-bottom: 20px; text-align: center; }";
   html += "@media (max-width: 600px) { .sensor-data { grid-template-columns: 1fr; } }";
   html += "</style>";
-  html += "<script>";
-  html += "setTimeout(function(){ location.reload(); }, 10000);";
-  html += "</script>";
+  html += "<script>setTimeout(function(){ location.reload(); }, 10000);</script>";
   html += "</head><body>";
-  
   html += "<div class='container'>";
   html += "<h1>🌡️ XIAO ESP32-C6 Temperature Monitor</h1>";
   html += "<div class='hardware-info'>Using SHT40 High-Precision Sensors (±0.2°C accuracy)</div>";
-  
-  if(sensorCount == 0) {
-    html += "<div class='sensor-card'>";
-    html += "<p>No sensors paired yet. Waiting for sensor data...</p>";
-    html += "</div>";
+
+  if (sensorCount == 0) {
+    html += "<div class='sensor-card'><p>No sensors paired yet. Waiting for sensor data...</p></div>";
   } else {
     checkInactiveSensors();
-    
-    for(int i = 0; i < sensorCount; i++) {
+    for (int i = 0; i < sensorCount; i++) {
       html += "<div class='sensor-card";
-      if(!sensors[i].active) html += " inactive";
+      if (!sensors[i].active) html += " inactive";
       html += "'>";
-      
-      html += "<div class='sensor-header'>";
-      html += "<div>";
+      html += "<div class='sensor-header'><div>";
       html += "<div class='sensor-name'>" + String(sensors[i].name) + "</div>";
       html += "<div class='sensor-mac'>MAC: ";
-      for(int j = 0; j < 6; j++) {
-        char buf[3];
-        sprintf(buf, "%02X", sensors[i].mac[j]);
-        html += String(buf);
-        if(j < 5) html += ":";
+      for (int j = 0; j < 6; j++) {
+        char buf[3]; sprintf(buf, "%02X", sensors[i].mac[j]);
+        html += String(buf); if (j < 5) html += ":";
       }
       html += "</div></div>";
-      
       html += "<span class='status ";
       html += sensors[i].active ? "active'>ACTIVE" : "inactive'>OFFLINE";
-      html += "</span>";
-      html += "</div>";
-      
+      html += "</span></div>";
+
       html += "<div class='sensor-data'>";
-      
-      html += "<div class='data-item'>";
-      html += "<div class='data-label'>Temperature</div>";
+
+      html += "<div class='data-item'><div class='data-label'>Temperature</div>";
       html += "<div class='data-value temp'>";
-      if(sensors[i].temp == -999) {
-        html += "ERR";
-      } else {
-        html += String(sensors[i].temp, 2);  // 2 decimals for SHT40 precision
-        html += "<span class='data-unit'>°C</span>";
-      }
-      html += "</div></div>";
-      
-      html += "<div class='data-item'>";
-      html += "<div class='data-label'>Humidity</div>";
-      html += "<div class='data-value hum'>";
-      if(sensors[i].hum == -999) {
-        html += "ERR";
-      } else {
-        html += String(sensors[i].hum, 2);  // 2 decimals for SHT40 precision
-        html += "<span class='data-unit'>%</span>";
-      }
-      html += "</div></div>";
-      
-      html += "<div class='data-item'>";
-      html += "<div class='data-label'>Signal Strength</div>";
-      html += "<div class='data-value rssi'>" + String(sensors[i].rssi);
-      html += "<span class='data-unit'>dBm</span>";
+      if (sensors[i].temp == -999) html += "ERR";
+      else { html += String(sensors[i].temp, 2); html += "<span class='data-unit'>°C</span>"; }
       html += "</div></div>";
 
-      html += "<div class='data-item'>";
-      html += "<div class='data-label'>Battery</div>";
+      html += "<div class='data-item'><div class='data-label'>Humidity</div>";
+      html += "<div class='data-value hum'>";
+      if (sensors[i].hum == -999) html += "ERR";
+      else { html += String(sensors[i].hum, 2); html += "<span class='data-unit'>%</span>"; }
+      html += "</div></div>";
+
+      html += "<div class='data-item'><div class='data-label'>Signal Strength</div>";
+      html += "<div class='data-value rssi'>" + String(sensors[i].rssi);
+      html += "<span class='data-unit'>dBm</span></div></div>";
+
+      html += "<div class='data-item'><div class='data-label'>Battery</div>";
       html += "<div class='data-value battery'>";
-      if(sensors[i].battery == 255) {
-        html += "ERR";
-      } else {
-        html += String(sensors[i].battery);
-        html += "<span class='data-unit'>%</span>";
-      }
+      if (sensors[i].battery == 255) html += "ERR";
+      else { html += String(sensors[i].battery); html += "<span class='data-unit'>%</span>"; }
       html += "</div>";
       {
         String fillClass = "battery-bar-fill";
-        if(sensors[i].battery != 255) {
-          if(sensors[i].battery < 20)      fillClass += " low";
-          else if(sensors[i].battery < 50) fillClass += " mid";
+        if (sensors[i].battery != 255) {
+          if      (sensors[i].battery < 20) fillClass += " low";
+          else if (sensors[i].battery < 50) fillClass += " mid";
         }
         html += "<div class='battery-bar-bg'><div class='" + fillClass + "' style='width:";
         html += (sensors[i].battery == 255 ? "0" : String(sensors[i].battery));
         html += "%'></div></div>";
       }
-      html += "</div>";
+      html += "</div></div>";
 
-      html += "</div>";
-      
       unsigned long secAgo = (millis() - sensors[i].lastUpdate) / 1000;
       html += "<div class='last-update'>Last update: ";
-      if(secAgo < 60) {
-        html += String(secAgo) + " seconds ago";
-      } else if(secAgo < 3600) {
-        html += String(secAgo / 60) + " minutes ago";
-      } else {
-        html += String(secAgo / 3600) + " hours ago";
-      }
-      html += "</div>";
-      
-      html += "</div>";
+      if      (secAgo < 60)   html += String(secAgo) + " seconds ago";
+      else if (secAgo < 3600) html += String(secAgo / 60) + " minutes ago";
+      else                    html += String(secAgo / 3600) + " hours ago";
+      html += "</div></div>";
     }
   }
-  
+
   html += "<div class='refresh-info'>📡 Page auto-refreshes every 10 seconds</div>";
   html += "</div></body></html>";
-  
   server.send(200, "text/html", html);
 }
 
 void handleJSON() {
   String json = "{\"sensors\":[";
-  
   checkInactiveSensors();
-  
-  for(int i = 0; i < sensorCount; i++) {
-    if(i > 0) json += ",";
-    
+  for (int i = 0; i < sensorCount; i++) {
+    if (i > 0) json += ",";
     json += "{";
     json += "\"name\":\"" + String(sensors[i].name) + "\",";
     json += "\"mac\":\"";
-    for(int j = 0; j < 6; j++) {
-      char buf[3];
-      sprintf(buf, "%02X", sensors[i].mac[j]);
-      json += String(buf);
-      if(j < 5) json += ":";
+    for (int j = 0; j < 6; j++) {
+      char buf[3]; sprintf(buf, "%02X", sensors[i].mac[j]);
+      json += String(buf); if (j < 5) json += ":";
     }
     json += "\",";
-    json += "\"temp\":" + String(sensors[i].temp, 2) + ",";
-    json += "\"hum\":" + String(sensors[i].hum, 2) + ",";
-    json += "\"rssi\":" + String(sensors[i].rssi) + ",";
+    json += "\"temp\":"    + String(sensors[i].temp, 2) + ",";
+    json += "\"hum\":"     + String(sensors[i].hum, 2)  + ",";
+    json += "\"rssi\":"    + String(sensors[i].rssi)    + ",";
     json += "\"battery\":" + String(sensors[i].battery) + ",";
-    json += "\"active\":" + String(sensors[i].active ? "true" : "false") + ",";
+    json += "\"active\":"  + String(sensors[i].active ? "true" : "false") + ",";
     json += "\"lastUpdate\":" + String((millis() - sensors[i].lastUpdate) / 1000);
     json += "}";
   }
-  
   json += "],\"count\":" + String(sensorCount) + "}";
-  
   server.send(200, "application/json", json);
 }
 
-// --- ESP-NOW CALLBACK ---
-void OnDataRecv(const esp_now_recv_info_t * esp_now_info, const uint8_t *incomingDataBytes, int len) {
+// ─────────────────────────────────────────────────────────────────────────────
+// ESP-NOW CALLBACK (unchanged)
+// ─────────────────────────────────────────────────────────────────────────────
+
+void OnDataRecv(const esp_now_recv_info_t* esp_now_info,
+                const uint8_t* incomingDataBytes, int len) {
   memcpy(&incomingData, incomingDataBytes, sizeof(incomingData));
   incomingRSSI = esp_now_info->rx_ctrl->rssi;
-  
+
   if (incomingData.msgType == MSG_PAIRING) {
     Serial.printf("Pairing Request from: %02X:%02X:%02X:%02X:%02X:%02X\n",
-                  esp_now_info->src_addr[0], esp_now_info->src_addr[1], 
-                  esp_now_info->src_addr[2], esp_now_info->src_addr[3], 
+                  esp_now_info->src_addr[0], esp_now_info->src_addr[1],
+                  esp_now_info->src_addr[2], esp_now_info->src_addr[3],
                   esp_now_info->src_addr[4], esp_now_info->src_addr[5]);
 
     esp_now_peer_info_t tempPeerInfo = {};
     memcpy(tempPeerInfo.peer_addr, esp_now_info->src_addr, 6);
     tempPeerInfo.channel = 0;
     tempPeerInfo.encrypt = false;
-    
+
     if (!esp_now_is_peer_exist(esp_now_info->src_addr)) {
-      esp_err_t addStatus = esp_now_add_peer(&tempPeerInfo);
-      if (addStatus != ESP_OK) {
-        Serial.printf("Failed to add peer: %d\n", addStatus);
-        return;
+      if (esp_now_add_peer(&tempPeerInfo) != ESP_OK) {
+        Serial.println("Failed to add peer"); return;
       }
     } else {
-      // Peer exists from a previous session (likely registered as encrypted).
-      // Downgrade to unencrypted so the pairing reply is sent in plaintext —
-      // the slave has no peer registered for us yet and cannot decrypt it.
       esp_now_mod_peer(&tempPeerInfo);
     }
 
     struct_message reply = {.msgType = MSG_PAIRING, .temp = 0, .hum = 0, .battery = 0};
-    esp_err_t result = esp_now_send(esp_now_info->src_addr, (uint8_t *)&reply, sizeof(reply));
-    
-    if (result == ESP_OK) {
+    if (esp_now_send(esp_now_info->src_addr, (uint8_t*)&reply, sizeof(reply)) == ESP_OK) {
       Serial.println("✓ Pairing confirmation sent!");
-
-      // Upgrade peer from unencrypted (pairing) to encrypted (data)
       esp_now_peer_info_t encPeer = {};
       memcpy(encPeer.peer_addr, esp_now_info->src_addr, 6);
       encPeer.channel = 0;
@@ -421,151 +724,156 @@ void OnDataRecv(const esp_now_recv_info_t * esp_now_info, const uint8_t *incomin
       esp_now_mod_peer(&encPeer);
 
       int index = findSensor(esp_now_info->src_addr);
-      if(index == -1) {
-        addSensor(esp_now_info->src_addr);
-      }
-
-      // LED blink on pairing
-      digitalWrite(LED_PIN, HIGH);
-      delay(200);
-      digitalWrite(LED_PIN, LOW);
+      if (index == -1) addSensor(esp_now_info->src_addr);
+      digitalWrite(LED_PIN, HIGH); delay(200); digitalWrite(LED_PIN, LOW);
     }
   }
-  
   else if (incomingData.msgType == MSG_DATA) {
     Serial.print("DATA from: ");
-    for(int i=0; i<5; i++) Serial.printf("%02X:", esp_now_info->src_addr[i]);
+    for (int i = 0; i < 5; i++) Serial.printf("%02X:", esp_now_info->src_addr[i]);
     Serial.printf("%02X", esp_now_info->src_addr[5]);
-    
-    if(incomingData.temp < -50 || incomingData.temp > 100 || 
-       incomingData.hum < 0 || incomingData.hum > 100) {
-      Serial.println(" | ERROR: Invalid sensor data!");
-      return;
+
+    if (incomingData.temp < -50 || incomingData.temp > 100 ||
+        incomingData.hum  <   0 || incomingData.hum  > 100) {
+      Serial.println(" | ERROR: Invalid sensor data!"); return;
     }
-    
-    Serial.printf(" | Temp: %.2f°C", incomingData.temp);  // 2 decimals for SHT40
-    Serial.printf(" | Hum: %.2f%%", incomingData.hum);
-    Serial.printf(" | RSSI: %d dBm", incomingRSSI);
-    Serial.printf(" | Bat: %d%%", incomingData.battery);
-    Serial.print(" | ");
+
+    Serial.printf(" | Temp: %.2f°C | Hum: %.2f%% | RSSI: %d dBm | Bat: %d%% | ",
+                  incomingData.temp, incomingData.hum,
+                  incomingRSSI, incomingData.battery);
     printCurrentTime();
 
     int index = findSensor(esp_now_info->src_addr);
-    if(index == -1) {
-      index = addSensor(esp_now_info->src_addr);
-    }
-    if(index != -1) {
-      updateSensor(index, incomingData.temp, incomingData.hum, incomingRSSI, incomingData.battery);
-    }
+    if (index == -1) index = addSensor(esp_now_info->src_addr);
+    if (index != -1)
+      updateSensor(index, incomingData.temp, incomingData.hum,
+                   incomingRSSI, incomingData.battery);
   }
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// SETUP
+// ─────────────────────────────────────────────────────────────────────────────
 
 void setup() {
   Serial.begin(115200);
   delay(500);
   Serial.println("\n=== XIAO ESP32-C6 Master Station ===");
-  
+
   pinMode(TRIGGER_PIN, INPUT_PULLUP);
   pinMode(LED_PIN, OUTPUT);
   digitalWrite(LED_PIN, LOW);
-  
-  // --- WIFI MANAGER SETUP ---
-  WiFiManager wm;
-  wm.setDebugOutput(true);
-  wm.setConfigPortalTimeout(180);
-  
-  Serial.println("Connecting to WiFi...");
-  if(!wm.autoConnect("Temp-sensor-Master", "12345678")) {
-    Serial.println("Failed to connect to WiFi");
-    ESP.restart();
-  } else {
-    Serial.println("✓ Connected to WiFi!");
-    Serial.print("IP Address: ");
-    Serial.println(WiFi.localIP());
-    Serial.println("\n🌐 OPEN YOUR BROWSER TO:");
-    Serial.print("    http://");
-    Serial.println(WiFi.localIP());
-    Serial.println();
+
+  // ── Load stored WiFi credentials ────────────────────────────────────────
+  Preferences wPrefs;
+  wPrefs.begin("wifi", true);
+  String storedSsid = wPrefs.getString("ssid", "");
+  String storedPass = wPrefs.getString("pass", "");
+  wPrefs.end();
+
+  if (storedSsid.isEmpty()) {
+    // No credentials — enter BLE provisioning (blocks until done, then restarts)
+    startBleProvisioning();
+    return;  // unreachable; startBleProvisioning() calls ESP.restart()
   }
-  
-  // --- NTP TIME SYNC ---
+
+  // ── WiFi connect with stored credentials ────────────────────────────────
+  Serial.printf("Connecting to WiFi: %s\n", storedSsid.c_str());
+  WiFi.mode(WIFI_STA);
+  WiFi.begin(storedSsid.c_str(), storedPass.c_str());
+
+  unsigned long wifiStart = millis();
+  while (WiFi.status() != WL_CONNECTED) {
+    if (millis() - wifiStart > WIFI_CONNECT_TIMEOUT_MS) {
+      Serial.println("WiFi connection timed out — clearing credentials, restarting.");
+      wPrefs.begin("wifi", false); wPrefs.clear(); wPrefs.end();
+      ESP.restart();
+    }
+    delay(200);
+  }
+  Serial.printf("✓ WiFi connected! IP: %s\n", WiFi.localIP().toString().c_str());
+
+  // ── mDNS — device is reachable at http://temp-master.local/ ─────────────
+  if (MDNS.begin("temp-master")) {
+    Serial.println("✓ mDNS started: http://temp-master.local/");
+    MDNS.addService("http", "tcp", 80);
+  } else {
+    Serial.println("mDNS start failed (non-fatal)");
+  }
+
+  // ── NTP ─────────────────────────────────────────────────────────────────
   Serial.print("Syncing time");
   configTime(gmtOffset_sec, daylightOffset_sec, ntpServer);
-  
   struct tm timeinfo;
   int attempts = 0;
-  while(!getLocalTime(&timeinfo) && attempts < 20){
-    Serial.print(".");
-    delay(500);
-    attempts++;
+  while (!getLocalTime(&timeinfo) && attempts < 20) {
+    Serial.print("."); delay(500); attempts++;
   }
-  
-  if(attempts < 20) {
-    Serial.println("\n✓ Time synced!");
-    printCurrentTime();
-    timeConfigured = true;
-    lastNtpSync = millis();
+  if (attempts < 20) {
+    Serial.println("\n✓ Time synced!"); printCurrentTime();
+    timeConfigured = true; lastNtpSync = millis();
   } else {
     Serial.println("\n✗ Time sync failed, continuing anyway...");
   }
-  
-  // --- ESP-NOW SETUP ---
+
+  // ── ESP-NOW ─────────────────────────────────────────────────────────────
+  // AP_STA mode required so the master can receive on the AP interface
+  // while remaining connected to the router on the STA interface.
   WiFi.mode(WIFI_AP_STA);
-  
-  uint8_t currentChannel = WiFi.channel();
-  Serial.printf("WiFi Channel: %d\n", currentChannel);
-  
+  Serial.printf("WiFi channel: %d\n", WiFi.channel());
   WiFi.setTxPower(WIFI_POWER_19_5dBm);
-  esp_wifi_set_protocol(WIFI_IF_STA, WIFI_PROTOCOL_11B | WIFI_PROTOCOL_11G | 
-                        WIFI_PROTOCOL_11N | WIFI_PROTOCOL_LR);
-  
+  esp_wifi_set_protocol(WIFI_IF_STA, WIFI_PROTOCOL_11B | WIFI_PROTOCOL_11G |
+                                      WIFI_PROTOCOL_11N | WIFI_PROTOCOL_LR);
+
   if (esp_now_init() != ESP_OK) {
-    Serial.println("✗ ESP-NOW init failed!");
-    return;
+    Serial.println("✗ ESP-NOW init failed!"); return;
   }
   esp_now_set_pmk(PMK_KEY);
   Serial.println("✓ ESP-NOW initialized (encrypted)");
 
   loadPairedSensors();
-
   esp_now_register_recv_cb(OnDataRecv);
-  
-  // --- WEB SERVER SETUP ---
+
+  // ── Web server ───────────────────────────────────────────────────────────
   server.on("/", handleRoot);
   server.on("/api/sensors", handleJSON);
   server.begin();
   Serial.println("✓ Web server started");
-  
+
   Serial.println("\n=== Master Ready ===");
   Serial.println("Waiting for sensor data...\n");
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// LOOP
+// ─────────────────────────────────────────────────────────────────────────────
+
 void loop() {
   server.handleClient();
-  
-  if(timeConfigured) {
-    resyncNTP();
-  }
-  
+
+  if (timeConfigured) resyncNTP();
+
+  // BOOT button: hold 3 s to erase WiFi credentials → restart into BLE provisioning
   if (digitalRead(TRIGGER_PIN) == LOW) {
     delay(50);
     unsigned long startPress = millis();
-    
-    Serial.println("Button pressed... (hold 3s to reset WiFi)");
-    
-    while(digitalRead(TRIGGER_PIN) == LOW) {
-      if(millis() - startPress > 3000) {
-        Serial.println("\n=== ERASING WIFI SETTINGS ===");
-        WiFiManager wm;
-        wm.resetSettings();
-        delay(1000);
-        Serial.println("Restarting...");
+    Serial.println("Button pressed... (hold 3 s to reset WiFi and re-provision)");
+
+    while (digitalRead(TRIGGER_PIN) == LOW) {
+      if (millis() - startPress > 3000) {
+        Serial.println("\n=== ERASING WiFi CREDENTIALS ===");
+        Preferences wPrefs;
+        wPrefs.begin("wifi", false);
+        wPrefs.clear();
+        wPrefs.end();
+        Serial.println("Credentials erased. Restarting into BLE provisioning mode...");
+        delay(500);
         ESP.restart();
       }
       delay(10);
     }
     Serial.println("Button released.");
   }
-  
+
   delay(10);
 }

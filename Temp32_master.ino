@@ -365,7 +365,6 @@ void startBleProvisioning() {
   // Advertise with the provisioning service UUID so the web app filter matches
   NimBLEAdvertising* pAdv = NimBLEDevice::getAdvertising();
   pAdv->addServiceUUID(PROV_SERVICE_UUID);
-  pAdv->setScanResponse(true);
   NimBLEDevice::startAdvertising();
 
   Serial.println("BLE advertising. Waiting for app to connect...");

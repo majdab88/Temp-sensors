@@ -403,9 +403,11 @@ void startBleProvisioning() {
       if (WiFi.status() == WL_CONNECTED) {
         Serial.printf("WiFi connected! IP: %s\n", WiFi.localIP().toString().c_str());
         notifyStatus("connected", "");
-        delay(1200);  // Give app time to receive notification before BLE tears down
-        NimBLEDevice::deinit(true);
-        delay(100);
+        delay(1200);  // Give app time to receive the notification
+        // ESP.restart() hard-resets the chip — no need to deinit BLE first.
+        // Calling NimBLEDevice::deinit() while a client is connected fires
+        // onDisconnect(), which tries to call startAdvertising() on a
+        // partially-deinitialized stack and crashes before restart is reached.
         ESP.restart();
 
       } else {
@@ -823,6 +825,13 @@ void setup() {
     Serial.println("\n✗ Time sync failed, continuing anyway...");
   }
 
+  // ── Web server ───────────────────────────────────────────────────────────
+  // Start before ESP-NOW so the dashboard is available even if ESP-NOW fails.
+  server.on("/", handleRoot);
+  server.on("/api/sensors", handleJSON);
+  server.begin();
+  Serial.println("✓ Web server started");
+
   // ── ESP-NOW ─────────────────────────────────────────────────────────────
   // AP_STA mode required so the master can receive on the AP interface
   // while remaining connected to the router on the STA interface.
@@ -833,19 +842,14 @@ void setup() {
                                       WIFI_PROTOCOL_11N | WIFI_PROTOCOL_LR);
 
   if (esp_now_init() != ESP_OK) {
-    Serial.println("✗ ESP-NOW init failed!"); return;
+    Serial.println("✗ ESP-NOW init failed! Sensor receiving disabled.");
+    return;
   }
   esp_now_set_pmk(PMK_KEY);
   Serial.println("✓ ESP-NOW initialized (encrypted)");
 
   loadPairedSensors();
   esp_now_register_recv_cb(OnDataRecv);
-
-  // ── Web server ───────────────────────────────────────────────────────────
-  server.on("/", handleRoot);
-  server.on("/api/sensors", handleJSON);
-  server.begin();
-  Serial.println("✓ Web server started");
 
   Serial.println("\n=== Master Ready ===");
   Serial.println("Waiting for sensor data...\n");

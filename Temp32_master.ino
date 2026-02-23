@@ -807,6 +807,11 @@ void setup() {
   }
   Serial.printf("✓ WiFi connected! IP: %s\n", WiFi.localIP().toString().c_str());
 
+  // Hide the AP — it is required internally for ESP-NOW but should not be
+  // visible to end users.  Must be called after STA connects so the channel
+  // is known; AP and STA must share the same channel on ESP32.
+  WiFi.softAP("TempMaster-AP", "", WiFi.channel(), /*hidden=*/1);
+
   // ── mDNS — device is reachable at http://temp-master.local/ ─────────────
   if (MDNS.begin("temp-master")) {
     Serial.println("✓ mDNS started: http://temp-master.local/");

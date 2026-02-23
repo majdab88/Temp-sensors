@@ -787,8 +787,9 @@ void setup() {
   }
 
   // ── WiFi connect with stored credentials ────────────────────────────────
+  // Use AP_STA from the start — switching modes while connected drops the STA.
   Serial.printf("Connecting to WiFi: %s\n", storedSsid.c_str());
-  WiFi.mode(WIFI_STA);
+  WiFi.mode(WIFI_AP_STA);
   WiFi.begin(storedSsid.c_str(), storedPass.c_str());
 
   unsigned long wifiStart = millis();
@@ -833,9 +834,6 @@ void setup() {
   Serial.println("✓ Web server started");
 
   // ── ESP-NOW ─────────────────────────────────────────────────────────────
-  // AP_STA mode required so the master can receive on the AP interface
-  // while remaining connected to the router on the STA interface.
-  WiFi.mode(WIFI_AP_STA);
   Serial.printf("WiFi channel: %d\n", WiFi.channel());
   WiFi.setTxPower(WIFI_POWER_19_5dBm);
   esp_wifi_set_protocol(WIFI_IF_STA, WIFI_PROTOCOL_11B | WIFI_PROTOCOL_11G |

@@ -405,8 +405,7 @@
     setConnectBusy(true);
     try {
       bleDevice = await navigator.bluetooth.requestDevice({
-        filters: [{ namePrefix: 'TempMaster-' }],
-        optionalServices: [SERVICE_UUID]
+        filters: [{ services: [SERVICE_UUID] }]
       });
       bleDevice.addEventListener('gattserverdisconnected', onDisconnected);
       log(`Found: ${bleDevice.name}`, 'inf');

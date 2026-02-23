@@ -138,6 +138,8 @@ SHT40 I2C address: `0x44`.
 | Target MCU | Seeed XIAO ESP32-C6 |
 | Arduino core | ESP32 Arduino core (Espressif) |
 | Board package | `esp32` by Espressif |
+| **Partition scheme** | **Huge APP (3MB No OTA/1MB SPIFFS)** — required when NimBLE-Arduino is included; default 1.25 MB partition is too small for the BLE stack. Set in Arduino IDE: Tools → Partition Scheme. |
+| Optimize | Smallest Code (-Os) recommended — Tools → Optimize |
 
 ### Required Libraries
 | Library | Source | Used in |

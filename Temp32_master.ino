@@ -788,8 +788,12 @@ void setup() {
 
   // ── WiFi connect with stored credentials ────────────────────────────────
   // Use AP_STA from the start — switching modes while connected drops the STA.
+  // Set tx-power and protocol before connecting so they never disrupt the STA.
   Serial.printf("Connecting to WiFi: %s\n", storedSsid.c_str());
   WiFi.mode(WIFI_AP_STA);
+  WiFi.setTxPower(WIFI_POWER_19_5dBm);
+  esp_wifi_set_protocol(WIFI_IF_STA, WIFI_PROTOCOL_11B | WIFI_PROTOCOL_11G |
+                                      WIFI_PROTOCOL_11N | WIFI_PROTOCOL_LR);
   WiFi.begin(storedSsid.c_str(), storedPass.c_str());
 
   unsigned long wifiStart = millis();
@@ -835,9 +839,6 @@ void setup() {
 
   // ── ESP-NOW ─────────────────────────────────────────────────────────────
   Serial.printf("WiFi channel: %d\n", WiFi.channel());
-  WiFi.setTxPower(WIFI_POWER_19_5dBm);
-  esp_wifi_set_protocol(WIFI_IF_STA, WIFI_PROTOCOL_11B | WIFI_PROTOCOL_11G |
-                                      WIFI_PROTOCOL_11N | WIFI_PROTOCOL_LR);
 
   if (esp_now_init() != ESP_OK) {
     Serial.println("✗ ESP-NOW init failed! Sensor receiving disabled.");

@@ -331,6 +331,7 @@ void startBleProvisioning() {
 
   // Initialise NimBLE
   NimBLEDevice::init(bleName);
+  NimBLEDevice::setMTU(517);  // Allow up to 512-byte notifications (needed for WiFi scan JSON)
   NimBLEDevice::setPower(3);  // +3 dBm — enough for typical room range
 
   pBleServer = NimBLEDevice::createServer();

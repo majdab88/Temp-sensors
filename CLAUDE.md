@@ -59,8 +59,8 @@ Temp-sensors/
 - Sleep interval: `SLEEP_TIME` (default 20 s; use 300+ for production).
 - Persists hub MAC address in **NVS** (`Preferences`) across reboots.
 - **Pairing mode**: broadcast → hub replies → sensor saves MAC → restart.
-- Hold BOOT button (GPIO 9) for 3 s to erase pairing and enter pairing mode.
-  - GPIO9 (BOOT) is an HP GPIO on the C6 and **cannot wake the device from deep sleep** (neither EXT1 nor `esp_deep_sleep_enable_gpio_wakeup()` support HP GPIOs). Factory reset is handled by `checkFactoryReset()` at the start of every boot — hold BOOT during the brief active window at startup.
+- Hold the D0 button (GPIO 0) for 3 s to erase pairing and enter pairing mode.
+  - GPIO 0 (D0) is an **LP GPIO** on the C6 and **supports deep sleep wakeup** via `esp_deep_sleep_enable_gpio_wakeup()`. Pressing the button wakes the device from sleep, after which `checkFactoryReset()` runs and detects the held press.
 - Retries transmission up to `MAX_RETRIES` (5) times before sleeping.
 - Properly deinits ESP-NOW and WiFi before deep sleep (required on ESP32-C6 RISC-V to avoid illegal instruction crash, `MCAUSE: 0x18`).
 - Data-mode peer registered as **encrypted** (`peerInfo.encrypt = true` + LMK).
@@ -87,7 +87,7 @@ typedef struct struct_message {
 ### Sensor (XIAO ESP32-C6)
 | Pin | GPIO | Function |
 |-----|------|----------|
-| BOOT button | 9 | Factory reset (hold 3 s at boot); HP GPIO — cannot wake from deep sleep |
+| External button | 0 (D0) | Factory reset (hold 3 s) **and** deep sleep wakeup; LP GPIO |
 | Built-in LED | 15 | Status indicator |
 | SDA | 22 (D4) | SHT40 I2C data |
 | SCL | 23 (D5) | SHT40 I2C clock |
@@ -111,7 +111,7 @@ SHT40 I2C address: `0x44`.
 ### Sensor
 | Constant | Value | Notes |
 |----------|-------|-------|
-| `SLEEP_TIME` | 20 s | Change to 300+ for production |
+| `SLEEP_TIME` | 900 s | 15 min; adjust as needed |
 | `MAX_RETRIES` | 5 | TX retry attempts |
 | `RETRY_DELAY_MS` | 100 ms | Delay between retries |
 | `TX_TIMEOUT_MS` | 500 ms | Wait for ACK callback |
@@ -184,8 +184,7 @@ Install third-party libraries via Arduino Library Manager or `platformio.ini`.
 ### Resetting
 - **Hub WiFi (current):** Hold BOOT (GPIO 9) for 3 s → WiFiManager portal reopens.
 - **Hub WiFi (planned BLE):** Hold BOOT (GPIO 9) for 3 s → NVS erased → device re-enters BLE provisioning mode.
-- **Sensor pairing:** Hold BOOT (GPIO 9) for 3 s → NVS erased → pairing mode.
-  - **Does not work during deep sleep**: GPIO9 is an HP GPIO on C6 — no deep sleep wakeup API supports it. Hold BOOT during the active window at the start of any boot cycle instead.
+- **Sensor pairing:** Hold D0 (GPIO 0) for 3 s → NVS erased → pairing mode. Works from deep sleep — the button wakes the device, then `checkFactoryReset()` detects the held press.
 
 ---
 
@@ -227,7 +226,7 @@ Install third-party libraries via Arduino Library Manager or `platformio.ini`.
 - Use `SensirionI2cSht4x` (lowercase 'c') — not `SensirionI2CSht4x`.
 - Sensor error values use `-999` as a sentinel for failed reads.
 - `loop()` is intentionally empty in the sensor — all logic runs in `setup()` followed by deep sleep.
-- GPIO9 (BOOT) is an HP GPIO on the C6 — **it cannot be used as a deep sleep wakeup source**. `esp_sleep_enable_ext1_wakeup()` logs `Not an RTC IO` and `esp_deep_sleep_enable_gpio_wakeup()` logs `invalid deep sleep wakeup IO`. Only LP GPIOs 0–7 support deep sleep wakeup. Factory reset is handled by `checkFactoryReset()` at boot instead.
+- The sensor uses **GPIO 0 (D0)** as its reset/wakeup button — this is an LP GPIO (0–7 range) and **does** support `esp_deep_sleep_enable_gpio_wakeup()`. GPIO 9 (BOOT) is an HP GPIO and cannot wake from deep sleep; do not use it for this purpose.
 
 ### Encryption
 - `PMK_KEY` and `LMK_KEY` are defined in both files and **must be kept in sync**.

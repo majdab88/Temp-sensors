@@ -8,14 +8,14 @@
 
 // --- XIAO ESP32-C6 PIN DEFINITIONS ---
 #define LED_PIN   15    // Built-in LED on XIAO ESP32-C6
-#define RESET_PIN  9    // BOOT button on XIAO ESP32-C6
+#define RESET_PIN  0    // External reset button on D0 (GPIO0 — LP GPIO, supports deep sleep wakeup)
 #define SDA_PIN   22    // I2C SDA (D4)
 #define SCL_PIN   23    // I2C SCL (D5)
 #define BAT_ADC_PIN        D2   // GPIO2/D2 — ADC input (resistor divider midpoint)
 #define DIVIDER_ENABLE_PIN D1   // GPIO1/D1 — ground switch; LOW enables divider, INPUT (Hi-Z) during sleep
 
 // --- SLEEP SETTINGS ---
-#define SLEEP_TIME 20   // Seconds (use 300+ for production)
+#define SLEEP_TIME 900  // Seconds
 
 // --- RETRY SETTINGS ---
 #define MAX_RETRIES    5
@@ -101,10 +101,10 @@ void goToSleep(int seconds) {
   esp_wifi_stop();        // Step 2: Stop WiFi radio
   delay(100);             // Step 3: Allow shutdown to settle
 
-  // GPIO9 (BOOT) is an HP GPIO on C6 — it cannot wake the device from deep sleep.
-  // Neither EXT1 nor esp_deep_sleep_enable_gpio_wakeup() support HP GPIOs.
-  // Factory reset is handled by checkFactoryReset() at the start of every boot.
   esp_sleep_enable_timer_wakeup((uint64_t)seconds * 1000000ULL);
+  // D0 (GPIO0) is an LP GPIO — supports deep sleep GPIO wakeup.
+  // Pressing the button wakes the device early for factory reset or manual data send.
+  esp_deep_sleep_enable_gpio_wakeup(1ULL << RESET_PIN, ESP_GPIO_WAKEUP_GPIO_LOW);
   esp_deep_sleep_start(); // Step 4: Sleep
 }
 
@@ -354,7 +354,7 @@ void enterPairingMode() {
   unsigned long startWait    = millis();
   unsigned long lastBroadcast = 0;
   while (millis() - startWait < 10000) {
-    // Re-broadcast every 2 s so the master doesn't need to catch the very first packet
+    // Re-broadcast every 2 s so the hub doesn't need to catch the very first packet
     if (millis() - lastBroadcast >= 2000) {
       esp_now_send(broadcastAddress, (uint8_t *)&myData, sizeof(myData));
       lastBroadcast = millis();
@@ -381,6 +381,12 @@ void setup() {
   digitalWrite(LED_PIN, LOW);
 
   checkFactoryReset();
+
+  // Log wakeup reason
+  esp_sleep_wakeup_cause_t wakeup_reason = esp_sleep_get_wakeup_cause();
+  if (wakeup_reason == ESP_SLEEP_WAKEUP_GPIO) {
+    Serial.println("Wakeup caused by button press on D0");
+  }
 
   // Read battery BEFORE radio init — divider must be off during sleep
   BatteryInfo bat = getBatteryInfo();

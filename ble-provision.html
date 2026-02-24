@@ -235,7 +235,7 @@
 <div class="container">
 
   <h1>Device Setup</h1>
-  <p class="subtitle">Connect your TempSensor master to WiFi and the cloud.</p>
+  <p class="subtitle">Connect your TempSensor hub to WiFi and the cloud.</p>
 
   <div id="compat-warning">
     <strong>⚠️ Web Bluetooth not supported</strong>
@@ -364,7 +364,7 @@
   <div class="card" id="success-screen">
     <div class="success-icon">✅</div>
     <h2>Device Ready!</h2>
-    <p id="success-msg">Your TempSensor master is connected.</p>
+    <p id="success-msg">Your TempSensor hub is connected.</p>
     <button class="btn btn-secondary" onclick="resetUI()">Set Up Another Device</button>
   </div>
 
@@ -401,7 +401,7 @@
 
   // ── BLE Connect ───────────────────────────────────────────────────────────
   async function connect() {
-    log('Scanning for TempMaster devices...', 'inf');
+    log('Scanning for TempHub devices...', 'inf');
     setConnectBusy(true);
     try {
       bleDevice = await navigator.bluetooth.requestDevice({

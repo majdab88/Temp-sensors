@@ -19,7 +19,7 @@
 
 // --- ESP-NOW ENCRYPTION ---
 // IMPORTANT: Change both keys to your own secret values before deploying.
-// Keys must be identical on the master and all slaves.
+// Keys must be identical on the hub and all sensors.
 static const uint8_t PMK_KEY[16] = {
   0x4A, 0x2F, 0x8C, 0x1E, 0x7B, 0x3D, 0x9A, 0x5F,
   0x6E, 0x2C, 0x4B, 0x8D, 0x1A, 0x7F, 0x3E, 0x9C
@@ -48,7 +48,7 @@ const unsigned long NTP_SYNC_INTERVAL  = 86400000;  // 24 h
 bool          timeConfigured = false;
 unsigned long lastNtpSync    = 0;
 
-// --- MESSAGE STRUCTURE (must be byte-for-byte identical on master and all slaves) ---
+// --- MESSAGE STRUCTURE (must be byte-for-byte identical on hub and all sensors) ---
 typedef struct struct_message {
   uint8_t msgType;
   float   temp;
@@ -79,7 +79,7 @@ int        sensorCount = 0;
 // --- WEB SERVER ---
 WebServer server(80);
 
-// --- NVS (used for "sensors" namespace — persisting paired slave MACs) ---
+// --- NVS (used for "sensors" namespace — persisting paired sensor MACs) ---
 Preferences prefs;
 
 // --- BLE PROVISIONING STATE ---
@@ -326,7 +326,7 @@ void startBleProvisioning() {
   uint8_t mac[6];
   WiFi.macAddress(mac);
   char bleName[24];
-  snprintf(bleName, sizeof(bleName), "TempMaster-%02X%02X%02X", mac[3], mac[4], mac[5]);
+  snprintf(bleName, sizeof(bleName), "TempHub-%02X%02X%02X", mac[3], mac[4], mac[5]);
   Serial.printf("BLE name: %s\n", bleName);
 
   // Initialise NimBLE
@@ -767,7 +767,7 @@ void OnDataRecv(const esp_now_recv_info_t* esp_now_info,
 void setup() {
   Serial.begin(115200);
   delay(500);
-  Serial.println("\n=== XIAO ESP32-C6 Master Station ===");
+  Serial.println("\n=== XIAO ESP32-C6 Hub ===");
 
   pinMode(TRIGGER_PIN, INPUT_PULLUP);
   pinMode(LED_PIN, OUTPUT);
@@ -810,11 +810,11 @@ void setup() {
   // Hide the AP — it is required internally for ESP-NOW but should not be
   // visible to end users.  Must be called after STA connects so the channel
   // is known; AP and STA must share the same channel on ESP32.
-  WiFi.softAP("TempMaster-AP", "", WiFi.channel(), /*hidden=*/1);
+  WiFi.softAP("TempHub-AP", "", WiFi.channel(), /*hidden=*/1);
 
   // ── mDNS — device is reachable at http://temp-master.local/ ─────────────
-  if (MDNS.begin("temp-master")) {
-    Serial.println("✓ mDNS started: http://temp-master.local/");
+  if (MDNS.begin("temp-hub")) {
+    Serial.println("✓ mDNS started: http://temp-hub.local/");
     MDNS.addService("http", "tcp", 80);
   } else {
     Serial.println("mDNS start failed (non-fatal)");
@@ -855,7 +855,7 @@ void setup() {
   loadPairedSensors();
   esp_now_register_recv_cb(OnDataRecv);
 
-  Serial.println("\n=== Master Ready ===");
+  Serial.println("\n=== Hub Ready ===");
   Serial.println("Waiting for sensor data...\n");
 }
 

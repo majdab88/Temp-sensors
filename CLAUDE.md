@@ -8,11 +8,11 @@ This file provides guidance for AI assistants (Claude, Copilot, etc.) working in
 
 **Repository:** `Temp-sensors`
 **Owner:** majdab88
-**Hardware:** XIAO ESP32-C6 (master + slave nodes)
+**Hardware:** XIAO ESP32-C6 (hub + sensor nodes)
 **Sensor:** Sensirion SHT40 (±0.2°C, high-precision temperature & humidity)
 **Protocol:** ESP-NOW (peer-to-peer, no router required for sensor communication)
 
-This is a wireless temperature/humidity monitoring system. One **master** station receives sensor data via ESP-NOW, serves a live web dashboard, and connects to WiFi. Up to 10 **slave** sensor nodes wake from deep sleep, read the SHT40, transmit to the master, and go back to sleep.
+This is a wireless temperature/humidity monitoring system. One **hub** station receives sensor data via ESP-NOW, serves a live web dashboard, and connects to WiFi. Up to 10 **sensor** nodes wake from deep sleep, read the SHT40, transmit to the hub, and go back to sleep.
 
 ---
 
@@ -20,8 +20,8 @@ This is a wireless temperature/humidity monitoring system. One **master** statio
 
 ```
 Temp-sensors/
-├── Temp32_master.ino        # Master station firmware (receiver + web dashboard)
-├── Temp32_slave.ino         # Slave sensor node firmware (SHT40 + deep sleep)
+├── Temp32_hub.ino           # Hub firmware (receiver + web dashboard)
+├── Temp32_sensor.ino        # Sensor node firmware (SHT40 + deep sleep)
 ├── CLOUD_MIGRATION_PLAN.md  # Plan to migrate to custom cloud + BLE provisioning
 ├── README.md                # Project title placeholder
 └── CLAUDE.md                # This file
@@ -32,10 +32,10 @@ Temp-sensors/
 ## Architecture
 
 ```
-[Slave Node 1]  ──ESP-NOW──┐
-[Slave Node 2]  ──ESP-NOW──┤──► [Master (ESP32-C6)] ──WiFi──► Web Browser
-       ...                 │         (web dashboard)
-[Slave Node N]  ──ESP-NOW──┘         (JSON API)
+[Sensor Node 1]  ──ESP-NOW──┐
+[Sensor Node 2]  ──ESP-NOW──┤──► [Hub (ESP32-C6)] ──WiFi──► Web Browser
+        ...                 │       (web dashboard)
+[Sensor Node N]  ──ESP-NOW──┘       (JSON API)
 ```
 
 > **Planned migration:** `CLOUD_MIGRATION_PLAN.md` documents a full migration to
@@ -44,21 +44,21 @@ Temp-sensors/
 > **BLE provisioning** (NimBLE-Arduino) so end users never need to type an IP
 > address. The firmware below reflects the **current implemented state**.
 
-### Master (`Temp32_master.ino`)
+### Hub (`Temp32_hub.ino`)
 - Connects to WiFi via **WiFiManager** (captive portal AP on first boot). *(Planned: replaced by BLE provisioning — see CLOUD_MIGRATION_PLAN.md)*
 - Receives sensor data via **ESP-NOW** (encrypted with shared PMK/LMK).
 - Serves an HTML dashboard at `http://<IP>/` (auto-refreshes every 10 s).
 - Serves a JSON API at `http://<IP>/api/sensors`.
 - Tracks up to **10 sensors** by MAC address; marks sensors offline after 10 min.
 - Syncs time via **NTP** (`pool.ntp.org`, UTC+2).
-- After pairing, upgrades each slave peer from unencrypted broadcast to encrypted (LMK) via `esp_now_mod_peer()`.
+- After pairing, upgrades each sensor peer from unencrypted broadcast to encrypted (LMK) via `esp_now_mod_peer()`.
 - Hold BOOT button (GPIO 9) for 3 s to erase WiFi credentials and restart.
 
-### Slave (`Temp32_slave.ino`)
-- Wakes from **deep sleep**, reads the SHT40, sends data to master, sleeps again.
+### Sensor (`Temp32_sensor.ino`)
+- Wakes from **deep sleep**, reads the SHT40, sends data to hub, sleeps again.
 - Sleep interval: `SLEEP_TIME` (default 20 s; use 300+ for production).
-- Persists master MAC address in **NVS** (`Preferences`) across reboots.
-- **Pairing mode**: broadcast → master replies → slave saves MAC → restart.
+- Persists hub MAC address in **NVS** (`Preferences`) across reboots.
+- **Pairing mode**: broadcast → hub replies → sensor saves MAC → restart.
 - Hold BOOT button (GPIO 9) for 3 s to erase pairing and enter pairing mode.
   - GPIO9 (BOOT) is an HP GPIO on the C6 and **cannot wake the device from deep sleep** (neither EXT1 nor `esp_deep_sleep_enable_gpio_wakeup()` support HP GPIOs). Factory reset is handled by `checkFactoryReset()` at the start of every boot — hold BOOT during the brief active window at startup.
 - Retries transmission up to `MAX_RETRIES` (5) times before sleeping.
@@ -78,13 +78,13 @@ typedef struct struct_message {
 
 ## Hardware Pin Definitions
 
-### Master (XIAO ESP32-C6)
+### Hub (XIAO ESP32-C6)
 | Pin | GPIO | Function |
 |-----|------|----------|
 | BOOT button | 9 | WiFi reset (hold 3 s) |
 | Built-in LED | 15 | Blinks on pairing |
 
-### Slave (XIAO ESP32-C6)
+### Sensor (XIAO ESP32-C6)
 | Pin | GPIO | Function |
 |-----|------|----------|
 | BOOT button | 9 | Factory reset (hold 3 s at boot); HP GPIO — cannot wake from deep sleep |
@@ -98,17 +98,17 @@ SHT40 I2C address: `0x44`.
 
 ## Key Configuration Constants
 
-### Master
+### Hub
 | Constant | Value | Notes |
 |----------|-------|-------|
-| `MAX_SENSORS` | 10 | Maximum paired slaves |
+| `MAX_SENSORS` | 10 | Maximum paired sensors |
 | `NTP_SYNC_INTERVAL` | 86400000 ms | Re-sync every 24 h |
 | `gmtOffset_sec` | 7200 | UTC+2 |
 | `daylightOffset_sec` | 3600 | +1 h DST |
-| WiFiManager AP SSID | `Temp-sensor-Master` | First-boot captive portal |
+| WiFiManager AP SSID | `Temp-sensor-Hub` | First-boot captive portal |
 | WiFiManager AP pass | `12345678` | |
 
-### Slave
+### Sensor
 | Constant | Value | Notes |
 |----------|-------|-------|
 | `SLEEP_TIME` | 20 s | Change to 300+ for production |
@@ -120,11 +120,11 @@ SHT40 I2C address: `0x44`.
 ### Encryption (both files)
 | Item | Detail |
 |------|--------|
-| `PMK_KEY[16]` | Primary Master Key — must be identical on master and all slaves |
+| `PMK_KEY[16]` | Primary Master Key — must be identical on hub and all sensors |
 | `LMK_KEY[16]` | Local Master Key — used to encrypt unicast data frames |
 | Set via | `esp_now_set_pmk(PMK_KEY)` after `esp_now_init()` |
 | Data peers | Registered with `encrypt = true` and `lmk` set to `LMK_KEY` |
-| Pairing | Still uses unencrypted broadcast; master upgrades peer via `esp_now_mod_peer()` immediately after sending the pairing reply |
+| Pairing | Still uses unencrypted broadcast; hub upgrades peer via `esp_now_mod_peer()` immediately after sending the pairing reply |
 
 > **Important:** Change `PMK_KEY` and `LMK_KEY` in both files to your own secret values before deploying. All devices in the same network must share the same keys.
 
@@ -147,15 +147,15 @@ SHT40 I2C address: `0x44`.
 | `WiFi.h` | Built-in (ESP32 core) | Both |
 | `esp_now.h` | Built-in (ESP32 core) | Both |
 | `esp_wifi.h` | Built-in (ESP32 core) | Both |
-| `esp_sleep.h` | Built-in (ESP32 core) | Slave |
-| `Wire.h` | Built-in (ESP32 core) | Slave |
-| `Preferences.h` | Built-in (ESP32 core) | Slave |
-| `WebServer.h` | Built-in (ESP32 core) | Master |
-| `time.h` | Built-in (ESP32 core) | Master |
-| **WiFiManager** | Third-party (tzapu/WiFiManager) | Master *(planned: replaced by NimBLE-Arduino)* |
-| **SensirionI2cSht4x** | Third-party (Sensirion Arduino Core) | Slave |
-| **NimBLE-Arduino** | Third-party (h2zero/NimBLE-Arduino) | Master *(planned: BLE provisioning)* |
-| **PubSubClient** | Third-party (knolleary/pubsubclient) | Master *(planned: MQTT cloud uplink)* |
+| `esp_sleep.h` | Built-in (ESP32 core) | Sensor |
+| `Wire.h` | Built-in (ESP32 core) | Sensor |
+| `Preferences.h` | Built-in (ESP32 core) | Sensor |
+| `WebServer.h` | Built-in (ESP32 core) | Hub |
+| `time.h` | Built-in (ESP32 core) | Hub |
+| **WiFiManager** | Third-party (tzapu/WiFiManager) | Hub *(planned: replaced by NimBLE-Arduino)* |
+| **SensirionI2cSht4x** | Third-party (Sensirion Arduino Core) | Sensor |
+| **NimBLE-Arduino** | Third-party (h2zero/NimBLE-Arduino) | Hub *(planned: BLE provisioning)* |
+| **PubSubClient** | Third-party (knolleary/pubsubclient) | Hub *(planned: MQTT cloud uplink)* |
 
 Install third-party libraries via Arduino Library Manager or `platformio.ini`.
 
@@ -165,26 +165,26 @@ Install third-party libraries via Arduino Library Manager or `platformio.ini`.
 
 1. Edit firmware in Arduino IDE or PlatformIO.
 2. Select board: **XIAO ESP32-C6** (or `Seeed Studio XIAO ESP32C6`).
-3. Flash master first; it creates a WiFi AP (`Temp-sensor-Master`) on first boot.
-4. Flash slave; it broadcasts a pairing request and saves the master's MAC.
-5. After pairing, slaves deep-sleep and send readings on each wake cycle.
+3. Flash hub first; it creates a WiFi AP (`Temp-sensor-Hub`) on first boot.
+4. Flash sensor; it broadcasts a pairing request and saves the hub's MAC.
+5. After pairing, sensors deep-sleep and send readings on each wake cycle.
 6. Monitor output via Serial (115200 baud).
 
 ### First-Time Setup (Current — WiFiManager)
-1. Flash master → connect to `Temp-sensor-Master` AP → enter your WiFi credentials.
-2. Master prints its IP to Serial; open `http://<IP>/` in a browser.
-3. Flash slave(s) → they auto-pair to the master.
+1. Flash hub → connect to `Temp-sensor-Hub` AP → enter your WiFi credentials.
+2. Hub prints its IP to Serial; open `http://<IP>/` in a browser.
+3. Flash sensor(s) → they auto-pair to the hub.
 
 ### First-Time Setup (Planned — BLE provisioning)
-1. Flash master → open mobile app → tap "Add Device" → select `TempMaster-XXXXXX`.
+1. Flash hub → open mobile app → tap "Add Device" → select `TempHub-XXXXXX`.
 2. Enter WiFi SSID + password in the app; app pushes credentials via BLE.
-3. Master connects to WiFi + cloud; app shows "Done!".
-4. Flash slave(s) → they auto-pair (or approve pairing via app/dashboard).
+3. Hub connects to WiFi + cloud; app shows "Done!".
+4. Flash sensor(s) → they auto-pair (or approve pairing via app/dashboard).
 
 ### Resetting
-- **Master WiFi (current):** Hold BOOT (GPIO 9) for 3 s → WiFiManager portal reopens.
-- **Master WiFi (planned BLE):** Hold BOOT (GPIO 9) for 3 s → NVS erased → device re-enters BLE provisioning mode.
-- **Slave pairing:** Hold BOOT (GPIO 9) for 3 s → NVS erased → pairing mode.
+- **Hub WiFi (current):** Hold BOOT (GPIO 9) for 3 s → WiFiManager portal reopens.
+- **Hub WiFi (planned BLE):** Hold BOOT (GPIO 9) for 3 s → NVS erased → device re-enters BLE provisioning mode.
+- **Sensor pairing:** Hold BOOT (GPIO 9) for 3 s → NVS erased → pairing mode.
   - **Does not work during deep sleep**: GPIO9 is an HP GPIO on C6 — no deep sleep wakeup API supports it. Hold BOOT during the active window at the start of any boot cycle instead.
 
 ---
@@ -226,18 +226,18 @@ Install third-party libraries via Arduino Library Manager or `platformio.ini`.
   - GPIO 50 mA delay needed at startup (`delay(50)` in `checkFactoryReset()`).
 - Use `SensirionI2cSht4x` (lowercase 'c') — not `SensirionI2CSht4x`.
 - Sensor error values use `-999` as a sentinel for failed reads.
-- `loop()` is intentionally empty in the slave — all logic runs in `setup()` followed by deep sleep.
+- `loop()` is intentionally empty in the sensor — all logic runs in `setup()` followed by deep sleep.
 - GPIO9 (BOOT) is an HP GPIO on the C6 — **it cannot be used as a deep sleep wakeup source**. `esp_sleep_enable_ext1_wakeup()` logs `Not an RTC IO` and `esp_deep_sleep_enable_gpio_wakeup()` logs `invalid deep sleep wakeup IO`. Only LP GPIOs 0–7 support deep sleep wakeup. Factory reset is handled by `checkFactoryReset()` at boot instead.
 
 ### Encryption
 - `PMK_KEY` and `LMK_KEY` are defined in both files and **must be kept in sync**.
-- Pairing uses unencrypted broadcast by design (the slave doesn't know the master's MAC yet). The master calls `esp_now_mod_peer()` after pairing to upgrade to encrypted.
+- Pairing uses unencrypted broadcast by design (the sensor doesn't know the hub's MAC yet). The hub calls `esp_now_mod_peer()` after pairing to upgrade to encrypted.
 - Do not change `encrypt` to `false` on data-mode peers — data is encrypted.
 
 ### Security
 - Do not introduce command injection, XSS, or other OWASP Top 10 vulnerabilities in the web server HTML/JSON handlers.
 - Do not commit WiFi credentials or pairing secrets.
-- The hardcoded `PMK_KEY`/`LMK_KEY` are placeholder values — remind the user to replace them before production deployment.
+- The hardcoded `PMK_KEY`/`LMK_KEY` are placeholder values — remind the user to replace them before production deployment. Flash both hub and all sensors with matching keys.
 
 ### Style
 - Follow the conventions already present in the file being edited (indentation, naming, formatting).

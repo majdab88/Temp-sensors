@@ -35,7 +35,7 @@
 #define MSG_DATA    2
 
 // --- ESP-NOW ENCRYPTION ---
-// IMPORTANT: These keys must be identical on all devices (master + all slaves)
+// IMPORTANT: These keys must be identical on all devices (hub + all sensors)
 // Change both bytes below to your own secret values before deploying
 static const uint8_t PMK_KEY[16] = {
   0x4A, 0x2F, 0x8C, 0x1E, 0x7B, 0x3D, 0x9A, 0x5F,
@@ -69,7 +69,7 @@ struct BatteryInfo {
 };
 
 // --- MESSAGE STRUCTURE ---
-// IMPORTANT: must be byte-for-byte identical on master and all slaves
+// IMPORTANT: must be byte-for-byte identical on hub and all sensors
 typedef struct struct_message {
   uint8_t msgType;
   float temp;
@@ -83,7 +83,7 @@ Preferences preferences;
 esp_now_peer_info_t peerInfo;
 struct_message myData;
 
-uint8_t masterMac[6];
+uint8_t hubMac[6];
 bool isPaired = false;
 uint8_t broadcastAddress[] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF};
 
@@ -118,14 +118,14 @@ void OnDataRecv(const esp_now_recv_info_t *esp_now_info, const uint8_t *incoming
   struct_message *msg = (struct_message *)incomingData;
 
   if (msg->msgType == MSG_PAIRING) {
-    Serial.println("\n✓ Master Found!");
-    Serial.printf("Master MAC: %02X:%02X:%02X:%02X:%02X:%02X\n",
+    Serial.println("\n✓ Hub Found!");
+    Serial.printf("Hub MAC: %02X:%02X:%02X:%02X:%02X:%02X\n",
                   esp_now_info->src_addr[0], esp_now_info->src_addr[1],
                   esp_now_info->src_addr[2], esp_now_info->src_addr[3],
                   esp_now_info->src_addr[4], esp_now_info->src_addr[5]);
 
     preferences.begin("network", false);
-    preferences.putBytes("masterMac", esp_now_info->src_addr, 6);
+    preferences.putBytes("hubMac", esp_now_info->src_addr, 6);
     preferences.end();
 
     for (int i = 0; i < 5; i++) {
@@ -300,7 +300,7 @@ bool sendDataWithRetry() {
     tx_complete = false;
     tx_success  = false;
 
-    esp_err_t result = esp_now_send(masterMac, (uint8_t *)&myData, sizeof(myData));
+    esp_err_t result = esp_now_send(hubMac, (uint8_t *)&myData, sizeof(myData));
 
     if (result != ESP_OK) {
       Serial.printf("✗ Send error: 0x%X  Retry %d/%d\n", result, retry+1, MAX_RETRIES);
@@ -350,7 +350,7 @@ void enterPairingMode() {
   myData.hum      = 0;
   myData.battery  = 0;
 
-  Serial.print("Waiting for master");
+  Serial.print("Waiting for hub");
   unsigned long startWait    = millis();
   unsigned long lastBroadcast = 0;
   while (millis() - startWait < 10000) {
@@ -393,14 +393,14 @@ void setup() {
 
   // Load pairing
   preferences.begin("network", true);
-  size_t len = preferences.getBytes("masterMac", masterMac, 6);
+  size_t len = preferences.getBytes("hubMac", hubMac, 6);
   preferences.end();
   isPaired = (len == 6);
 
   if (isPaired) {
     Serial.printf("✓ Paired to: %02X:%02X:%02X:%02X:%02X:%02X\n",
-                  masterMac[0], masterMac[1], masterMac[2],
-                  masterMac[3], masterMac[4], masterMac[5]);
+                  hubMac[0], hubMac[1], hubMac[2],
+                  hubMac[3], hubMac[4], hubMac[5]);
   } else {
     Serial.println("Not paired.");
   }
@@ -426,7 +426,7 @@ void setup() {
   if (isPaired) {
     Serial.println("\n--- Data Mode ---");
 
-    memcpy(peerInfo.peer_addr, masterMac, 6);
+    memcpy(peerInfo.peer_addr, hubMac, 6);
     peerInfo.channel = ESPNOW_CHANNEL;
     peerInfo.encrypt = true;
     memcpy(peerInfo.lmk, LMK_KEY, 16);

@@ -1,0 +1,36 @@
+# ============================================================
+# Mosquitto ACL — Temp-sensors Cloud
+# ============================================================
+#
+# Rules are evaluated top-to-bottom; first match wins.
+# Topic patterns:
+#   #   — wildcard matching zero or more levels
+#   +   — wildcard matching exactly one level
+#   %u  — substituted with the connecting client's username
+#
+# Hub devices authenticate with their MAC address as the username
+# (uppercase, no colons, e.g. "AABBCCDDEEFF").
+# The %u pattern therefore restricts each hub to its own topic subtree.
+# ============================================================
+
+# ----------------------------------------------------------
+# Backend service account — full access to all topics.
+# This user is used by the Node.js backend to subscribe to all
+# sensor data and publish pairing responses/commands.
+# ----------------------------------------------------------
+user backend
+topic readwrite #
+
+# ----------------------------------------------------------
+# Hub devices — restricted to their own MAC-addressed topics.
+#
+# Allowed topics (where %u = hub MAC, e.g. AABBCCDDEEFF):
+#   sensors/AABBCCDDEEFF/data              (hub publishes sensor readings)
+#   sensors/AABBCCDDEEFF/status            (hub publishes online/offline + LWT)
+#   sensors/AABBCCDDEEFF/pairing/request   (hub publishes new pairing requests)
+#   sensors/AABBCCDDEEFF/pairing/response  (hub subscribes — cloud decision)
+#   sensors/AABBCCDDEEFF/command           (hub subscribes — future commands)
+#
+# Hubs cannot read or write any other device's topics.
+# ----------------------------------------------------------
+pattern readwrite sensors/%u/#

@@ -1,0 +1,146 @@
+version: '3.9'
+
+# ============================================================
+# Temp-sensors Cloud Stack — Phase 1 Infrastructure
+# ============================================================
+# Services:
+#   mosquitto  — MQTT broker (TLS on 8883 for hubs, plaintext 1883 internal)
+#   postgres   — PostgreSQL 16 (not exposed to host)
+#   backend    — Node.js API + MQTT bridge + Socket.IO (Phase 2)
+#   nginx      — Reverse proxy, HTTPS, serves React SPA (Phase 3)
+#   certbot    — Let's Encrypt cert renewal
+#
+# First-time bootstrap:
+#   1. Copy .env.example to .env and fill in all values.
+#   2. Generate mosquitto password file (see mosquitto/mosquitto.conf comments).
+#   3. Obtain the initial TLS certificate before starting nginx/mosquitto with TLS:
+#        docker compose run --rm certbot certonly \
+#          --webroot -w /var/www/certbot \
+#          --email you@example.com \
+#          -d your-domain.com --agree-tos --no-eff-email
+#      (Start nginx in HTTP-only mode first — comment out the HTTPS server block,
+#       run certbot, then uncomment HTTPS and restart nginx.)
+#   4. docker compose up -d
+# ============================================================
+
+services:
+
+  # ----------------------------------------------------------
+  # MQTT Broker
+  # ----------------------------------------------------------
+  mosquitto:
+    image: eclipse-mosquitto:2
+    container_name: mosquitto
+    restart: unless-stopped
+    ports:
+      - "8883:8883"   # MQTT/TLS — exposed to internet for ESP32 hub connections
+      # Port 1883 (plaintext) is intentionally NOT mapped to the host.
+      # The backend reaches it via the internal Docker network only.
+    volumes:
+      - ./mosquitto/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
+      - ./mosquitto/passwd:/mosquitto/config/passwd:ro
+      - ./mosquitto/acl:/mosquitto/config/acl:ro
+      - ./certs:/etc/letsencrypt:ro            # Let's Encrypt certs (read-only)
+      - mosquitto_data:/mosquitto/data
+      - mosquitto_logs:/mosquitto/log
+    networks:
+      - internal
+
+  # ----------------------------------------------------------
+  # Database
+  # ----------------------------------------------------------
+  postgres:
+    image: postgres:16-alpine
+    container_name: postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./postgres/init.sql:/docker-entrypoint-initdb.d/01-init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    networks:
+      - internal
+    # NOT exposed to host — reachable only within the Docker network.
+
+  # ----------------------------------------------------------
+  # Backend API (Node.js + Express + Socket.IO)
+  # Implemented in Phase 2. Placeholder Dockerfile is in ./backend.
+  # ----------------------------------------------------------
+  backend:
+    build: ./backend
+    container_name: backend
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      mosquitto:
+        condition: service_started
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
+      MQTT_URL: mqtt://mosquitto:1883
+      MQTT_BACKEND_USER: ${MQTT_BACKEND_USER}
+      MQTT_BACKEND_PASS: ${MQTT_BACKEND_PASS}
+      JWT_SECRET: ${JWT_SECRET}
+      JWT_REFRESH_SECRET: ${JWT_REFRESH_SECRET}
+      ADMIN_USERNAME: ${ADMIN_USERNAME}
+      ADMIN_PASSWORD_HASH: ${ADMIN_PASSWORD_HASH}
+      PORT: 3000
+      NODE_ENV: production
+    networks:
+      - internal
+
+  # ----------------------------------------------------------
+  # Reverse Proxy + Static Frontend
+  # ----------------------------------------------------------
+  nginx:
+    image: nginx:1.27-alpine
+    container_name: nginx
+    restart: unless-stopped
+    depends_on:
+      - backend
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+      - ./nginx/certbot-webroot:/var/www/certbot:ro  # ACME challenge
+      - ./certs:/etc/letsencrypt:ro                   # Let's Encrypt certs
+      - ./frontend/dist:/usr/share/nginx/html:ro      # React build output (Phase 3)
+    networks:
+      - internal
+
+  # ----------------------------------------------------------
+  # Let's Encrypt Certificate Renewal
+  # ----------------------------------------------------------
+  certbot:
+    image: certbot/certbot:latest
+    container_name: certbot
+    volumes:
+      - ./certs:/etc/letsencrypt
+      - ./nginx/certbot-webroot:/var/www/certbot
+    # Checks for renewal every 12 hours; certbot only renews when < 30 days remain.
+    entrypoint: /bin/sh -c 'trap exit TERM; while :; do certbot renew --quiet; sleep 12h & wait $${!}; done'
+
+# ----------------------------------------------------------
+# Named volumes
+# ----------------------------------------------------------
+volumes:
+  mosquitto_data:
+  mosquitto_logs:
+  postgres_data:
+
+# ----------------------------------------------------------
+# Networks
+# ----------------------------------------------------------
+networks:
+  internal:
+    driver: bridge
+    # All services share this network. Only mosquitto:8883, nginx:80/443
+    # are exposed to the host. PostgreSQL and backend are internal only.

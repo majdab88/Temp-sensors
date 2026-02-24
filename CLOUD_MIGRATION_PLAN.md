@@ -17,24 +17,24 @@ Migrate from a fully local system to a custom, self-hosted cloud solution that p
 ### Current
 
 ```
-[Slave 1..N]  ──ESP-NOW──►  [Master ESP32-C6]  ──LAN──►  Browser (local only)
+[Sensor 1..N]  ──ESP-NOW──►  [Hub ESP32-C6]  ──LAN──►  Browser (local only)
                                WiFiManager AP (first boot)
 ```
 
 ### Target
 
 ```
-[Phone App]  ──BLE──►  [Master ESP32-C6]  ──MQTT/TLS──►  [Cloud Server]
-(provisioning)           ││                          ┌────────┼────────┐
-                         ││ ESP-NOW               [Mosquitto][Backend][PostgreSQL]
-                         ▼▼                                   │
-                    [Slave 1..N]                        [Web Dashboard]
-                                                         (browser, anywhere)
+[Phone App]  ──BLE──►  [Hub ESP32-C6]  ──MQTT/TLS──►  [Cloud Server]
+(provisioning)           ││                       ┌────────┼────────┐
+                         ││ ESP-NOW            [Mosquitto][Backend][PostgreSQL]
+                         ▼▼                                │
+                   [Sensor 1..N]                     [Web Dashboard]
+                                                      (browser, anywhere)
 ```
 
-Slaves never connect to the internet. All cloud communication goes through the
-master only. BLE is used only during the initial setup; after provisioning the
-master operates over WiFi exclusively.
+Sensors never connect to the internet. All cloud communication goes through the
+hub only. BLE is used only during the initial setup; after provisioning the
+hub operates over WiFi exclusively.
 
 ---
 
@@ -62,7 +62,7 @@ master operates over WiFi exclusively.
 | Framework | React Native + Expo | Cross-platform (iOS + Android); shares React knowledge with web dashboard |
 | BLE | `react-native-ble-plx` | Most widely used RN BLE library; works with Expo dev client |
 | HTTP | `axios` | REST calls to cloud backend for device registration + API key fetch |
-| Master BLE lib | **NimBLE-Arduino** | Replaces WiFiManager; much lighter than Bluedroid (~50 KB vs ~300 KB RAM) |
+| Hub BLE lib | **NimBLE-Arduino** | Replaces WiFiManager; much lighter than Bluedroid (~50 KB vs ~300 KB RAM) |
 
 > **Alternative app framework:** Flutter + `flutter_blue_plus` is equally viable
 > if you prefer Dart. Choose based on team familiarity.
@@ -76,7 +76,7 @@ The master advertises a custom GATT service while in provisioning mode.
 ### Device Advertisement Name
 
 ```
-TempMaster-AABBCC    (last 3 octets of MAC, uppercase)
+TempHub-AABBCC    (last 3 octets of MAC, uppercase)
 ```
 
 This lets the app list multiple devices unambiguously and lets the user identify
@@ -111,7 +111,7 @@ status indicator without polling.
   │
   ├─ WiFi creds in NVS? ──Yes──► Connect to WiFi ──► Normal operation
   │
-  └─ No ──► Start BLE advertising ("TempMaster-AABBCC")
+  └─ No ──► Start BLE advertising ("TempHub-AABBCC")
                 │
                 ├─ App writes PROV_WIFI ──► save SSID+pass to NVS
                 ├─ App writes PROV_CLOUD ──► save MQTT creds to NVS
@@ -140,14 +140,14 @@ remote monitoring / pairing control (cloud REST + WebSocket).
 | **Home / Dashboard** | Live sensor grid for all paired sensors (Socket.IO) |
 | **Add Device** | BLE scan → select device → enter WiFi creds → auto-fetch MQTT creds from cloud → push via BLE → show progress |
 | **Sensor History** | Chart.js line chart for a selected sensor (24 h / 7 d / 30 d) |
-| **Pairing Requests** | Pending slave pairing requests; Approve / Reject |
+| **Pairing Requests** | Pending sensor pairing requests; Approve / Reject |
 | **Settings** | Rename sensors, remove devices, account |
 
 ### Add Device Flow (end-user perspective)
 
 ```
 1. Tap "Add Device"
-2. App scans BLE → shows list of nearby "TempMaster-XXXXXX" devices
+2. App scans BLE → shows list of nearby "TempHub-XXXXXX" devices
 3. User taps the correct device
 4. App prompts: "Enter your WiFi network name and password"
 5. User types SSID + password → taps "Connect"
@@ -174,7 +174,7 @@ temp-sensors-app/
     ├── screens/
     │   ├── LoginScreen.tsx
     │   ├── DashboardScreen.tsx
-    │   ├── AddDeviceScreen.tsx     # BLE scan + provisioning flow
+    │   ├── AddDeviceScreen.tsx     # BLE scan + provisioning flow (hub)
     │   ├── HistoryScreen.tsx
     │   ├── PairingScreen.tsx
     │   └── SettingsScreen.tsx
@@ -193,7 +193,7 @@ temp-sensors-app/
 ## Database Schema
 
 ```sql
--- Master devices (one row per physical master ESP32)
+-- Hub devices (one row per physical hub ESP32)
 CREATE TABLE devices (
   id            SERIAL PRIMARY KEY,
   mac           VARCHAR(17) UNIQUE NOT NULL,   -- e.g. "AA:BB:CC:DD:EE:FF"
@@ -202,7 +202,7 @@ CREATE TABLE devices (
   registered_at TIMESTAMPTZ DEFAULT NOW()
 );
 
--- Slave sensors paired to a master
+-- Sensor nodes paired to a hub
 CREATE TABLE sensors (
   id        SERIAL PRIMARY KEY,
   device_id INT REFERENCES devices(id) ON DELETE CASCADE,
@@ -244,11 +244,11 @@ CREATE TABLE pairing_requests (
 
 | Topic | Direction | Payload (JSON) | Description |
 |-------|-----------|----------------|-------------|
-| `sensors/{master_mac}/data` | Master → Cloud | `{slave_mac, temp, hum, battery, rssi, ts}` | Sensor reading |
-| `sensors/{master_mac}/status` | Master → Cloud | `{online, ip, hostname, firmware, ts}` | Online/offline + LWT |
-| `sensors/{master_mac}/pairing/request` | Master → Cloud | `{slave_mac, ts}` | New slave pairing request |
-| `sensors/{master_mac}/pairing/response` | Cloud → Master | `{slave_mac, approved}` | Dashboard/app decision |
-| `sensors/{master_mac}/command` | Cloud → Master | `{cmd, params}` | Reserved for future commands |
+| `sensors/{hub_mac}/data` | Hub → Cloud | `{sensor_mac, temp, hum, battery, rssi, ts}` | Sensor reading |
+| `sensors/{hub_mac}/status` | Hub → Cloud | `{online, ip, hostname, firmware, ts}` | Online/offline + LWT |
+| `sensors/{hub_mac}/pairing/request` | Hub → Cloud | `{sensor_mac, ts}` | New sensor pairing request |
+| `sensors/{hub_mac}/pairing/response` | Cloud → Hub | `{sensor_mac, approved}` | Dashboard/app decision |
+| `sensors/{hub_mac}/command` | Cloud → Hub | `{cmd, params}` | Reserved for future commands |
 
 ---
 
@@ -257,8 +257,8 @@ CREATE TABLE pairing_requests (
 | Method | Path | Description |
 |--------|------|-------------|
 | POST | `/api/auth/login` | App/dashboard login → JWT |
-| GET | `/api/devices` | List registered masters |
-| POST | `/api/devices/register` | Register new master; returns generated API key (called by app during BLE provisioning) |
+| GET | `/api/devices` | List registered hubs |
+| POST | `/api/devices/register` | Register new hub; returns generated API key (called by app during BLE provisioning) |
 | GET | `/api/sensors` | List all sensors |
 | PUT | `/api/sensors/:id` | Rename sensor |
 | DELETE | `/api/sensors/:id` | Remove sensor |
@@ -333,13 +333,13 @@ temp-sensors-cloud/
 | `cloud` | `mqtt_port` | Int | BLE provisioning | Default 8883 |
 | `cloud` | `mqtt_user` | String | BLE provisioning | Device username (= MAC) |
 | `cloud` | `mqtt_pass` | String | BLE provisioning | API key from cloud |
-| `sensors` | `mac0`…`mac9` | Bytes | Auto (pairing) | Saved slave MACs |
-| `sensors` | `count` | Int | Auto (pairing) | Number of saved slaves |
+| `sensors` | `mac0`…`mac9` | Bytes | Auto (pairing) | Saved sensor MACs |
+| `sensors` | `count` | Int | Auto (pairing) | Number of saved sensors |
 
 ### Behaviour Changes
 
 1. **Boot** — check `wifi/ssid` in NVS.
-   - Not found → start NimBLE GATT server, advertise as `TempMaster-AABBCC`.
+   - Not found → start NimBLE GATT server, advertise as `TempHub-AABBCC`.
    - Found → call `WiFi.begin(ssid, pass)` directly (no WiFiManager).
 
 2. **BLE provisioning mode**:
@@ -351,48 +351,48 @@ temp-sensors-cloud/
    - Call `WiFi.begin()` + `connectCloud()`. On success: notify `"connected"`,
      stop BLE advertising. On failure: notify `"failed"`, keep advertising.
 
-3. **After WiFi connects** — start mDNS (`MDNS.begin("temp-master")`), then
+3. **After WiFi connects** — start mDNS (`MDNS.begin("temp-hub")`), then
    connect to MQTT broker with TLS, subscribe to
    `sensors/{mac}/pairing/response` and `sensors/{mac}/command`.
 
-4. **On sensor data received from slave** — publish to `sensors/{mac}/data`;
+4. **On sensor data received from sensor node** — publish to `sensors/{mac}/data`;
    update local in-memory store and local web server.
 
-5. **On pairing request received from slave**:
+5. **On pairing request received from sensor node**:
    - Cloud connected: publish to `sensors/{mac}/pairing/request`, wait up to
      60 s for `pairing/response`.
    - Cloud disconnected: fall back to auto-accept.
 
 6. **On `pairing/response` from cloud**:
    - `approved = true`: complete ESP-NOW handshake as today.
-   - `approved = false`: do not register peer; slave retries on next boot.
+   - `approved = false`: do not register peer; sensor retries on next boot.
 
 7. **LWT** — set Last Will `sensors/{mac}/status` = `{online:false}` on MQTT
    connect so the cloud marks the device offline if MQTT drops unexpectedly.
 
 8. **BOOT button held 3 s** — erase `wifi` and `cloud` NVS namespaces, restart
    → device re-enters BLE provisioning mode. (Same GPIO9 / `checkFactoryReset()`
-   pattern; existing slave reset logic is unaffected.)
+   pattern; existing sensor reset logic is unaffected.)
 
 9. **Local web server** — kept as-is; useful for LAN power users via
-   `http://temp-master.local/`.
+   `http://temp-hub.local/`.
 
 ---
 
-## Firmware Changes — Slave (`Temp32_slave.ino`)
+## Firmware Changes — Sensor (`Temp32_sensor.ino`)
 
-**No changes required.** Slaves communicate only via ESP-NOW to the master.
+**No changes required.** Sensors communicate only via ESP-NOW to the hub.
 
 ---
 
 ## BLE Provisioning Flow (end-to-end)
 
 ```
-Phone App               Master ESP32              Cloud Backend
+Phone App               Hub ESP32                 Cloud Backend
     │                        │                         │
     │  BLE scan              │                         │
     │─────────────────────►  │ advertising             │
-    │  "TempMaster-AABBCC"   │ TempMaster-AABBCC       │
+    │  "TempHub-AABBCC"      │ TempHub-AABBCC          │
     │                        │                         │
     │  connect + bond        │                         │
     │◄──────────────────────►│                         │
@@ -426,7 +426,7 @@ Phone App               Master ESP32              Cloud Backend
 ## Cloud-Controlled Pairing Flow
 
 ```
-Slave            Master             Cloud Backend     App / Dashboard
+Sensor Node      Hub ESP32          Cloud Backend     App / Dashboard
   │                │                     │                │
   │─── ESP-NOW ───►│                     │                │
   │  MSG_PAIRING   │                     │                │
@@ -444,8 +444,8 @@ Slave            Master             Cloud Backend     App / Dashboard
   │  (confirm)     │                     │                │
 ```
 
-- No cloud response within **60 s** → master auto-rejects; slave retries next boot.
-- Cloud unreachable → master falls back to auto-accept.
+- No cloud response within **60 s** → hub auto-rejects; sensor retries next boot.
+- Cloud unreachable → hub falls back to auto-accept.
 
 ---
 
@@ -526,7 +526,7 @@ Slave            Master             Cloud Backend     App / Dashboard
 9. Modify pairing branch in `OnDataRecv` to gate on cloud response.
 10. Update BOOT-button reset path to erase `wifi` + `cloud` NVS namespaces.
 
-**Files modified:** `Temp32_master.ino`
+**Files modified:** `Temp32_hub.ino`
 **New libraries:** `NimBLE-Arduino`, `PubSubClient` (Arduino Library Manager).
 
 ---
@@ -566,14 +566,14 @@ Slave            Master             Cloud Backend     App / Dashboard
 
 | Component | Status | Notes |
 |-----------|--------|-------|
-| Slave firmware | **Unchanged** | No internet access required |
-| Master — WiFiManager | **Removed** | Replaced by NimBLE-Arduino provisioning |
-| Master — ESP-NOW receive | **Unchanged** | Protocol unchanged |
-| Master — local web server | **Kept** | LAN fallback via `http://temp-master.local/` |
-| Master — BLE provisioning | **New** | NimBLE-Arduino GATT server; active only until provisioned |
-| Master — mDNS | **New** | ESPmDNS (built-in); LAN hostname after provisioning |
-| Master — MQTT uplink | **New** | PubSubClient + TLS |
-| Master — cloud pairing gate | **Modified** | Was auto-accept; now cloud-gated with local fallback |
+| Sensor firmware | **Unchanged** | No internet access required |
+| Hub — WiFiManager | **Removed** | Replaced by NimBLE-Arduino provisioning |
+| Hub — ESP-NOW receive | **Unchanged** | Protocol unchanged |
+| Hub — local web server | **Kept** | LAN fallback via `http://temp-hub.local/` |
+| Hub — BLE provisioning | **New** | NimBLE-Arduino GATT server; active only until provisioned |
+| Hub — mDNS | **New** | ESPmDNS (built-in); LAN hostname after provisioning |
+| Hub — MQTT uplink | **New** | PubSubClient + TLS |
+| Hub — cloud pairing gate | **Modified** | Was auto-accept; now cloud-gated with local fallback |
 | Cloud backend | **New** | Node.js + PostgreSQL + Mosquitto |
 | Web dashboard | **New** | React SPA (admin / power users) |
 | Mobile app | **New** | React Native + Expo (end users; provisioning + monitoring) |

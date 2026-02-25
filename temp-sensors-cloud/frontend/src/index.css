@@ -809,3 +809,347 @@ tbody tr:hover td { background: #f8fafc; }
 @media (max-width: 400px) {
   .sensor-grid { grid-template-columns: 1fr; }
 }
+
+/* ============================================================
+   Provision / Setup page
+   ============================================================ */
+
+/* Step cards */
+.prov-card {
+  margin-bottom: 12px;
+  transition: opacity 0.2s;
+}
+
+.prov-step-locked {
+  opacity: 0.4;
+  pointer-events: none;
+}
+
+.prov-step-done {
+  border-left: 3px solid var(--green);
+}
+
+.prov-step-active {
+  border-left: 3px solid var(--accent);
+}
+
+/* Step header row */
+.prov-step-hdr {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 14px;
+}
+
+.prov-step-hdr h3 {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text-1);
+}
+
+/* Numbered badge */
+.prov-step-num {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  background: #e2e8f0;
+  color: var(--text-3);
+  font-size: 13px;
+  font-weight: 700;
+  flex-shrink: 0;
+  transition: background 0.2s, color 0.2s;
+}
+
+.prov-step-num.active { background: var(--accent); color: #fff; }
+.prov-step-num.done   { background: var(--green);  color: #fff; }
+
+/* Connected device row */
+.prov-connected-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.prov-device-name {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-1);
+}
+
+/* Registered device row */
+.prov-registered-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.prov-mac {
+  font-family: monospace;
+  font-size: 13px;
+  color: var(--text-1);
+}
+
+.prov-nickname {
+  font-size: 13px;
+  color: var(--text-2);
+}
+
+.prov-badge-ok {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: #dcfce7;
+  color: #166534;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+/* Form helper text */
+.form-hint {
+  font-size: 12px;
+  color: var(--text-3);
+  margin-top: 4px;
+}
+
+/* WiFi scan header row */
+.prov-scan-hdr {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 10px;
+}
+
+.prov-scan-label {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-2);
+}
+
+/* Scan spinner placeholder */
+.prov-scan-placeholder {
+  padding: 20px;
+  text-align: center;
+  color: var(--text-3);
+  font-size: 13px;
+}
+
+.prov-scan-spinner {
+  display: inline-block;
+  width: 22px;
+  height: 22px;
+  border: 3px solid #e2e8f0;
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+  margin-bottom: 8px;
+}
+
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* Network list */
+.prov-network-list {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+  margin-bottom: 4px;
+}
+
+.prov-network-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  cursor: pointer;
+  border-bottom: 1px solid var(--border);
+  transition: background 0.1s;
+  user-select: none;
+}
+
+.prov-network-item:last-child { border-bottom: none; }
+.prov-network-item:hover      { background: #f8fafc; }
+.prov-network-item.selected   { background: #eff6ff; }
+
+.prov-radio {
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  border: 2px solid var(--border);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  transition: border-color 0.15s;
+}
+
+.prov-network-item.selected .prov-radio { border-color: var(--accent); }
+
+.prov-radio-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--accent);
+  opacity: 0;
+  transition: opacity 0.15s;
+}
+
+.prov-network-item.selected .prov-radio-dot { opacity: 1; }
+
+.prov-ssid { flex: 1; font-size: 14px; font-weight: 500; color: var(--text-1); }
+
+.prov-bars {
+  display: flex;
+  align-items: flex-end;
+  gap: 2px;
+  flex-shrink: 0;
+}
+
+.prov-bar {
+  width: 4px;
+  border-radius: 2px 2px 0 0;
+  background: #e2e8f0;
+}
+
+.prov-bar.h1 { height: 5px; }
+.prov-bar.h2 { height: 8px; }
+.prov-bar.h3 { height: 12px; }
+.prov-bar.h4 { height: 16px; }
+.prov-bar.active { background: var(--accent); }
+
+.prov-lock { font-size: 13px; flex-shrink: 0; }
+
+/* Password field */
+.prov-pass-wrap { position: relative; }
+.prov-pass-wrap input { padding-right: 42px; }
+.prov-pass-toggle {
+  position: absolute;
+  right: 10px;
+  top: 50%;
+  transform: translateY(-50%);
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-size: 15px;
+  color: var(--text-3);
+  padding: 0;
+  line-height: 1;
+}
+
+/* MQTT credentials box */
+.prov-mqtt-box {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 12px 14px;
+}
+
+.prov-mqtt-row {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  padding: 3px 0;
+}
+
+.prov-mqtt-label {
+  width: 48px;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-3);
+  flex-shrink: 0;
+}
+
+.prov-mqtt-val {
+  font-size: 13px;
+  color: var(--text-1);
+  word-break: break-all;
+}
+
+/* Status pill */
+.prov-status-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 12px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.prov-status-pill.sending  { background: #fef9c3; color: #854d0e; }
+.prov-status-pill.waiting  { background: #fef9c3; color: #854d0e; }
+.prov-status-pill.failed   { background: #fee2e2; color: #991b1b; }
+
+.prov-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: currentColor;
+}
+
+.prov-dot.pulse { animation: prov-pulse 1s infinite; }
+@keyframes prov-pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.3; } }
+
+/* Activity log */
+.prov-log {
+  background: #1e293b;
+  color: #e2e8f0;
+  border-radius: var(--radius);
+  padding: 14px;
+  font-family: "SF Mono", Menlo, Consolas, monospace;
+  font-size: 12px;
+  line-height: 1.6;
+  max-height: 180px;
+  overflow-y: auto;
+  margin-top: 4px;
+}
+
+.prov-log-ts { color: #64748b; margin-right: 6px; }
+.prov-log-line.ok  { color: #4ade80; }
+.prov-log-line.err { color: #f87171; }
+.prov-log-line.inf { color: #93c5fd; }
+
+/* Success card */
+.prov-success-card {
+  text-align: center;
+  padding: 40px 24px;
+}
+
+.prov-success-icon {
+  font-size: 48px;
+  color: var(--green);
+  margin-bottom: 12px;
+}
+
+.prov-success-card h3 {
+  font-size: 20px;
+  font-weight: 700;
+  color: var(--text-1);
+  margin-bottom: 8px;
+}
+
+.prov-success-card p {
+  color: var(--text-2);
+  font-size: 14px;
+}
+
+/* Compat warning */
+.prov-compat-warning {
+  background: #fffbeb;
+  border: 1px solid #fcd34d;
+  border-radius: var(--radius-sm);
+  padding: 14px 16px;
+}
+
+.prov-compat-warning strong {
+  display: block;
+  margin-bottom: 4px;
+  color: var(--text-1);
+}

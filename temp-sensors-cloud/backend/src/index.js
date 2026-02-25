@@ -24,7 +24,7 @@ const io = new Server(server, {
 app.use(express.json());
 
 // ── Health check (unauthenticated) ────────────────────────────────────────────
-app.get('/health', (_req, res) => res.json({ status: 'ok' }));
+app.get(['/health', '/api/health'], (_req, res) => res.json({ status: 'ok' }));
 
 // ── API routes ────────────────────────────────────────────────────────────────
 app.use('/api/auth',                 authRoutes);

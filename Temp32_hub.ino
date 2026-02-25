@@ -2,6 +2,8 @@
 // Install via Arduino Library Manager. v1.x has different callback signatures.
 #include <NimBLEDevice.h>
 #include <WiFi.h>
+#include <WiFiClientSecure.h>     // TLS socket for MQTT
+#include <PubSubClient.h>         // MQTT client (knolleary/pubsubclient)
 #include <esp_now.h>
 #include <esp_wifi.h>
 #include <WebServer.h>
@@ -92,6 +94,48 @@ volatile bool wifiProvReceived = false;
 
 char provSsid[65] = "";
 char provPass[65] = "";
+
+// ─────────────────────────────────────────────────────────────────────────────
+// MQTT / CLOUD STATE
+// Credentials are written to NVS namespace "cloud" during BLE provisioning and
+// loaded into these variables on each boot by loadCloudConfig().
+// ─────────────────────────────────────────────────────────────────────────────
+
+WiFiClientSecure wifiSecure;
+PubSubClient     mqttClient(wifiSecure);
+
+char mqttHost[128] = "";
+int  mqttPort      = 8883;
+char mqttUser[65]  = "";
+char mqttPass[65]  = "";
+
+// Hub MAC "AA:BB:CC:DD:EE:FF" — embedded in every MQTT topic path
+char hubMacStr[18] = "";
+
+// Topic strings built once in buildTopics()
+char topicData[72];
+char topicStatus[72];
+char topicPairReq[80];
+char topicPairResp[80];
+
+bool cloudConfigured = false;  // true when MQTT credentials exist in NVS
+
+// Non-blocking pending pairing — sensor waits for cloud approval in loop()
+struct {
+  uint8_t      mac[6];
+  unsigned long startedAt;
+  bool          active;
+  bool          approved;
+  bool          resolved;
+} pendingPairing = {};
+
+unsigned long      lastMqttReconnect    = 0;
+const unsigned long MQTT_RECONNECT_MS   = 5000;
+const unsigned long PAIRING_TIMEOUT_MS  = 60000;
+
+// Flags used only inside startBleProvisioning() to test MQTT before confirming "connected"
+volatile bool cloudProvReceived = false;  // set when PROV_CLOUD arrives while WiFi is already up
+bool          wifiOkInProv      = false;  // WiFi connected inside the provisioning loop
 
 // ─────────────────────────────────────────────────────────────────────────────
 // JSON HELPERS
@@ -300,6 +344,9 @@ class ProvCloudCallbacks : public NimBLECharacteristicCallbacks {
     cPrefs.end();
 
     Serial.printf("[BLE] Cloud creds saved — host: %s\n", host.c_str());
+
+    // If WiFi is already connected in the provisioning loop, signal a cloud retry
+    if (wifiOkInProv) cloudProvReceived = true;
   }
 };
 
@@ -402,13 +449,33 @@ void startBleProvisioning() {
 
       if (WiFi.status() == WL_CONNECTED) {
         Serial.printf("WiFi connected! IP: %s\n", WiFi.localIP().toString().c_str());
-        notifyStatus("connected", "");
-        delay(1200);  // Give app time to receive the notification
-        // ESP.restart() hard-resets the chip — no need to deinit BLE first.
-        // Calling NimBLEDevice::deinit() while a client is connected fires
-        // onDisconnect(), which tries to call startAdvertising() on a
-        // partially-deinitialized stack and crashes before restart is reached.
-        ESP.restart();
+        wifiOkInProv = true;
+
+        // Test cloud connection before telling the app we're done.
+        loadCloudConfig();
+        if (cloudConfigured) {
+          buildTopics();
+          notifyStatus("connecting", "WiFi OK — connecting to cloud...");
+          if (!connectCloud()) {
+            // Bad MQTT credentials — erase them so the user can re-provision
+            Preferences cPrefs; cPrefs.begin("cloud", false); cPrefs.clear(); cPrefs.end();
+            cloudConfigured = false;
+            notifyStatus("failed", "Cloud connection failed — check MQTT credentials");
+            NimBLEDevice::startAdvertising();
+            // Stay in the provisioning loop; app shows "failed" and user
+            // can resend PROV_CLOUD (which will set cloudProvReceived = true)
+          } else {
+            mqttClient.disconnect();
+            wifiSecure.stop();
+            notifyStatus("connected", "");
+            delay(1200);
+            ESP.restart();
+          }
+        } else {
+          // PROV_CLOUD not yet written — wait; cloudProvReceived will fire
+          // when the app sends the cloud credentials after WiFi is up.
+          notifyStatus("connecting", "WiFi OK — waiting for cloud credentials...");
+        }
 
       } else {
         Serial.println("WiFi connection failed — wrong password or out of range?");
@@ -427,6 +494,28 @@ void startBleProvisioning() {
 
         // Resume advertising for another attempt
         NimBLEDevice::startAdvertising();
+      }
+    }
+
+    // PROV_CLOUD arrived after WiFi was already up — attempt cloud connection now
+    if (cloudProvReceived && wifiOkInProv) {
+      cloudProvReceived = false;
+      loadCloudConfig();
+      if (cloudConfigured) {
+        buildTopics();
+        notifyStatus("connecting", "Connecting to cloud...");
+        if (!connectCloud()) {
+          Preferences cPrefs; cPrefs.begin("cloud", false); cPrefs.clear(); cPrefs.end();
+          cloudConfigured = false;
+          notifyStatus("failed", "Cloud connection failed — check MQTT credentials");
+          NimBLEDevice::startAdvertising();
+        } else {
+          mqttClient.disconnect();
+          wifiSecure.stop();
+          notifyStatus("connected", "");
+          delay(1200);
+          ESP.restart();
+        }
       }
     }
 
@@ -511,6 +600,7 @@ void updateSensor(int index, float temp, float hum, int rssi, uint8_t battery) {
   sensors[index].battery    = battery;
   sensors[index].lastUpdate = millis();
   sensors[index].active     = true;
+  publishSensorData(index);  // forward reading to cloud
 }
 
 void checkInactiveSensors() {
@@ -555,6 +645,177 @@ void loadPairedSensors() {
     }
   }
   prefs.end();
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// CLOUD / MQTT
+// ─────────────────────────────────────────────────────────────────────────────
+
+// Load MQTT credentials from NVS namespace "cloud" (written by BLE provisioning).
+void loadCloudConfig() {
+  Preferences cPrefs;
+  cPrefs.begin("cloud", true);
+  String host = cPrefs.getString("mqtt_host", "");
+  mqttPort     = cPrefs.getInt("mqtt_port", 8883);
+  String user  = cPrefs.getString("mqtt_user", "");
+  String pass  = cPrefs.getString("mqtt_pass", "");
+  cPrefs.end();
+
+  if (host.isEmpty() || user.isEmpty() || pass.isEmpty()) {
+    Serial.println("[MQTT] No cloud credentials in NVS — cloud uplink disabled");
+    cloudConfigured = false;
+    return;
+  }
+  host.toCharArray(mqttHost, sizeof(mqttHost));
+  user.toCharArray(mqttUser, sizeof(mqttUser));
+  pass.toCharArray(mqttPass, sizeof(mqttPass));
+  cloudConfigured = true;
+  Serial.printf("[MQTT] Cloud config loaded — host: %s  port: %d\n", mqttHost, mqttPort);
+}
+
+// Build topic strings from the hub's own WiFi MAC address.
+// Must be called after WiFi is connected so WiFi.macAddress() is valid.
+void buildTopics() {
+  uint8_t mac[6];
+  WiFi.macAddress(mac);
+  snprintf(hubMacStr,    sizeof(hubMacStr),    "%02X:%02X:%02X:%02X:%02X:%02X",
+           mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
+  snprintf(topicData,    sizeof(topicData),    "sensors/%s/data",             hubMacStr);
+  snprintf(topicStatus,  sizeof(topicStatus),  "sensors/%s/status",           hubMacStr);
+  snprintf(topicPairReq, sizeof(topicPairReq), "sensors/%s/pairing/request",  hubMacStr);
+  snprintf(topicPairResp,sizeof(topicPairResp),"sensors/%s/pairing/response", hubMacStr);
+  Serial.printf("[MQTT] Hub MAC: %s\n", hubMacStr);
+}
+
+// Called by PubSubClient when a subscribed message arrives.
+void mqttCallback(char* topic, byte* payload, unsigned int length) {
+  if (strcmp(topic, topicPairResp) != 0) return;
+  if (!pendingPairing.active) return;
+
+  String json = String((char*)payload, length);
+  String sensorMac = jsonGetStr(json, "sensor_mac");
+  bool   approved  = json.indexOf("\"approved\":true") != -1;
+
+  // Match against the pending pairing MAC
+  char pendingMacStr[18];
+  snprintf(pendingMacStr, sizeof(pendingMacStr), "%02X:%02X:%02X:%02X:%02X:%02X",
+           pendingPairing.mac[0], pendingPairing.mac[1], pendingPairing.mac[2],
+           pendingPairing.mac[3], pendingPairing.mac[4], pendingPairing.mac[5]);
+
+  if (sensorMac.equalsIgnoreCase(pendingMacStr)) {
+    pendingPairing.approved = approved;
+    pendingPairing.resolved = true;
+    Serial.printf("[MQTT] Pairing response for %s: %s\n",
+                  pendingMacStr, approved ? "APPROVED" : "REJECTED");
+  }
+}
+
+// Connect to the MQTT broker over TLS and set up LWT + subscriptions.
+// Returns true on success.
+bool connectCloud() {
+  if (!cloudConfigured) return false;
+
+  // Encrypt the connection but skip CA certificate validation.
+  // The broker address is trusted via network (VPS + Let's Encrypt TLS).
+  wifiSecure.setInsecure();
+
+  mqttClient.setServer(mqttHost, mqttPort);
+  mqttClient.setCallback(mqttCallback);
+  mqttClient.setBufferSize(512);
+  mqttClient.setKeepAlive(30);
+
+  // Client ID includes last 3 MAC octets so it is unique per device
+  uint8_t mac[6]; WiFi.macAddress(mac);
+  char clientId[24];
+  snprintf(clientId, sizeof(clientId), "TempHub-%02X%02X%02X", mac[3], mac[4], mac[5]);
+
+  // LWT: broker publishes this if MQTT connection drops unexpectedly
+  const char* lwt = "{\"online\":false}";
+
+  Serial.printf("[MQTT] Connecting to %s:%d as \"%s\"...\n", mqttHost, mqttPort, mqttUser);
+  if (!mqttClient.connect(clientId, mqttUser, mqttPass, topicStatus, 0, true, lwt)) {
+    Serial.printf("[MQTT] Connection failed (state %d)\n", mqttClient.state());
+    return false;
+  }
+
+  Serial.println("[MQTT] Connected!");
+  mqttClient.subscribe(topicPairResp);
+
+  // Publish retained online status so the dashboard sees us immediately
+  String status = "{\"online\":true,\"ip\":\"" + WiFi.localIP().toString() + "\"}";
+  mqttClient.publish(topicStatus, status.c_str(), /*retain=*/true);
+  return true;
+}
+
+// Call every loop() iteration: keeps MQTT alive and reconnects after drops.
+void maintainCloud() {
+  if (!cloudConfigured) return;
+  if (mqttClient.connected()) {
+    mqttClient.loop();
+    return;
+  }
+  if (millis() - lastMqttReconnect < MQTT_RECONNECT_MS) return;
+  lastMqttReconnect = millis();
+  Serial.println("[MQTT] Reconnecting...");
+  connectCloud();
+}
+
+// Complete an ESP-NOW pairing handshake (used by both auto-accept and cloud-approve paths).
+void completePairing(const uint8_t* mac) {
+  esp_now_peer_info_t tempPeer = {};
+  memcpy(tempPeer.peer_addr, mac, 6);
+  tempPeer.channel = 0;
+  tempPeer.encrypt = false;
+
+  if (!esp_now_is_peer_exist(mac)) {
+    if (esp_now_add_peer(&tempPeer) != ESP_OK) {
+      Serial.println("[Pairing] Failed to add peer"); return;
+    }
+  } else {
+    esp_now_mod_peer(&tempPeer);
+  }
+
+  struct_message reply = {.msgType = MSG_PAIRING, .temp = 0, .hum = 0, .battery = 0};
+  if (esp_now_send(mac, (uint8_t*)&reply, sizeof(reply)) != ESP_OK) {
+    Serial.println("[Pairing] Failed to send confirmation"); return;
+  }
+  Serial.println("✓ Pairing confirmation sent!");
+
+  // Upgrade peer to encrypted link
+  esp_now_peer_info_t encPeer = {};
+  memcpy(encPeer.peer_addr, mac, 6);
+  encPeer.channel = 0;
+  encPeer.encrypt = true;
+  memcpy(encPeer.lmk, LMK_KEY, 16);
+  esp_now_mod_peer(&encPeer);
+
+  int index = findSensor(mac);
+  if (index == -1) addSensor(mac);
+  digitalWrite(LED_PIN, HIGH); delay(200); digitalWrite(LED_PIN, LOW);
+}
+
+// Publish one sensor reading to the cloud.
+// Called from updateSensor() after the local store is updated.
+void publishSensorData(int idx) {
+  if (!cloudConfigured || !mqttClient.connected()) return;
+
+  const SensorData& s = sensors[idx];
+  char sensorMacStr[18];
+  snprintf(sensorMacStr, sizeof(sensorMacStr), "%02X:%02X:%02X:%02X:%02X:%02X",
+           s.mac[0], s.mac[1], s.mac[2], s.mac[3], s.mac[4], s.mac[5]);
+
+  // ISO-8601 timestamp (UTC)
+  char ts[21] = "";
+  struct tm ti;
+  if (getLocalTime(&ti)) strftime(ts, sizeof(ts), "%Y-%m-%dT%H:%M:%SZ", &ti);
+
+  char payload[220];
+  snprintf(payload, sizeof(payload),
+    "{\"sensor_mac\":\"%s\",\"temp\":%.2f,\"hum\":%.2f,"
+    "\"battery\":%d,\"rssi\":%d,\"ts\":\"%s\"}",
+    sensorMacStr, s.temp, s.hum, s.battery, s.rssi, ts);
+
+  mqttClient.publish(topicData, payload);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -709,32 +970,28 @@ void OnDataRecv(const esp_now_recv_info_t* esp_now_info,
                   esp_now_info->src_addr[2], esp_now_info->src_addr[3],
                   esp_now_info->src_addr[4], esp_now_info->src_addr[5]);
 
-    esp_now_peer_info_t tempPeerInfo = {};
-    memcpy(tempPeerInfo.peer_addr, esp_now_info->src_addr, 6);
-    tempPeerInfo.channel = 0;
-    tempPeerInfo.encrypt = false;
+    if (cloudConfigured && mqttClient.connected() && !pendingPairing.active) {
+      // Cloud connected: publish request and wait for dashboard approval in loop()
+      memcpy(pendingPairing.mac, esp_now_info->src_addr, 6);
+      pendingPairing.startedAt = millis();
+      pendingPairing.active    = true;
+      pendingPairing.approved  = false;
+      pendingPairing.resolved  = false;
 
-    if (!esp_now_is_peer_exist(esp_now_info->src_addr)) {
-      if (esp_now_add_peer(&tempPeerInfo) != ESP_OK) {
-        Serial.println("Failed to add peer"); return;
-      }
+      char sensorMacStr[18];
+      snprintf(sensorMacStr, sizeof(sensorMacStr), "%02X:%02X:%02X:%02X:%02X:%02X",
+               esp_now_info->src_addr[0], esp_now_info->src_addr[1],
+               esp_now_info->src_addr[2], esp_now_info->src_addr[3],
+               esp_now_info->src_addr[4], esp_now_info->src_addr[5]);
+      char req[80];
+      snprintf(req, sizeof(req), "{\"sensor_mac\":\"%s\"}", sensorMacStr);
+      mqttClient.publish(topicPairReq, req);
+      Serial.printf("[MQTT] Pairing request sent to cloud for %s\n", sensorMacStr);
+
     } else {
-      esp_now_mod_peer(&tempPeerInfo);
-    }
-
-    struct_message reply = {.msgType = MSG_PAIRING, .temp = 0, .hum = 0, .battery = 0};
-    if (esp_now_send(esp_now_info->src_addr, (uint8_t*)&reply, sizeof(reply)) == ESP_OK) {
-      Serial.println("✓ Pairing confirmation sent!");
-      esp_now_peer_info_t encPeer = {};
-      memcpy(encPeer.peer_addr, esp_now_info->src_addr, 6);
-      encPeer.channel = 0;
-      encPeer.encrypt = true;
-      memcpy(encPeer.lmk, LMK_KEY, 16);
-      esp_now_mod_peer(&encPeer);
-
-      int index = findSensor(esp_now_info->src_addr);
-      if (index == -1) addSensor(esp_now_info->src_addr);
-      digitalWrite(LED_PIN, HIGH); delay(200); digitalWrite(LED_PIN, LOW);
+      // Cloud not available — auto-accept immediately (fallback per migration plan)
+      Serial.println("[Pairing] Cloud offline — auto-accepting");
+      completePairing(esp_now_info->src_addr);
     }
   }
   else if (incomingData.msgType == MSG_DATA) {
@@ -807,6 +1064,13 @@ void setup() {
   }
   Serial.printf("✓ WiFi connected! IP: %s\n", WiFi.localIP().toString().c_str());
 
+  // ── MQTT cloud uplink ────────────────────────────────────────────────────
+  loadCloudConfig();
+  if (cloudConfigured) {
+    buildTopics();
+    connectCloud();  // non-fatal if it fails; maintainCloud() retries in loop()
+  }
+
   // Hide the AP — it is required internally for ESP-NOW but should not be
   // visible to end users.  Must be called after STA connects so the channel
   // is known; AP and STA must share the same channel on ESP32.
@@ -865,6 +1129,23 @@ void setup() {
 
 void loop() {
   server.handleClient();
+  maintainCloud();
+
+  // Cloud-gated pairing: resolve once the dashboard approves/rejects or timeout
+  if (pendingPairing.active) {
+    if (pendingPairing.resolved) {
+      if (pendingPairing.approved) {
+        completePairing(pendingPairing.mac);
+      } else {
+        Serial.println("[Pairing] Rejected by cloud");
+      }
+      pendingPairing.active = false;
+    } else if (millis() - pendingPairing.startedAt > PAIRING_TIMEOUT_MS) {
+      Serial.println("[Pairing] Cloud timeout — auto-accepting");
+      completePairing(pendingPairing.mac);  // fallback: auto-accept
+      pendingPairing.active = false;
+    }
+  }
 
   if (timeConfigured) resyncNTP();
 

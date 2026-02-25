@@ -7,11 +7,11 @@ const router = express.Router();
 router.use(requireAuth);
 
 // GET /api/provision/config
-// Returns MQTT broker connection details for BLE provisioning.
-// The hub MAC is used as the MQTT username and the api_key returned by
-// POST /api/devices/register is used as the password (per-device credentials).
+// Returns the MQTT broker address the ESP32 hub should connect to.
+// Uses MQTT_HUB_URL (the external TLS URL, e.g. mqtts://yourdomain.com:8883)
+// which is distinct from MQTT_URL (the internal Docker-network URL used by the backend).
 router.get('/config', (_req, res) => {
-  const raw = process.env.MQTT_URL || '';
+  const raw = process.env.MQTT_HUB_URL || '';
   let mqttHost = '';
   let mqttPort = 8883;
 
@@ -22,7 +22,7 @@ router.get('/config', (_req, res) => {
       ? parseInt(url.port, 10)
       : (url.protocol === 'mqtts:' ? 8883 : 1883);
   } catch {
-    // MQTT_URL not set or malformed — return empty strings so the UI can warn
+    // MQTT_HUB_URL not set or malformed — UI will show a warning
   }
 
   res.json({ mqttHost, mqttPort });

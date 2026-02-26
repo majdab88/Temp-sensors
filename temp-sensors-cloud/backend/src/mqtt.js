@@ -165,4 +165,15 @@ function publishPairingResponse(hubMac, sensorMac, approved) {
   client.publish(`sensors/${hubMac}/pairing/response`, payload);
 }
 
-module.exports = { initMqtt, publishPairingResponse, getHubStatus };
+/**
+ * Tell a hub to remove a sensor from its local memory, peer table, and NVS.
+ * Called by the sensors DELETE route after the DB row is removed.
+ * Fire-and-forget — if the hub is offline it will receive the sync on next connect.
+ */
+function publishSensorRemove(hubMac, sensorMac) {
+  if (!client || !client.connected) return;
+  const payload = JSON.stringify({ sensor_mac: sensorMac });
+  client.publish(`sensors/${hubMac}/sensor/remove`, payload);
+}
+
+module.exports = { initMqtt, publishPairingResponse, publishSensorRemove, getHubStatus };

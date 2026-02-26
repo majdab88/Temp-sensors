@@ -3,6 +3,7 @@
 const express = require('express');
 const { query } = require('../db');
 const { requireAuth } = require('../middleware/auth');
+const { publishSensorRemove } = require('../mqtt');
 
 const router = express.Router();
 router.use(requireAuth);
@@ -47,15 +48,26 @@ router.put('/:id', async (req, res) => {
   }
 });
 
-// DELETE /api/sensors/:id — remove a sensor and all its readings
+// DELETE /api/sensors/:id — remove a sensor and all its readings, notify hub via MQTT
 router.delete('/:id', async (req, res) => {
   const id = parseInt(req.params.id, 10);
   if (!Number.isInteger(id) || id <= 0) {
     return res.status(400).json({ error: 'Invalid sensor id' });
   }
   try {
-    const result = await query('DELETE FROM sensors WHERE id = $1 RETURNING id', [id]);
-    if (result.rows.length === 0) return res.status(404).json({ error: 'Sensor not found' });
+    // Fetch hub MAC before deleting so we can publish the MQTT remove message
+    const lookup = await query(
+      'SELECT s.mac AS sensor_mac, d.mac AS hub_mac FROM sensors s JOIN devices d ON d.id = s.device_id WHERE s.id = $1',
+      [id]
+    );
+    if (lookup.rows.length === 0) return res.status(404).json({ error: 'Sensor not found' });
+    const { sensor_mac, hub_mac } = lookup.rows[0];
+
+    await query('DELETE FROM sensors WHERE id = $1', [id]);
+
+    // Tell the hub to remove the sensor from its memory, peer table, and NVS
+    publishSensorRemove(hub_mac, sensor_mac);
+
     res.status(204).end();
   } catch (err) {
     console.error(err);

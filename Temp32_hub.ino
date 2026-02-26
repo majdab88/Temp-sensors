@@ -1001,8 +1001,11 @@ void OnDataRecv(const esp_now_recv_info_t* esp_now_info,
       mqttClient.publish(topicPairReq, req);
       Serial.printf("[MQTT] Pairing request sent to cloud for %s\n", sensorMacStr);
 
+    } else if (pendingPairing.active) {
+      // Already waiting for dashboard approval — ignore duplicate/retry request
+      Serial.println("[Pairing] Request already pending — ignoring duplicate");
     } else {
-      // Cloud not available — auto-accept immediately (fallback per migration plan)
+      // Cloud not configured or MQTT disconnected — auto-accept immediately (fallback)
       Serial.println("[Pairing] Cloud offline — auto-accepting");
       completePairing(esp_now_info->src_addr);
     }

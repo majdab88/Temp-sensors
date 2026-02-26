@@ -438,6 +438,13 @@ void setup() {
     WIFI_PROTOCOL_11B | WIFI_PROTOCOL_11G |
     WIFI_PROTOCOL_11N | WIFI_PROTOCOL_LR);
 
+  // Match the hub's WiFi channel before ESP-NOW init — required for both
+  // data mode and pairing mode since the hub is locked to its router's channel.
+  {
+    uint8_t ch = detectWiFiChannel();
+    esp_wifi_set_channel(ch, WIFI_SECOND_CHAN_NONE);
+  }
+
   if (esp_now_init() != ESP_OK) {
     Serial.println("✗ ESP-NOW init failed! Sleeping 10s...");
     goToSleep(10);
@@ -469,8 +476,6 @@ void setup() {
     goToSleep(SLEEP_TIME);
     //ESP.restart();  // Use this instead during testing
   } else {
-    uint8_t ch = detectWiFiChannel();
-    esp_wifi_set_channel(ch, WIFI_SECOND_CHAN_NONE);
     enterPairingMode();
   }
 }

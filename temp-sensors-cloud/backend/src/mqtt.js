@@ -6,6 +6,11 @@ const { query } = require('./db');
 let client;
 let _io;
 
+// In-memory cache of the last known status for each hub.
+// Keyed by uppercase MAC. Used to replay status to clients that join after
+// the broker's retained message has already been processed.
+const hubStatusCache = new Map();
+
 /**
  * Connect to the MQTT broker and subscribe to all sensor topics.
  * @param {import('socket.io').Server} io
@@ -107,10 +112,14 @@ async function handleSensorData(hubMac, data) {
 }
 
 function handleHubStatus(hubMac, data) {
-  _io.to(`hub:${hubMac.toUpperCase()}`).emit('hubStatus', {
-    hub_mac: hubMac.toUpperCase(),
-    ...data,
-  });
+  const mac = hubMac.toUpperCase();
+  const payload = { hub_mac: mac, ...data };
+  hubStatusCache.set(mac, payload);
+  _io.to(`hub:${mac}`).emit('hubStatus', payload);
+}
+
+function getHubStatus(mac) {
+  return hubStatusCache.get(mac.toUpperCase()) ?? null;
 }
 
 async function handlePairingRequest(hubMac, data) {
@@ -154,4 +163,4 @@ function publishPairingResponse(hubMac, sensorMac, approved) {
   client.publish(`sensors/${hubMac}/pairing/response`, payload);
 }
 
-module.exports = { initMqtt, publishPairingResponse };
+module.exports = { initMqtt, publishPairingResponse, getHubStatus };

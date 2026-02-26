@@ -59,7 +59,7 @@ export default function History() {
             <option value="">-- Select a sensor --</option>
             {sensors.map((s) => (
               <option key={s.id} value={s.id}>
-                {s.name || s.mac}
+                {s.name || `TempSens-${s.mac.replace(/:/g, '').slice(-6)}`}
                 {s.hub_name ? ` (${s.hub_name})` : ''}
               </option>
             ))}
@@ -89,7 +89,7 @@ export default function History() {
           <>
             {selectedSensor && (
               <div style={{ marginBottom: 16, fontSize: 13, color: 'var(--text-2)' }}>
-                <strong>{selectedSensor.name || selectedSensor.mac}</strong>
+                <strong>{selectedSensor.name || `TempSens-${selectedSensor.mac.replace(/:/g, '').slice(-6)}`}</strong>
                 {' — '}{selectedSensor.mac}
                 {selectedSensor.hub_name ? ` — Hub: ${selectedSensor.hub_name}` : ''}
               </div>

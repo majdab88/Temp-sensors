@@ -20,7 +20,8 @@ export default function PairingPanel({ requests, onApprove, onReject, processing
       {requests.map((req) => (
         <div key={req.id} className="pairing-card">
           <div className="pairing-card-info">
-            <div className="pairing-mac">{req.slave_mac}</div>
+            <div className="pairing-mac">TempSens-{req.slave_mac.replace(/:/g, '').slice(-6)}</div>
+            <div className="pairing-mac-full">{req.slave_mac}</div>
             <div className="pairing-hub">Hub: {req.hub_name || req.hub_mac}</div>
             <div className="pairing-time">{formatTime(req.requested_at)}</div>
           </div>

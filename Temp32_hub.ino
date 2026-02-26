@@ -1503,7 +1503,12 @@ void OnDataRecv(const esp_now_recv_info_t* esp_now_info,
     printCurrentTime();
 
     int index = findSensor(esp_now_info->src_addr);
-    if (index == -1) index = addSensor(esp_now_info->src_addr);
+    if (index == -1) {
+      index = addSensor(esp_now_info->src_addr);
+      // Sensor was unknown — likely dropped by a cloud-sync race after pairing.
+      // Re-register it with the cloud so the dashboard picks it up.
+      publishSyncRequest();
+    }
     if (index != -1)
       updateSensor(index, incomingData.temp, incomingData.hum,
                    incomingRSSI, incomingData.battery);

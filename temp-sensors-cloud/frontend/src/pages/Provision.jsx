@@ -113,8 +113,8 @@ export default function Provision() {
           setMacAuto(true)
           addLog(`Device MAC: ${info.mac}`, 'ok')
         }
-      } catch {
-        // CHAR_INFO not implemented yet — user will enter MAC manually
+      } catch (e) {
+        addLog(`CHAR_INFO not available (${e.message}) — enter MAC manually`, 'inf')
       }
 
       bleServerRef.current = server

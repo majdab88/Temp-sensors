@@ -14,6 +14,10 @@ export default function Dashboard() {
     setSensors((prev) => prev.map((s) => (s.id === id ? { ...s, name: newName } : s)))
   }, [])
 
+  const handleDelete = useCallback((id) => {
+    setSensors((prev) => prev.filter((s) => s.id !== id))
+  }, [])
+
   // Fetch sensors + devices, then fetch latest readings per sensor
   const fetchData = useCallback(async () => {
     try {
@@ -101,6 +105,7 @@ export default function Dashboard() {
               sensor={sensor}
               reading={readings[sensor.mac] || null}
               onRename={handleRename}
+              onDelete={handleDelete}
             />
           ))}
         </div>

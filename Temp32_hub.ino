@@ -642,6 +642,14 @@ void loadPairedSensors() {
     sensors[sensorCount].battery    = 0;
     sensors[sensorCount].lastUpdate = 0;
     sprintf(sensors[sensorCount].name, "Sensor-%02X%02X", mac[4], mac[5]);
+    // Load saved name from NVS (keyed by MAC bytes 2–5)
+    char nameKey[10];
+    snprintf(nameKey, sizeof(nameKey), "n%02X%02X%02X%02X", mac[2], mac[3], mac[4], mac[5]);
+    String savedName = prefs.getString(nameKey, "");
+    if (savedName.length() > 0) {
+      strncpy(sensors[sensorCount].name, savedName.c_str(), 19);
+      sensors[sensorCount].name[19] = '\0';
+    }
     sensorCount++;
 
     esp_now_peer_info_t peer = {};
@@ -867,8 +875,36 @@ void handleRoot() {
   html += ".refresh-info { text-align: center; color: #7f8c8d; margin-top: 20px; padding: 10px; }";
   html += ".hardware-info { background: #3498db; color: white; padding: 10px; border-radius: 5px; margin-bottom: 20px; text-align: center; }";
   html += "@media (max-width: 600px) { .sensor-data { grid-template-columns: 1fr; } }";
+  html += ".rename-btn { background:none; border:none; cursor:pointer; font-size:1em; color:#7f8c8d; margin-left:6px; padding:2px 5px; vertical-align:middle; }";
+  html += ".rename-btn:hover { color:#2c3e50; }";
+  html += ".rename-input { font-size:1.1em; padding:2px 6px; border:1px solid #bdc3c7; border-radius:4px; width:160px; }";
+  html += ".rename-save { background:#2ecc71; color:white; border:none; border-radius:4px; padding:3px 8px; cursor:pointer; margin-left:4px; }";
+  html += ".rename-cancel { background:#e74c3c; color:white; border:none; border-radius:4px; padding:3px 8px; cursor:pointer; margin-left:2px; }";
   html += "</style>";
-  html += "<script>setTimeout(function(){ location.reload(); }, 10000);</script>";
+  html += "<script>";
+  html += "var _rt=setTimeout(function(){location.reload();},10000);";
+  html += "function startRename(id){";
+  html +=   "clearTimeout(_rt);";
+  html +=   "document.getElementById('rinput-'+id).value=document.getElementById('sname-'+id).textContent;";
+  html +=   "document.getElementById('sname-'+id).style.display='none';";
+  html +=   "document.getElementById('rbtn-'+id).style.display='none';";
+  html +=   "document.getElementById('rform-'+id).style.display='inline';";
+  html += "}";
+  html += "function cancelRename(id){";
+  html +=   "document.getElementById('sname-'+id).style.display='';";
+  html +=   "document.getElementById('rbtn-'+id).style.display='';";
+  html +=   "document.getElementById('rform-'+id).style.display='none';";
+  html +=   "_rt=setTimeout(function(){location.reload();},10000);";
+  html += "}";
+  html += "function saveRename(id){";
+  html +=   "var n=document.getElementById('rinput-'+id).value.trim();";
+  html +=   "if(!n)return;";
+  html +=   "fetch('/api/sensors',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({id:id,name:n})})";
+  html +=   ".then(function(r){return r.json();})";
+  html +=   ".then(function(d){if(d.ok){document.getElementById('sname-'+id).textContent=n;cancelRename(id);}})";
+  html +=   ".catch(function(){alert('Rename failed');});";
+  html += "}";
+  html += "</script>";
   html += "</head><body>";
   html += "<div class='container'>";
   html += "<h1>🌡️ XIAO ESP32-C6 Temperature Monitor</h1>";
@@ -883,7 +919,13 @@ void handleRoot() {
       if (!sensors[i].active) html += " inactive";
       html += "'>";
       html += "<div class='sensor-header'><div>";
-      html += "<div class='sensor-name'>" + String(sensors[i].name) + "</div>";
+      html += "<div class='sensor-name' id='sname-" + String(i) + "'>" + String(sensors[i].name) + "</div>";
+      html += "<button class='rename-btn' id='rbtn-" + String(i) + "' onclick='startRename(" + String(i) + ")'>&#9998;</button>";
+      html += "<span id='rform-" + String(i) + "' style='display:none'>";
+      html += "<input class='rename-input' id='rinput-" + String(i) + "' type='text' maxlength='19'>";
+      html += "<button class='rename-save' onclick='saveRename(" + String(i) + ")'>&#10003;</button>";
+      html += "<button class='rename-cancel' onclick='cancelRename(" + String(i) + ")'>&#10007;</button>";
+      html += "</span>";
       html += "<div class='sensor-mac'>MAC: ";
       for (int j = 0; j < 6; j++) {
         char buf[3]; sprintf(buf, "%02X", sensors[i].mac[j]);
@@ -941,6 +983,66 @@ void handleRoot() {
   html += "<div class='refresh-info'>📡 Page auto-refreshes every 10 seconds</div>";
   html += "</div></body></html>";
   server.send(200, "text/html", html);
+}
+
+// Strip everything except safe printable characters from a sensor name.
+void sanitizeName(char* name, size_t maxLen) {
+  size_t j = 0;
+  for (size_t i = 0; name[i] && j < maxLen - 1; i++) {
+    char c = name[i];
+    if (isalnum((unsigned char)c) || c == ' ' || c == '-' || c == '_' ||
+        c == '(' || c == ')' || c == '.' || c == '\'') {
+      name[j++] = c;
+    }
+  }
+  name[j] = '\0';
+}
+
+// PUT /api/sensors  — body: {"id":N,"name":"..."}
+void handleRenameSensor() {
+  String body = server.arg("plain");
+
+  // Parse "id"
+  int idPos = body.indexOf("\"id\"");
+  if (idPos < 0) { server.send(400, "application/json", "{\"error\":\"missing id\"}"); return; }
+  int colonId = body.indexOf(':', idPos);
+  int id = body.substring(colonId + 1).toInt();
+  if (id < 0 || id >= sensorCount) {
+    server.send(404, "application/json", "{\"error\":\"sensor not found\"}");
+    return;
+  }
+
+  // Parse "name"
+  int namePos = body.indexOf("\"name\"");
+  if (namePos < 0) { server.send(400, "application/json", "{\"error\":\"missing name\"}"); return; }
+  int colonName = body.indexOf(':', namePos);
+  int q1 = body.indexOf('"', colonName + 1);
+  if (q1 < 0) { server.send(400, "application/json", "{\"error\":\"invalid name\"}"); return; }
+  int q2 = body.indexOf('"', q1 + 1);
+  if (q2 < 0) { server.send(400, "application/json", "{\"error\":\"invalid name\"}"); return; }
+  String newName = body.substring(q1 + 1, q2);
+
+  char sanitized[20];
+  strncpy(sanitized, newName.c_str(), 19);
+  sanitized[19] = '\0';
+  sanitizeName(sanitized, sizeof(sanitized));
+  if (strlen(sanitized) == 0) {
+    server.send(400, "application/json", "{\"error\":\"name empty\"}");
+    return;
+  }
+
+  strncpy(sensors[id].name, sanitized, sizeof(sensors[id].name));
+
+  // Persist: key = n + MAC bytes 2–5 as hex (fits NVS 15-char key limit)
+  char nameKey[10];
+  snprintf(nameKey, sizeof(nameKey), "n%02X%02X%02X%02X",
+           sensors[id].mac[2], sensors[id].mac[3],
+           sensors[id].mac[4], sensors[id].mac[5]);
+  prefs.begin("sensors", false);
+  prefs.putString(nameKey, sanitized);
+  prefs.end();
+
+  server.send(200, "application/json", "{\"ok\":true}");
 }
 
 void handleJSON() {
@@ -1128,7 +1230,8 @@ void setup() {
   // ── Web server ───────────────────────────────────────────────────────────
   // Start before ESP-NOW so the dashboard is available even if ESP-NOW fails.
   server.on("/", handleRoot);
-  server.on("/api/sensors", handleJSON);
+  server.on("/api/sensors", HTTP_GET, handleJSON);
+  server.on("/api/sensors", HTTP_PUT, handleRenameSensor);
   server.begin();
   Serial.println("✓ Web server started");
 

@@ -1,5 +1,6 @@
-import React from 'react'
+import React, { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
+import api from '../services/api'
 
 /**
  * Determine online status from the last reading timestamp.
@@ -31,20 +32,73 @@ function fmt(val, decimals = 1) {
   return Number(val).toFixed(decimals)
 }
 
-export default function SensorCard({ sensor, reading }) {
+export default function SensorCard({ sensor, reading, onRename }) {
   const navigate = useNavigate()
+  const [editing, setEditing] = useState(false)
+  const [draft, setDraft] = useState('')
+  const [saving, setSaving] = useState(false)
+
   const status = getStatus(reading?.recorded_at)
   const statusLabel = { online: 'Online', stale: 'Stale', offline: 'Offline', unknown: 'No data' }[status]
+
+  function startEdit(e) {
+    e.stopPropagation()
+    setDraft(sensor.name || '')
+    setEditing(true)
+  }
+
+  function cancelEdit(e) {
+    e.stopPropagation()
+    setEditing(false)
+  }
+
+  async function saveEdit(e) {
+    e.stopPropagation()
+    const name = draft.trim()
+    if (!name) { setEditing(false); return }
+    setSaving(true)
+    try {
+      await api.put(`/sensors/${sensor.id}`, { name })
+      onRename(sensor.id, name)
+      setEditing(false)
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  function handleKeyDown(e) {
+    if (e.key === 'Enter') saveEdit(e)
+    if (e.key === 'Escape') cancelEdit(e)
+  }
 
   return (
     <div
       className="sensor-card"
-      onClick={() => navigate(`/history?sensor=${sensor.id}`)}
-      title="Click to view history"
+      onClick={editing ? undefined : () => navigate(`/history?sensor=${sensor.id}`)}
+      title={editing ? undefined : 'Click to view history'}
     >
       <div className="sensor-card-header">
-        <div>
-          <div className="sensor-name">{sensor.name || sensor.mac}</div>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          {editing ? (
+            <div className="sensor-rename-form" onClick={(e) => e.stopPropagation()}>
+              <input
+                className="sensor-rename-input"
+                value={draft}
+                onChange={(e) => setDraft(e.target.value)}
+                onKeyDown={handleKeyDown}
+                maxLength={64}
+                autoFocus
+              />
+              <button className="btn btn-sm btn-primary" onClick={saveEdit} disabled={saving}>✓</button>
+              <button className="btn btn-sm btn-ghost" onClick={cancelEdit} disabled={saving}>✕</button>
+            </div>
+          ) : (
+            <div className="sensor-name-row">
+              <div className="sensor-name">{sensor.name || sensor.mac}</div>
+              <button className="sensor-rename-btn" onClick={startEdit} title="Rename sensor">✎</button>
+            </div>
+          )}
+          {!editing && <div className="sensor-mac">{sensor.mac}</div>}
         </div>
         <div className={`status-dot ${status}`} title={statusLabel} />
       </div>

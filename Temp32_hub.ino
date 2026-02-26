@@ -37,6 +37,7 @@ static const uint8_t LMK_KEY[16] = {
 #define PROV_CHAR_CLOUD    "1c95d5e3-d8f7-413a-bf3d-7a2e5d7be87e"  // Write: {host,port,user,pass}
 #define PROV_CHAR_STATUS   "6e400003-b5a3-f393-e0a9-e50e24dcca9e"  // Read+Notify: {state,detail}
 #define PROV_CHAR_NETWORKS "d5913036-2d8a-41ee-85b9-4e361aa5c8a3"  // Write=scan trigger, Notify=results
+#define PROV_CHAR_INFO     "a9b12301-bc5d-4e8a-9c23-c5d1b3f4a5e6"  // Read: {mac} — auto-detected by setup page
 
 // --- TIMEOUTS ---
 #define WIFI_CONNECT_TIMEOUT_MS 15000  // ms to wait for WiFi after credentials received
@@ -374,7 +375,11 @@ void startBleProvisioning() {
   WiFi.macAddress(mac);
   char bleName[24];
   snprintf(bleName, sizeof(bleName), "TempHub-%02X%02X%02X", mac[3], mac[4], mac[5]);
-  Serial.printf("BLE name: %s\n", bleName);
+  // Also store full MAC string now — used by PROV_CHAR_INFO so the setup page
+  // can read the MAC automatically without the user typing it in.
+  snprintf(hubMacStr, sizeof(hubMacStr), "%02X:%02X:%02X:%02X:%02X:%02X",
+           mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
+  Serial.printf("BLE name: %s  MAC: %s\n", bleName, hubMacStr);
 
   // Initialise NimBLE
   NimBLEDevice::init(bleName);
@@ -407,6 +412,13 @@ void startBleProvisioning() {
     pService->createCharacteristic(PROV_CHAR_NETWORKS,
                                    NIMBLE_PROPERTY::WRITE | NIMBLE_PROPERTY::NOTIFY);
   pCharNetworks->setCallbacks(new ProvNetworksCallbacks());
+
+  // PROV_INFO — app reads this to auto-detect the hub MAC (no manual typing needed)
+  char charInfoPayload[32];
+  snprintf(charInfoPayload, sizeof(charInfoPayload), "{\"mac\":\"%s\"}", hubMacStr);
+  NimBLECharacteristic* pCharInfo =
+    pService->createCharacteristic(PROV_CHAR_INFO, NIMBLE_PROPERTY::READ);
+  pCharInfo->setValue(charInfoPayload);
 
   pService->start();
 

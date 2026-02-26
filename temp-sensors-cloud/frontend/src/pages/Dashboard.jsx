@@ -10,6 +10,10 @@ export default function Dashboard() {
   const [error, setError] = useState(null)
   const [hubsJoined, setHubsJoined] = useState([])
 
+  const handleRename = useCallback((id, newName) => {
+    setSensors((prev) => prev.map((s) => (s.id === id ? { ...s, name: newName } : s)))
+  }, [])
+
   // Fetch sensors + devices, then fetch latest readings per sensor
   const fetchData = useCallback(async () => {
     try {
@@ -96,6 +100,7 @@ export default function Dashboard() {
               key={sensor.id}
               sensor={sensor}
               reading={readings[sensor.mac] || null}
+              onRename={handleRename}
             />
           ))}
         </div>

@@ -1002,8 +1002,18 @@ void OnDataRecv(const esp_now_recv_info_t* esp_now_info,
       Serial.printf("[MQTT] Pairing request sent to cloud for %s\n", sensorMacStr);
 
     } else if (pendingPairing.active) {
-      // Already waiting for dashboard approval — ignore duplicate/retry request
-      Serial.println("[Pairing] Request already pending — ignoring duplicate");
+      if (memcmp(esp_now_info->src_addr, pendingPairing.mac, 6) == 0) {
+        if (pendingPairing.resolved && pendingPairing.approved) {
+          // Hub already approved but sensor missed the response — respond again
+          Serial.println("[Pairing] Re-broadcast from approved sensor — responding immediately");
+          completePairing(esp_now_info->src_addr);
+          pendingPairing.active = false;
+        } else {
+          Serial.println("[Pairing] Sensor re-broadcasting — still awaiting dashboard approval");
+        }
+      } else {
+        Serial.println("[Pairing] Already handling another sensor pairing — ignoring");
+      }
     } else {
       // Cloud not configured or MQTT disconnected — auto-accept immediately (fallback)
       Serial.println("[Pairing] Cloud offline — auto-accepting");

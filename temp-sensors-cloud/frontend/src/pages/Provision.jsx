@@ -107,7 +107,9 @@ export default function Provision() {
       try {
         const charInfo = await service.getCharacteristic(CHAR_INFO)
         const raw = await charInfo.readValue()
-        const info = JSON.parse(new TextDecoder().decode(raw))
+        // Strip null bytes — NimBLE may include trailing \0 from the C string buffer
+        const decoded = new TextDecoder().decode(raw).replace(/\0/g, '').trim()
+        const info = JSON.parse(decoded)
         if (info.mac && MAC_RE.test(info.mac)) {
           setMac(info.mac.toUpperCase())
           setMacAuto(true)

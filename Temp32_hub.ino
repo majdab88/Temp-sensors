@@ -413,12 +413,13 @@ void startBleProvisioning() {
                                    NIMBLE_PROPERTY::WRITE | NIMBLE_PROPERTY::NOTIFY);
   pCharNetworks->setCallbacks(new ProvNetworksCallbacks());
 
-  // PROV_INFO — app reads this to auto-detect the hub MAC (no manual typing needed)
-  char charInfoPayload[32];
-  snprintf(charInfoPayload, sizeof(charInfoPayload), "{\"mac\":\"%s\"}", hubMacStr);
+  // PROV_INFO — app reads this to auto-detect the hub MAC (no manual typing needed).
+  // Use String (not char[N]) so NimBLE receives a pointer+strlen, not the full
+  // 32-byte buffer which would leave garbage bytes after the JSON and break JSON.parse.
+  String infoJson = String("{\"mac\":\"") + hubMacStr + "\"}";
   NimBLECharacteristic* pCharInfo =
     pService->createCharacteristic(PROV_CHAR_INFO, NIMBLE_PROPERTY::READ);
-  pCharInfo->setValue(charInfoPayload);
+  pCharInfo->setValue(infoJson.c_str());
 
   pService->start();
 

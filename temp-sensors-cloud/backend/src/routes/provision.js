@@ -25,7 +25,14 @@ router.get('/config', (_req, res) => {
     // MQTT_HUB_URL not set or malformed — UI will show a warning
   }
 
-  res.json({ mqttHost, mqttPort });
+  res.json({
+    mqttHost,
+    mqttPort,
+    // Shared MQTT credentials for hub devices.
+    // All hubs use the same user/pass; the hub MAC in the topic path identifies each device.
+    mqttUser: process.env.MQTT_HUB_USER || '',
+    mqttPass: process.env.MQTT_HUB_PASS || '',
+  });
 });
 
 module.exports = router;

@@ -32,6 +32,8 @@ export default function Provision() {
 
   const [mqttHost, setMqttHost]           = useState('')
   const [mqttPort, setMqttPort]           = useState(8883)
+  const [mqttUser, setMqttUser]           = useState('')
+  const [mqttPass, setMqttPass]           = useState('')
   const [mqttConfigErr, setMqttConfigErr] = useState(false)
 
   const [networks, setNetworks]           = useState([])
@@ -51,9 +53,11 @@ export default function Provision() {
   useEffect(() => {
     api.get('/provision/config')
       .then(r => {
-        if (r.data.mqttHost) {
+        if (r.data.mqttHost && r.data.mqttUser) {
           setMqttHost(r.data.mqttHost)
           setMqttPort(r.data.mqttPort || 8883)
+          setMqttUser(r.data.mqttUser)
+          setMqttPass(r.data.mqttPass)
         } else {
           setMqttConfigErr(true)
         }
@@ -221,11 +225,14 @@ export default function Provision() {
       await writeChar(charWifiRef.current, JSON.stringify({ ssid, pass }))
       addLog('WiFi credentials written', 'ok')
 
+      // Send shared MQTT credentials from the VPS (not per-device MAC/api_key).
+      // The hub MAC is embedded in the topic path by the firmware; the broker
+      // identifies each device from the topic, not the MQTT username.
       await writeChar(charCloudRef.current, JSON.stringify({
         host: mqttHost,
         port: mqttPort,
-        user: mac.toUpperCase(),
-        pass: apiKey,
+        user: mqttUser,
+        pass: mqttPass,
       }))
       addLog('Cloud credentials written — waiting for hub to connect…', 'ok')
       setProvState('waiting')
@@ -525,7 +532,7 @@ export default function Provision() {
               </div>
               <div className="prov-mqtt-row">
                 <span className="prov-mqtt-label">User</span>
-                <code className="prov-mqtt-val">{mac.toUpperCase()}</code>
+                <code className="prov-mqtt-val">{mqttUser}</code>
               </div>
               <div className="prov-mqtt-row">
                 <span className="prov-mqtt-label">Pass</span>

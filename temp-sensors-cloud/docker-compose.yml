@@ -84,6 +84,8 @@ services:
       DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
       MQTT_URL: mqtt://mosquitto:1883            # internal broker (backend ↔ mosquitto)
       MQTT_HUB_URL: ${MQTT_HUB_URL}             # external TLS URL sent to ESP32 hubs via BLE
+      MQTT_HUB_USER: ${MQTT_HUB_USER}           # shared MQTT username for all hub devices
+      MQTT_HUB_PASS: ${MQTT_HUB_PASS}           # shared MQTT password for all hub devices
       MQTT_BACKEND_USER: ${MQTT_BACKEND_USER}
       MQTT_BACKEND_PASS: ${MQTT_BACKEND_PASS}
       JWT_SECRET: ${JWT_SECRET}

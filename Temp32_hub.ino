@@ -124,6 +124,7 @@ char topicSyncReq[72];       // Hub → Cloud: local sensor list / sync request
 char topicSensorRemove[72];  // Cloud → Hub: remove a specific sensor
 char topicSensorRename[72];  // Cloud → Hub: rename a specific sensor
 char topicSensorRenamed[72]; // Hub → Cloud: local rename notification
+char topicSensorDeleted[72]; // Hub → Cloud: local delete notification
 
 bool cloudConfigured = false;  // true when MQTT credentials exist in NVS
 
@@ -716,6 +717,7 @@ void buildTopics() {
   snprintf(topicSensorRemove, sizeof(topicSensorRemove), "sensors/%s/sensor/remove",    hubMacStr);
   snprintf(topicSensorRename, sizeof(topicSensorRename), "sensors/%s/sensor/rename",    hubMacStr);
   snprintf(topicSensorRenamed,sizeof(topicSensorRenamed),"sensors/%s/sensor/renamed",   hubMacStr);
+  snprintf(topicSensorDeleted,sizeof(topicSensorDeleted),"sensors/%s/sensor/deleted",   hubMacStr);
   Serial.printf("[MQTT] Hub MAC: %s\n", hubMacStr);
 }
 
@@ -1181,6 +1183,8 @@ void handleRoot() {
   html += ".rename-input { font-size:1.1em; padding:2px 6px; border:1px solid #bdc3c7; border-radius:4px; width:160px; }";
   html += ".rename-save { background:#2ecc71; color:white; border:none; border-radius:4px; padding:3px 8px; cursor:pointer; margin-left:4px; }";
   html += ".rename-cancel { background:#e74c3c; color:white; border:none; border-radius:4px; padding:3px 8px; cursor:pointer; margin-left:2px; }";
+  html += ".delete-btn { background:none; border:1px solid #e74c3c; color:#e74c3c; border-radius:4px; cursor:pointer; font-size:0.85em; padding:3px 9px; margin-left:8px; }";
+  html += ".delete-btn:hover { background:#e74c3c; color:white; }";
   html += "</style>";
   html += "<script>";
   html += "var _rt=setTimeout(function(){location.reload();},10000);";
@@ -1204,6 +1208,14 @@ void handleRoot() {
   html +=   ".then(function(r){return r.json();})";
   html +=   ".then(function(d){if(d.ok){document.getElementById('sname-'+id).textContent=n;cancelRename(id);}})";
   html +=   ".catch(function(){alert('Rename failed');});";
+  html += "}";
+  html += "function removeSensor(id){";
+  html +=   "if(!confirm('Remove this sensor? It will be unpaired from the hub and deleted from the cloud.'))return;";
+  html +=   "clearTimeout(_rt);";
+  html +=   "fetch('/api/sensors',{method:'DELETE',headers:{'Content-Type':'application/json'},body:JSON.stringify({id:id})})";
+  html +=   ".then(function(r){return r.json();})";
+  html +=   ".then(function(d){if(d.ok){location.reload();}else{alert('Remove failed: '+(d.error||'unknown'));}})";
+  html +=   ".catch(function(){alert('Remove failed');});";
   html += "}";
   html += "</script>";
   html += "</head><body>";
@@ -1233,9 +1245,12 @@ void handleRoot() {
         html += String(buf); if (j < 5) html += ":";
       }
       html += "</div></div>";
+      html += "<div style='display:flex;align-items:center;gap:8px'>";
       html += "<span class='status ";
       html += sensors[i].active ? "active'>ACTIVE" : "inactive'>OFFLINE";
-      html += "</span></div>";
+      html += "</span>";
+      html += "<button class='delete-btn' onclick='removeSensor(" + String(i) + ")'>Remove</button>";
+      html += "</div></div>";
 
       html += "<div class='sensor-data'>";
 
@@ -1353,6 +1368,39 @@ void handleRenameSensor() {
     snprintf(renamePayload, sizeof(renamePayload),
              "{\"sensor_mac\":\"%s\",\"name\":\"%s\"}", sensorMacStr, sanitized);
     mqttClient.publish(topicSensorRenamed, renamePayload);
+  }
+
+  server.send(200, "application/json", "{\"ok\":true}");
+}
+
+// DELETE /api/sensors  — body: {"id":N}
+void handleRemoveSensor() {
+  String body = server.arg("plain");
+
+  int idPos = body.indexOf("\"id\"");
+  if (idPos < 0) { server.send(400, "application/json", "{\"error\":\"missing id\"}"); return; }
+  int colonId = body.indexOf(':', idPos);
+  int id = body.substring(colonId + 1).toInt();
+  if (id < 0 || id >= sensorCount) {
+    server.send(404, "application/json", "{\"error\":\"sensor not found\"}");
+    return;
+  }
+
+  // Capture MAC before the array shifts
+  uint8_t mac[6];
+  memcpy(mac, sensors[id].mac, 6);
+
+  removeSensorByMac(mac);
+
+  // Notify cloud so it can remove the sensor from its database
+  if (cloudConfigured && mqttClient.connected()) {
+    char sensorMacStr[18];
+    snprintf(sensorMacStr, sizeof(sensorMacStr), "%02X:%02X:%02X:%02X:%02X:%02X",
+             mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
+    char deletePayload[80];
+    snprintf(deletePayload, sizeof(deletePayload),
+             "{\"sensor_mac\":\"%s\"}", sensorMacStr);
+    mqttClient.publish(topicSensorDeleted, deletePayload);
   }
 
   server.send(200, "application/json", "{\"ok\":true}");
@@ -1543,8 +1591,9 @@ void setup() {
   // ── Web server ───────────────────────────────────────────────────────────
   // Start before ESP-NOW so the dashboard is available even if ESP-NOW fails.
   server.on("/", handleRoot);
-  server.on("/api/sensors", HTTP_GET, handleJSON);
-  server.on("/api/sensors", HTTP_PUT, handleRenameSensor);
+  server.on("/api/sensors", HTTP_GET,    handleJSON);
+  server.on("/api/sensors", HTTP_PUT,    handleRenameSensor);
+  server.on("/api/sensors", HTTP_DELETE, handleRemoveSensor);
   server.begin();
   Serial.println("✓ Web server started");
 

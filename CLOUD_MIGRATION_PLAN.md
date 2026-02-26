@@ -253,6 +253,7 @@ CREATE TABLE pairing_requests (
 | `sensors/{hub_mac}/sensor/remove` | Cloud → Hub | `{sensor_mac}` | Cloud removes one sensor; hub deletes from memory, peer table, and NVS |
 | `sensors/{hub_mac}/sensor/rename` | Cloud → Hub | `{sensor_mac, name}` | Cloud renames a sensor; hub updates memory and NVS |
 | `sensors/{hub_mac}/sensor/renamed` | Hub → Cloud | `{sensor_mac, name}` | Hub notifies cloud of a rename made via the local web dashboard |
+| `sensors/{hub_mac}/sensor/deleted` | Hub → Cloud | `{sensor_mac}` | Hub notifies cloud of a deletion made via the local web dashboard |
 | `sensors/{hub_mac}/command` | Cloud → Hub | `{cmd, params}` | Reserved for future commands |
 
 ---

@@ -4,12 +4,13 @@ const express  = require('express');
 const http     = require('http');
 const { Server } = require('socket.io');
 
-const { initMqtt }   = require('./mqtt');
-const authRoutes     = require('./routes/auth');
-const deviceRoutes   = require('./routes/devices');
-const sensorRoutes   = require('./routes/sensors');
-const readingRoutes  = require('./routes/readings');
-const pairingRoutes  = require('./routes/pairing');
+const { initMqtt, getHubStatus } = require('./mqtt');
+const authRoutes      = require('./routes/auth');
+const deviceRoutes    = require('./routes/devices');
+const sensorRoutes    = require('./routes/sensors');
+const readingRoutes   = require('./routes/readings');
+const pairingRoutes   = require('./routes/pairing');
+const provisionRoutes = require('./routes/provision');
 
 const app    = express();
 const server = http.createServer(app);
@@ -33,6 +34,7 @@ app.use('/api/sensors',              sensorRoutes);
 // Readings router uses mergeParams to access :id from the parent path
 app.use('/api/sensors/:id/readings', readingRoutes);
 app.use('/api/pairing',              pairingRoutes);
+app.use('/api/provision',            provisionRoutes);
 
 // ── 404 fallback ──────────────────────────────────────────────────────────────
 app.use((_req, res) => res.status(404).json({ error: 'Not found' }));
@@ -46,6 +48,10 @@ io.on('connection', (socket) => {
   socket.on('join', (hubMac) => {
     if (typeof hubMac === 'string' && MAC_RE.test(hubMac)) {
       socket.join(`hub:${hubMac.toUpperCase()}`);
+      // Replay last known status so the client doesn't show "Unknown"
+      // when the hub's retained MQTT message arrived before this client connected.
+      const cached = getHubStatus(hubMac);
+      if (cached) socket.emit('hubStatus', cached);
     }
   });
   socket.on('leave', (hubMac) => {

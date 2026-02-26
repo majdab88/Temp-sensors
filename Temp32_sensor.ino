@@ -353,7 +353,7 @@ void enterPairingMode() {
   Serial.print("Waiting for hub");
   unsigned long startWait    = millis();
   unsigned long lastBroadcast = 0;
-  while (millis() - startWait < 10000) {
+  while (millis() - startWait < 70000) {
     // Re-broadcast every 2 s so the hub doesn't need to catch the very first packet
     if (millis() - lastBroadcast >= 2000) {
       esp_now_send(broadcastAddress, (uint8_t *)&myData, sizeof(myData));

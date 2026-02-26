@@ -83,12 +83,14 @@ async function handleSensorData(hubMac, data) {
   const deviceId = devRes.rows[0].id;
 
   // Upsert sensor — auto-creates record on first data; preserves custom name
+  const normMac    = sensor_mac.toUpperCase();
+  const defaultName = 'TempSens-' + normMac.replace(/:/g, '').slice(-6);
   const sensorRes = await query(
     `INSERT INTO sensors (device_id, mac, name)
-     VALUES ($1, $2, $2)
+     VALUES ($1, $2, $3)
      ON CONFLICT (device_id, mac) DO UPDATE SET active = TRUE
      RETURNING id`,
-    [deviceId, sensor_mac.toUpperCase()]
+    [deviceId, normMac, defaultName]
   );
   const sensorId = sensorRes.rows[0].id;
 

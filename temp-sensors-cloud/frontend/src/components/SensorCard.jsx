@@ -44,8 +44,7 @@ export default function SensorCard({ sensor, reading }) {
     >
       <div className="sensor-card-header">
         <div>
-          <div className="sensor-name">{sensor.name || `TempSens-${sensor.mac.replace(/:/g, '').slice(-6)}`}</div>
-          {sensor.name && <div className="sensor-mac">{sensor.mac}</div>}
+          <div className="sensor-name">{sensor.name || sensor.mac}</div>
         </div>
         <div className={`status-dot ${status}`} title={statusLabel} />
       </div>

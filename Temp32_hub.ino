@@ -1115,6 +1115,10 @@ void completePairing(const uint8_t* mac) {
 
   int index = findSensor(mac);
   if (index == -1) addSensor(mac);
+
+  // Tell the cloud the pairing is complete so it can persist the sensor to its database.
+  publishSyncRequest();
+
   digitalWrite(LED_PIN, HIGH); delay(200); digitalWrite(LED_PIN, LOW);
 }
 

@@ -16,6 +16,7 @@ router.get('/', async (_req, res) => {
               d.mac AS hub_mac, d.name AS hub_name
        FROM sensors s
        JOIN devices d ON d.id = s.device_id
+       WHERE s.active = TRUE
        ORDER BY s.paired_at DESC`
     );
     res.json(result.rows);
@@ -63,7 +64,10 @@ router.delete('/:id', async (req, res) => {
     if (lookup.rows.length === 0) return res.status(404).json({ error: 'Sensor not found' });
     const { sensor_mac, hub_mac } = lookup.rows[0];
 
-    await query('DELETE FROM sensors WHERE id = $1', [id]);
+    // Soft-delete so that future data frames from this sensor are ignored
+    // (a hard DELETE causes handleSensorData to re-INSERT the row on the next
+    // data frame, which would bring the sensor back in the next sync response).
+    await query('UPDATE sensors SET active = FALSE WHERE id = $1', [id]);
 
     // Tell the hub to remove the sensor from its memory, peer table, and NVS
     publishSensorRemove(hub_mac, sensor_mac);

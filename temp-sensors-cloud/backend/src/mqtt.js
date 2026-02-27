@@ -85,16 +85,22 @@ async function handleSensorData(hubMac, data) {
   if (devRes.rows.length === 0) return;
   const deviceId = devRes.rows[0].id;
 
-  // Upsert sensor — auto-creates record on first data; preserves custom name
+  // Upsert sensor — auto-creates record on first data; preserves custom name.
+  // The WHERE clause prevents re-activating a sensor that was soft-deleted
+  // (active = FALSE); those data frames are silently dropped so a deleted sensor
+  // cannot re-appear via an incoming reading.
   const normMac    = sensor_mac.toUpperCase();
   const defaultName = 'TempSens-' + normMac.replace(/:/g, '').slice(-6);
   const sensorRes = await query(
     `INSERT INTO sensors (device_id, mac, name)
      VALUES ($1, $2, $3)
-     ON CONFLICT (device_id, mac) DO UPDATE SET active = TRUE
+     ON CONFLICT (device_id, mac) DO UPDATE
+       SET active = TRUE
+       WHERE sensors.active = TRUE
      RETURNING id`,
     [deviceId, normMac, defaultName]
   );
+  if (sensorRes.rows.length === 0) return; // sensor was soft-deleted — ignore data
   const sensorId = sensorRes.rows[0].id;
 
   // Convert -999 sentinel values to NULL
@@ -168,7 +174,7 @@ async function handleSyncRequest(hubMac) {
   const deviceId = devRes.rows[0].id;
 
   const sensorRes = await query(
-    'SELECT mac, name FROM sensors WHERE device_id = $1',
+    'SELECT mac, name FROM sensors WHERE device_id = $1 AND active = TRUE',
     [deviceId]
   );
 

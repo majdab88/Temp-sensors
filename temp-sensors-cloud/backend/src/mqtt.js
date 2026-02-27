@@ -31,6 +31,7 @@ function initMqtt(io) {
       'sensors/+/data',
       'sensors/+/status',
       'sensors/+/pairing/request',
+      'sensors/+/sync/request',
     ], (err) => {
       if (err) console.error('MQTT subscribe error:', err.message);
     });
@@ -70,6 +71,8 @@ async function handleMessage(topic, payload) {
     handleHubStatus(hubMac, data);
   } else if (parts[2] === 'pairing' && parts[3] === 'request') {
     await handlePairingRequest(hubMac, data);
+  } else if (parts[2] === 'sync' && parts[3] === 'request') {
+    await handleSyncRequest(hubMac);
   }
 }
 
@@ -154,6 +157,27 @@ async function handlePairingRequest(hubMac, data) {
 }
 
 /**
+ * Respond to a hub's sync/request with the authoritative sensor list from the DB.
+ * Hub publishes its local list on every MQTT connect; we reply with the DB truth
+ * so the hub can add/remove/rename sensors to match.
+ */
+async function handleSyncRequest(hubMac) {
+  const mac = hubMac.toUpperCase();
+  const devRes = await query('SELECT id FROM devices WHERE mac = $1', [mac]);
+  if (devRes.rows.length === 0) return;
+  const deviceId = devRes.rows[0].id;
+
+  const sensorRes = await query(
+    'SELECT mac, name FROM sensors WHERE device_id = $1',
+    [deviceId]
+  );
+
+  const payload = JSON.stringify({ sensors: sensorRes.rows });
+  client.publish(`sensors/${mac}/sync`, payload);
+  console.log(`[Sync] Responded to sync/request from ${mac} with ${sensorRes.rows.length} sensor(s)`);
+}
+
+/**
  * Publish a pairing approve/reject decision back to the hub.
  * Called by the pairing route handler.
  */
@@ -171,9 +195,13 @@ function publishPairingResponse(hubMac, sensorMac, approved) {
  * Fire-and-forget — if the hub is offline it will receive the sync on next connect.
  */
 function publishSensorRemove(hubMac, sensorMac) {
-  if (!client || !client.connected) return;
+  if (!client || !client.connected) {
+    console.warn(`[MQTT] publishSensorRemove: client not connected — ${sensorMac} will be removed from hub ${hubMac} on next sync/request`);
+    return;
+  }
   const payload = JSON.stringify({ sensor_mac: sensorMac });
   client.publish(`sensors/${hubMac}/sensor/remove`, payload);
+  console.log(`[MQTT] Sent sensor/remove for ${sensorMac} to hub ${hubMac}`);
 }
 
 module.exports = { initMqtt, publishPairingResponse, publishSensorRemove, getHubStatus };

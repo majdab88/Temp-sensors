@@ -3,7 +3,7 @@
 const express = require('express');
 const { query } = require('../db');
 const { requireAuth } = require('../middleware/auth');
-const { publishSensorRemove } = require('../mqtt');
+const { publishSensorRemove, pushSyncToHub } = require('../mqtt');
 
 const router = express.Router();
 router.use(requireAuth);
@@ -69,8 +69,11 @@ router.delete('/:id', async (req, res) => {
     // data frame, which would bring the sensor back in the next sync response).
     await query('UPDATE sensors SET active = FALSE WHERE id = $1', [id]);
 
-    // Tell the hub to remove the sensor from its memory, peer table, and NVS
+    // Push the updated (reduced) sensor list to the hub via the proven sync topic.
+    // The hub runs applySyncFromCloud which removes any sensor no longer in the list.
+    // publishSensorRemove is kept as a belt-and-suspenders fire-and-forget alongside.
     publishSensorRemove(hub_mac, sensor_mac);
+    await pushSyncToHub(hub_mac);
 
     res.status(204).end();
   } catch (err) {

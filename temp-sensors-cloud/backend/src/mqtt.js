@@ -197,6 +197,7 @@ async function handleSensorDeleted(hubMac, data) {
  * so the hub can add/remove/rename sensors to match.
  */
 async function handleSyncRequest(hubMac) {
+  if (!client || !client.connected) return;
   const mac = hubMac.toUpperCase();
   const devRes = await query('SELECT id FROM devices WHERE mac = $1', [mac]);
   if (devRes.rows.length === 0) return;
@@ -209,7 +210,7 @@ async function handleSyncRequest(hubMac) {
 
   const payload = JSON.stringify({ sensors: sensorRes.rows });
   client.publish(`sensors/${mac}/sync`, payload);
-  console.log(`[Sync] Responded to sync/request from ${mac} with ${sensorRes.rows.length} sensor(s)`);
+  console.log(`[Sync] Pushed sync to ${mac} with ${sensorRes.rows.length} sensor(s)`);
 }
 
 /**
@@ -239,4 +240,4 @@ function publishSensorRemove(hubMac, sensorMac) {
   console.log(`[MQTT] Sent sensor/remove for ${sensorMac} to hub ${hubMac}`);
 }
 
-module.exports = { initMqtt, publishPairingResponse, publishSensorRemove, getHubStatus };
+module.exports = { initMqtt, publishPairingResponse, publishSensorRemove, getHubStatus, pushSyncToHub: handleSyncRequest };

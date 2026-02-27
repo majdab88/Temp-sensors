@@ -32,6 +32,7 @@ function initMqtt(io) {
       'sensors/+/status',
       'sensors/+/pairing/request',
       'sensors/+/sync/request',
+      'sensors/+/sensor/deleted',   // hub notifies cloud after a local-dashboard delete
     ], (err) => {
       if (err) console.error('MQTT subscribe error:', err.message);
     });
@@ -73,6 +74,8 @@ async function handleMessage(topic, payload) {
     await handlePairingRequest(hubMac, data);
   } else if (parts[2] === 'sync' && parts[3] === 'request') {
     await handleSyncRequest(hubMac);
+  } else if (parts[2] === 'sensor' && parts[3] === 'deleted') {
+    await handleSensorDeleted(hubMac, data);
   }
 }
 
@@ -160,6 +163,32 @@ async function handlePairingRequest(hubMac, data) {
     sensor_mac: sensor_mac.toUpperCase(),
     ts: Date.now(),
   });
+}
+
+/**
+ * Hub locally deleted a sensor via its web dashboard and has already removed it
+ * from its own NVS/peer table.  Soft-delete the row in the DB so the next
+ * sync/request response does NOT include the sensor and the hub won't re-add it.
+ */
+async function handleSensorDeleted(hubMac, data) {
+  const { sensor_mac } = data;
+  if (!sensor_mac) return;
+
+  const mac = hubMac.toUpperCase();
+  const normSensorMac = sensor_mac.toUpperCase();
+
+  const result = await query(
+    `UPDATE sensors SET active = FALSE
+     WHERE mac = $1
+       AND device_id = (SELECT id FROM devices WHERE mac = $2)
+       AND active = TRUE
+     RETURNING mac`,
+    [normSensorMac, mac]
+  );
+
+  if (result.rows.length > 0) {
+    console.log(`[MQTT] Hub ${mac} locally deleted sensor ${normSensorMac} — marked inactive in DB`);
+  }
 }
 
 /**

@@ -245,9 +245,15 @@ CREATE TABLE pairing_requests (
 | Topic | Direction | Payload (JSON) | Description |
 |-------|-----------|----------------|-------------|
 | `sensors/{hub_mac}/data` | Hub → Cloud | `{sensor_mac, temp, hum, battery, rssi, ts}` | Sensor reading |
-| `sensors/{hub_mac}/status` | Hub → Cloud | `{online, ip, hostname, firmware, ts}` | Online/offline + LWT |
-| `sensors/{hub_mac}/pairing/request` | Hub → Cloud | `{sensor_mac, ts}` | New sensor pairing request |
+| `sensors/{hub_mac}/status` | Hub → Cloud | `{online, ip, ts}` | Online/offline + LWT |
+| `sensors/{hub_mac}/pairing/request` | Hub → Cloud | `{sensor_mac}` | New sensor pairing request |
 | `sensors/{hub_mac}/pairing/response` | Cloud → Hub | `{sensor_mac, approved}` | Dashboard/app decision |
+| `sensors/{hub_mac}/sync/request` | Hub → Cloud | `{sensors:[{mac, name}, …]}` | Hub reports its local list on every MQTT connect; cloud diffs and replies |
+| `sensors/{hub_mac}/sync` | Cloud → Hub | `{sensors:[{mac, name}, …]}` | Cloud pushes authoritative list; hub adds/removes/renames to match |
+| `sensors/{hub_mac}/sensor/remove` | Cloud → Hub | `{sensor_mac}` | Cloud removes one sensor; hub deletes from memory, peer table, and NVS |
+| `sensors/{hub_mac}/sensor/rename` | Cloud → Hub | `{sensor_mac, name}` | Cloud renames a sensor; hub updates memory and NVS |
+| `sensors/{hub_mac}/sensor/renamed` | Hub → Cloud | `{sensor_mac, name}` | Hub notifies cloud of a rename made via the local web dashboard |
+| `sensors/{hub_mac}/sensor/deleted` | Hub → Cloud | `{sensor_mac}` | Hub notifies cloud of a deletion made via the local web dashboard |
 | `sensors/{hub_mac}/command` | Cloud → Hub | `{cmd, params}` | Reserved for future commands |
 
 ---
@@ -353,10 +359,16 @@ temp-sensors-cloud/
 
 3. **After WiFi connects** — start mDNS (`MDNS.begin("temp-hub")`), then
    connect to MQTT broker with TLS, subscribe to
-   `sensors/{mac}/pairing/response` and `sensors/{mac}/command`.
+   `sensors/{mac}/pairing/response`, `sensors/{mac}/sync`,
+   `sensors/{mac}/sensor/remove`, `sensors/{mac}/sensor/rename`,
+   and `sensors/{mac}/command`.
 
 4. **On sensor data received from sensor node** — publish to `sensors/{mac}/data`;
    update local in-memory store and local web server.
+
+4a. **On MQTT connect** — publish current local sensor list to
+    `sensors/{mac}/sync/request`; cloud responds on `sensors/{mac}/sync` with its
+    authoritative list; hub reconciles (adds/removes/renames) to match the cloud.
 
 5. **On pairing request received from sensor node**:
    - Cloud connected: publish to `sensors/{mac}/pairing/request`, wait up to
@@ -574,6 +586,7 @@ Sensor Node      Hub ESP32          Cloud Backend     App / Dashboard
 | Hub — mDNS | **New** | ESPmDNS (built-in); LAN hostname after provisioning |
 | Hub — MQTT uplink | **New** | PubSubClient + TLS |
 | Hub — cloud pairing gate | **Modified** | Was auto-accept; now cloud-gated with local fallback |
+| Hub — cloud-sync bridge | **New** | Hub always mirrors cloud DB: adds/removes/renames sensors on sync; publishes sync request on every MQTT connect |
 | Cloud backend | **New** | Node.js + PostgreSQL + Mosquitto |
 | Web dashboard | **New** | React SPA (admin / power users) |
 | Mobile app | **New** | React Native + Expo (end users; provisioning + monitoring) |

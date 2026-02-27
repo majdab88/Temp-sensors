@@ -330,6 +330,26 @@ bool sendDataWithRetry() {
   return false;
 }
 
+// Scan for the strongest nearby AP and return its WiFi channel.
+// Used before pairing so the ESP-NOW broadcast goes out on the same
+// channel the hub is locked to by its router connection.
+uint8_t detectWiFiChannel() {
+  Serial.print("Scanning for WiFi channel...");
+  int n = WiFi.scanNetworks(/*async=*/false, /*show_hidden=*/false);
+  if (n <= 0) {
+    Serial.println(" no APs found, defaulting to ch 1");
+    return 1;
+  }
+  int bestIdx = 0;
+  for (int i = 1; i < n; i++) {
+    if (WiFi.RSSI(i) > WiFi.RSSI(bestIdx)) bestIdx = i;
+  }
+  uint8_t ch = (uint8_t)WiFi.channel(bestIdx);
+  Serial.printf(" ch %d (%s, %d dBm)\n", ch, WiFi.SSID(bestIdx).c_str(), WiFi.RSSI(bestIdx));
+  WiFi.scanDelete();
+  return ch;
+}
+
 // --- PAIRING MODE ---
 void enterPairingMode() {
   Serial.println("\n=== PAIRING MODE ===");
@@ -417,6 +437,13 @@ void setup() {
   esp_wifi_set_protocol(WIFI_IF_STA,
     WIFI_PROTOCOL_11B | WIFI_PROTOCOL_11G |
     WIFI_PROTOCOL_11N | WIFI_PROTOCOL_LR);
+
+  // Match the hub's WiFi channel before ESP-NOW init — required for both
+  // data mode and pairing mode since the hub is locked to its router's channel.
+  {
+    uint8_t ch = detectWiFiChannel();
+    esp_wifi_set_channel(ch, WIFI_SECOND_CHAN_NONE);
+  }
 
   if (esp_now_init() != ESP_OK) {
     Serial.println("✗ ESP-NOW init failed! Sleeping 10s...");

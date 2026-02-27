@@ -32,11 +32,12 @@ function fmt(val, decimals = 1) {
   return Number(val).toFixed(decimals)
 }
 
-export default function SensorCard({ sensor, reading, onRename }) {
+export default function SensorCard({ sensor, reading, onRename, onDelete }) {
   const navigate = useNavigate()
   const [editing, setEditing] = useState(false)
   const [draft, setDraft] = useState('')
   const [saving, setSaving] = useState(false)
+  const [deleting, setDeleting] = useState(false)
 
   const status = getStatus(reading?.recorded_at)
   const statusLabel = { online: 'Online', stale: 'Stale', offline: 'Offline', unknown: 'No data' }[status]
@@ -71,6 +72,18 @@ export default function SensorCard({ sensor, reading, onRename }) {
     if (e.key === 'Escape') cancelEdit(e)
   }
 
+  async function handleDelete(e) {
+    e.stopPropagation()
+    if (!window.confirm(`Remove sensor "${sensor.name || sensor.mac}"? This also deletes all its readings.`)) return
+    setDeleting(true)
+    try {
+      await api.delete(`/sensors/${sensor.id}`)
+      onDelete(sensor.id)
+    } finally {
+      setDeleting(false)
+    }
+  }
+
   return (
     <div
       className="sensor-card"
@@ -96,6 +109,7 @@ export default function SensorCard({ sensor, reading, onRename }) {
             <div className="sensor-name-row">
               <div className="sensor-name">{sensor.name || sensor.mac}</div>
               <button className="sensor-rename-btn" onClick={startEdit} title="Rename sensor">✎</button>
+              <button className="sensor-delete-btn" onClick={handleDelete} disabled={deleting} title="Remove sensor">✕</button>
             </div>
           )}
           {!editing && <div className="sensor-mac">{sensor.mac}</div>}

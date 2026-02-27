@@ -71,6 +71,18 @@ async function resolveRequest(req, res, approved) {
 
     const row = result.rows[0];
 
+    // Re-activate sensor if it was previously soft-deleted (covers the
+    // "delete then factory-reset and re-pair" flow).  Must run before
+    // publishPairingResponse so that when data frames arrive the upsert
+    // in handleSensorData finds active = TRUE and accepts them.
+    if (approved) {
+      await query(
+        `UPDATE sensors SET active = TRUE
+         WHERE device_id = $1 AND mac = $2 AND active = FALSE`,
+        [row.device_id, row.slave_mac.toUpperCase()]
+      );
+    }
+
     // Publish the decision to the hub via MQTT
     const devRes = await query('SELECT mac FROM devices WHERE id = $1', [row.device_id]);
     if (devRes.rows.length > 0) {

@@ -79,10 +79,6 @@ struct SensorData {
 SensorData sensors[MAX_SENSORS];
 int        sensorCount = 0;
 
-// MACs explicitly deleted by the user (cloud or local web).
-// Data frames from these are ignored until the cloud re-adds the sensor.
-uint8_t blockedMacs[MAX_SENSORS][6];
-int     blockedCount = 0;
 
 // --- WEB SERVER ---
 WebServer server(80);
@@ -680,68 +676,6 @@ void loadPairedSensors() {
   prefs.end();
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// BLOCKED MAC LIST
-// Sensors explicitly deleted by the user are added here so that subsequent
-// data frames from the same MAC are ignored (preventing ghost re-appearance).
-// The list is persisted in NVS namespace "blocked" and survives reboots.
-// The cloud can clear a MAC from the list by re-adding it via applySyncFromCloud.
-// ─────────────────────────────────────────────────────────────────────────────
-
-bool isBlocked(const uint8_t* mac) {
-  for (int i = 0; i < blockedCount; i++)
-    if (memcmp(blockedMacs[i], mac, 6) == 0) return true;
-  return false;
-}
-
-void addBlocked(const uint8_t* mac) {
-  if (isBlocked(mac) || blockedCount >= MAX_SENSORS) return;
-  memcpy(blockedMacs[blockedCount++], mac, 6);
-  Preferences bPrefs;
-  bPrefs.begin("blocked", false);
-  bPrefs.putInt("count", blockedCount);
-  char key[8]; snprintf(key, sizeof(key), "mac%d", blockedCount - 1);
-  bPrefs.putBytes(key, mac, 6);
-  bPrefs.end();
-  Serial.printf("[Blocked] MAC added. Total blocked: %d\n", blockedCount);
-}
-
-void removeBlocked(const uint8_t* mac) {
-  for (int i = 0; i < blockedCount; i++) {
-    if (memcmp(blockedMacs[i], mac, 6) == 0) {
-      for (int j = i; j < blockedCount - 1; j++)
-        memcpy(blockedMacs[j], blockedMacs[j + 1], 6);
-      blockedCount--;
-      memset(blockedMacs[blockedCount], 0, 6);
-      Preferences bPrefs;
-      bPrefs.begin("blocked", false);
-      bPrefs.putInt("count", blockedCount);
-      for (int j = 0; j < blockedCount; j++) {
-        char key[8]; snprintf(key, sizeof(key), "mac%d", j);
-        bPrefs.putBytes(key, blockedMacs[j], 6);
-      }
-      char staleKey[8]; snprintf(staleKey, sizeof(staleKey), "mac%d", blockedCount);
-      bPrefs.remove(staleKey);
-      bPrefs.end();
-      Serial.printf("[Blocked] MAC removed. Total blocked: %d\n", blockedCount);
-      return;
-    }
-  }
-}
-
-void loadBlockedMacs() {
-  Preferences bPrefs;
-  bPrefs.begin("blocked", true);
-  int count = bPrefs.getInt("count", 0);
-  for (int i = 0; i < count && blockedCount < MAX_SENSORS; i++) {
-    char key[8]; snprintf(key, sizeof(key), "mac%d", i);
-    uint8_t mac[6] = {};
-    if (bPrefs.getBytes(key, mac, 6) != 6) continue;
-    memcpy(blockedMacs[blockedCount++], mac, 6);
-  }
-  bPrefs.end();
-  Serial.printf("Restored %d blocked MAC(s) from NVS.\n", blockedCount);
-}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // CLOUD / MQTT
@@ -825,7 +759,6 @@ void mqttCallback(char* topic, byte* payload, unsigned int length) {
     if (sscanf(macStr.c_str(), "%hhX:%hhX:%hhX:%hhX:%hhX:%hhX",
                &mac[0], &mac[1], &mac[2], &mac[3], &mac[4], &mac[5]) == 6) {
       Serial.printf("[MQTT] Cloud removing sensor %s\n", macStr.c_str());
-      addBlocked(mac);
       removeSensorByMac(mac);
     }
     return;
@@ -929,10 +862,6 @@ void addSensorFromCloud(const uint8_t* mac, const char* name) {
     Serial.println("[Sync] Max sensors reached — cannot add from cloud");
     return;
   }
-  // Cloud explicitly (re-)adding this sensor — clear any local block so
-  // future data frames from it are accepted again.
-  removeBlocked(mac);
-
   memcpy(sensors[sensorCount].mac, mac, 6);
   sensors[sensorCount].active     = false;
   sensors[sensorCount].temp       = 0;
@@ -1466,7 +1395,6 @@ void handleRemoveSensor() {
   uint8_t mac[6];
   memcpy(mac, sensors[id].mac, 6);
 
-  addBlocked(mac);
   removeSensorByMac(mac);
 
   // Notify cloud so it can remove the sensor from its database
@@ -1577,10 +1505,6 @@ void OnDataRecv(const esp_now_recv_info_t* esp_now_info,
 
     int index = findSensor(esp_now_info->src_addr);
     if (index == -1) {
-      if (isBlocked(esp_now_info->src_addr)) {
-        Serial.println(" | Blocked sensor — ignoring.");
-        return;
-      }
       index = addSensor(esp_now_info->src_addr);
       // Sensor was unknown — likely dropped by a cloud-sync race after pairing.
       // Re-register it with the cloud so the dashboard picks it up.
@@ -1694,7 +1618,6 @@ void setup() {
   Serial.println("✓ ESP-NOW initialized (encrypted)");
 
   loadPairedSensors();
-  loadBlockedMacs();
   esp_now_register_recv_cb(OnDataRecv);
 
   Serial.println("\n=== Hub Ready ===");

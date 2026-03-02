@@ -209,8 +209,10 @@ async function handleSyncRequest(hubMac) {
   );
 
   const payload = JSON.stringify({ sensors: sensorRes.rows });
-  client.publish(`sensors/${mac}/sync`, payload);
-  console.log(`[Sync] Pushed sync to ${mac} with ${sensorRes.rows.length} sensor(s)`);
+  // retain: true so the hub receives the current authoritative list the moment
+  // it subscribes — even if it was offline when the delete/rename was triggered.
+  client.publish(`sensors/${mac}/sync`, payload, { retain: true });
+  console.log(`[Sync] Pushed retained sync to ${mac} with ${sensorRes.rows.length} sensor(s)`);
 }
 
 /**

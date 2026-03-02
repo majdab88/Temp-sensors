@@ -64,9 +64,10 @@ router.delete('/:id', async (req, res) => {
     if (lookup.rows.length === 0) return res.status(404).json({ error: 'Sensor not found' });
     const { sensor_mac, hub_mac } = lookup.rows[0];
 
-    // Soft-delete so that future data frames from this sensor are ignored
-    // (a hard DELETE causes handleSensorData to re-INSERT the row on the next
-    // data frame, which would bring the sensor back in the next sync response).
+    // Delete all readings first, then soft-delete the sensor row.
+    // Soft-delete (active = FALSE) prevents the upsert in handleSensorData
+    // from re-activating the sensor if a stale data frame arrives later.
+    await query('DELETE FROM readings WHERE sensor_id = $1', [id]);
     await query('UPDATE sensors SET active = FALSE WHERE id = $1', [id]);
 
     // Push the updated (reduced) sensor list to the hub via the proven sync topic.

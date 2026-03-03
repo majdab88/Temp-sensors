@@ -71,6 +71,7 @@ struct SensorData {
   float         hum;
   int           rssi;
   unsigned long lastUpdate;
+  unsigned long lastRxMillis;  // millis() of last accepted reading (dedup guard)
   bool          active;
   char          name[20];
   uint8_t       battery;
@@ -613,12 +614,13 @@ int addSensor(const uint8_t* mac) {
     return -1;
   }
   memcpy(sensors[sensorCount].mac, mac, 6);
-  sensors[sensorCount].active     = true;
-  sensors[sensorCount].temp       = 0;
-  sensors[sensorCount].hum        = 0;
-  sensors[sensorCount].rssi       = 0;
-  sensors[sensorCount].battery    = 0;
-  sensors[sensorCount].lastUpdate = millis();
+  sensors[sensorCount].active       = true;
+  sensors[sensorCount].temp         = 0;
+  sensors[sensorCount].hum          = 0;
+  sensors[sensorCount].rssi         = 0;
+  sensors[sensorCount].battery      = 0;
+  sensors[sensorCount].lastUpdate   = millis();
+  sensors[sensorCount].lastRxMillis = 0;
   sprintf(sensors[sensorCount].name, "Sensor-%02X%02X", mac[4], mac[5]);
   sensorCount++;
   Serial.printf("Sensor added. Total: %d\n", sensorCount);
@@ -634,11 +636,22 @@ int addSensor(const uint8_t* mac) {
 
 void updateSensor(int index, float temp, float hum, int rssi, uint8_t battery) {
   if (index < 0 || index >= sensorCount) return;
+
+  // The sensor retries the same reading up to MAX_RETRIES times when it
+  // doesn't receive an ESP-NOW ACK. Deduplicate by ignoring any reading
+  // that arrives within 5 s of the last accepted one from this sensor.
+  unsigned long now = millis();
+  if (now - sensors[index].lastRxMillis < 5000) {
+    Serial.println(" | Duplicate retry — skipped");
+    return;
+  }
+  sensors[index].lastRxMillis = now;
+
   sensors[index].temp       = temp;
   sensors[index].hum        = hum;
   sensors[index].rssi       = rssi;
   sensors[index].battery    = battery;
-  sensors[index].lastUpdate = millis();
+  sensors[index].lastUpdate = now;
   sensors[index].active     = true;
   publishSensorData(index);  // forward reading to cloud
 }
@@ -1060,6 +1073,9 @@ bool connectCloud() {
   mqttClient.setCallback(mqttCallback);
   mqttClient.setBufferSize(1024);  // sync payloads can reach ~500 bytes
   mqttClient.setKeepAlive(30);
+  // Limit how long connect() blocks waiting for CONNACK. The default is 15 s,
+  // which ties up the WiFi radio and prevents ESP-NOW ACKs from being sent.
+  mqttClient.setSocketTimeout(3);
 
   // Client ID includes last 3 MAC octets so it is unique per device
   uint8_t mac[6]; WiFi.macAddress(mac);

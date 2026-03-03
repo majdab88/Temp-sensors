@@ -79,6 +79,25 @@ struct SensorData {
 SensorData sensors[MAX_SENSORS];
 int        sensorCount = 0;
 
+// --- OFFLINE READING BUFFER ---
+// Readings received while MQTT is disconnected are stored here and flushed
+// to the cloud once the connection is restored.
+#define OFFLINE_BUFFER_SIZE 50
+
+struct BufferedReading {
+  uint8_t mac[6];
+  float   temp;
+  float   hum;
+  int8_t  rssi;
+  uint8_t battery;
+  char    ts[21];   // ISO-8601 timestamp captured at the time of the reading
+};
+
+static BufferedReading offlineBuf[OFFLINE_BUFFER_SIZE];
+static int bufHead  = 0;   // next write slot (circular)
+static int bufTail  = 0;   // next read slot  (circular)
+static int bufCount = 0;
+
 
 // --- WEB SERVER ---
 WebServer server(80);
@@ -1069,6 +1088,44 @@ bool connectCloud() {
   return true;
 }
 
+// Publish all readings that were buffered while MQTT was offline.
+// Called immediately after a successful (re)connect so readings are flushed
+// in the order they were received and with their original timestamps.
+void flushOfflineBuffer() {
+  if (bufCount == 0) return;
+  Serial.printf("[Buffer] Flushing %d buffered reading(s)...\n", bufCount);
+
+  while (bufCount > 0 && mqttClient.connected()) {
+    const BufferedReading& r = offlineBuf[bufTail];
+
+    char sensorMacStr[18];
+    snprintf(sensorMacStr, sizeof(sensorMacStr),
+             "%02X:%02X:%02X:%02X:%02X:%02X",
+             r.mac[0], r.mac[1], r.mac[2],
+             r.mac[3], r.mac[4], r.mac[5]);
+
+    char payload[220];
+    snprintf(payload, sizeof(payload),
+             "{\"sensor_mac\":\"%s\",\"temp\":%.2f,\"hum\":%.2f,"
+             "\"battery\":%d,\"rssi\":%d,\"ts\":\"%s\"}",
+             sensorMacStr, r.temp, r.hum, r.battery, r.rssi, r.ts);
+
+    mqttClient.publish(topicData, payload);
+    mqttClient.loop();   // let PubSubClient process the outgoing packet
+
+    bufTail = (bufTail + 1) % OFFLINE_BUFFER_SIZE;
+    bufCount--;
+
+    delay(20);   // brief yield to avoid flooding the broker
+  }
+
+  if (bufCount == 0) {
+    Serial.println("[Buffer] Flush complete.");
+  } else {
+    Serial.printf("[Buffer] Flush interrupted — %d reading(s) remain.\n", bufCount);
+  }
+}
+
 // Call every loop() iteration: keeps MQTT alive and reconnects after drops.
 void maintainCloud() {
   if (!cloudConfigured) return;
@@ -1079,7 +1136,7 @@ void maintainCloud() {
   if (millis() - lastMqttReconnect < MQTT_RECONNECT_MS) return;
   lastMqttReconnect = millis();
   Serial.println("[MQTT] Reconnecting...");
-  if (connectCloud()) publishSyncRequest();
+  if (connectCloud()) { publishSyncRequest(); flushOfflineBuffer(); }
 }
 
 // Complete an ESP-NOW pairing handshake (used by both auto-accept and cloud-approve paths).
@@ -1123,17 +1180,38 @@ void completePairing(const uint8_t* mac) {
 // Publish one sensor reading to the cloud.
 // Called from updateSensor() after the local store is updated.
 void publishSensorData(int idx) {
-  if (!cloudConfigured || !mqttClient.connected()) return;
-
   const SensorData& s = sensors[idx];
-  char sensorMacStr[18];
-  snprintf(sensorMacStr, sizeof(sensorMacStr), "%02X:%02X:%02X:%02X:%02X:%02X",
-           s.mac[0], s.mac[1], s.mac[2], s.mac[3], s.mac[4], s.mac[5]);
 
-  // ISO-8601 timestamp (UTC)
+  // ISO-8601 timestamp (UTC) — captured now so buffered readings keep their
+  // original read time rather than the later flush time.
   char ts[21] = "";
   struct tm ti;
   if (getLocalTime(&ti)) strftime(ts, sizeof(ts), "%Y-%m-%dT%H:%M:%SZ", &ti);
+
+  if (!cloudConfigured || !mqttClient.connected()) {
+    // MQTT offline — store the reading in the circular buffer for later flush.
+    BufferedReading& r = offlineBuf[bufHead];
+    memcpy(r.mac, s.mac, 6);
+    r.temp    = s.temp;
+    r.hum     = s.hum;
+    r.rssi    = (int8_t)s.rssi;
+    r.battery = s.battery;
+    memcpy(r.ts, ts, sizeof(r.ts));
+
+    bufHead = (bufHead + 1) % OFFLINE_BUFFER_SIZE;
+    if (bufCount < OFFLINE_BUFFER_SIZE) {
+      bufCount++;
+    } else {
+      // Buffer full — overwrite oldest entry; advance the read pointer.
+      bufTail = (bufTail + 1) % OFFLINE_BUFFER_SIZE;
+    }
+    Serial.printf("[Buffer] Queued reading (%d buffered)\n", bufCount);
+    return;
+  }
+
+  char sensorMacStr[18];
+  snprintf(sensorMacStr, sizeof(sensorMacStr), "%02X:%02X:%02X:%02X:%02X:%02X",
+           s.mac[0], s.mac[1], s.mac[2], s.mac[3], s.mac[4], s.mac[5]);
 
   char payload[220];
   snprintf(payload, sizeof(payload),

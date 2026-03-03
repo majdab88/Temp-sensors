@@ -1066,9 +1066,6 @@ bool connectCloud() {
   // Publish retained online status so the dashboard sees us immediately
   String status = "{\"online\":true,\"ip\":\"" + WiFi.localIP().toString() + "\"}";
   mqttClient.publish(topicStatus, status.c_str(), /*retain=*/true);
-
-  // Report local sensor list so the cloud can diff and send back its authoritative list
-  publishSyncRequest();
   return true;
 }
 
@@ -1082,7 +1079,7 @@ void maintainCloud() {
   if (millis() - lastMqttReconnect < MQTT_RECONNECT_MS) return;
   lastMqttReconnect = millis();
   Serial.println("[MQTT] Reconnecting...");
-  connectCloud();
+  if (connectCloud()) publishSyncRequest();
 }
 
 // Complete an ESP-NOW pairing handshake (used by both auto-accept and cloud-approve paths).
@@ -1616,6 +1613,11 @@ void setup() {
 
   loadPairedSensors();
   esp_now_register_recv_cb(OnDataRecv);
+
+  // Now that the sensor list is loaded from NVS, tell the cloud what we have.
+  // The cloud responds with its authoritative list (retained); applySyncFromCloud
+  // in loop() will add/remove sensors to match the cloud truth.
+  publishSyncRequest();
 
   Serial.println("\n=== Hub Ready ===");
   Serial.println("Waiting for sensor data...\n");

@@ -23,7 +23,9 @@
 #define TX_TIMEOUT_MS  500
 
 // --- COMMUNICATION CHANNEL ---
-#define ESPNOW_CHANNEL 0  // 0 = auto-detect
+#define ESPNOW_CHANNEL 0          // 0 = auto-detect
+#define HUB_AP_SSID   "TempHub-AP"  // hub's hidden AP — always on the ESP-NOW channel
+#define FALLBACK_CHANNEL 1        // used when neither hub AP nor any router is visible
 
 // --- BATTERY MONITOR ---
 #define ADC_SAMPLES      20  // Readings to average for a stable result
@@ -330,6 +332,41 @@ bool sendDataWithRetry() {
   return false;
 }
 
+// Scan for the hub's hidden AP first — it is always on the exact channel the
+// hub's ESP-NOW radio is listening on (ch 1 when WiFi is down, router channel
+// when WiFi is up). Fall back to the strongest visible router if the hub AP
+// is not seen, and to FALLBACK_CHANNEL (1) if nothing is found at all.
+uint8_t detectWiFiChannel() {
+  Serial.print("Scanning for WiFi channel...");
+  // show_hidden=true is required to see the hub's hidden AP "TempHub-AP".
+  int n = WiFi.scanNetworks(/*async=*/false, /*show_hidden=*/true);
+
+  // Prefer the hub's own AP — its channel is always correct.
+  for (int i = 0; i < n; i++) {
+    if (WiFi.SSID(i) == HUB_AP_SSID) {
+      uint8_t ch = (uint8_t)WiFi.channel(i);
+      Serial.printf(" hub AP on ch %d\n", ch);
+      WiFi.scanDelete();
+      return ch;
+    }
+  }
+
+  // Hub AP not visible — use the strongest router as a channel hint.
+  if (n > 0) {
+    int bestIdx = 0;
+    for (int i = 1; i < n; i++) {
+      if (WiFi.RSSI(i) > WiFi.RSSI(bestIdx)) bestIdx = i;
+    }
+    uint8_t ch = (uint8_t)WiFi.channel(bestIdx);
+    Serial.printf(" ch %d (%s, %d dBm)\n", ch, WiFi.SSID(bestIdx).c_str(), WiFi.RSSI(bestIdx));
+    WiFi.scanDelete();
+    return ch;
+  }
+
+  Serial.printf(" no APs found, defaulting to ch %d\n", FALLBACK_CHANNEL);
+  return FALLBACK_CHANNEL;
+}
+
 // --- PAIRING MODE ---
 void enterPairingMode() {
   Serial.println("\n=== PAIRING MODE ===");
@@ -418,6 +455,13 @@ void setup() {
     WIFI_PROTOCOL_11B | WIFI_PROTOCOL_11G |
     WIFI_PROTOCOL_11N | WIFI_PROTOCOL_LR);
 
+  // Match the hub's WiFi channel before ESP-NOW init — required for both
+  // data mode and pairing mode since the hub is locked to its router's channel.
+  {
+    uint8_t ch = detectWiFiChannel();
+    esp_wifi_set_channel(ch, WIFI_SECOND_CHAN_NONE);
+  }
+
   if (esp_now_init() != ESP_OK) {
     Serial.println("✗ ESP-NOW init failed! Sleeping 10s...");
     goToSleep(10);
@@ -445,7 +489,19 @@ void setup() {
     myData.msgType  = MSG_DATA;
     myData.battery  = (uint8_t)bat.percentage;
     readSensor();
-    sendDataWithRetry();
+
+    if (!sendDataWithRetry()) {
+      // All retries failed. The hub may have been mid-WiFi-reconnect when we
+      // scanned, making its AP invisible and landing us on the wrong channel.
+      // Wait 5 s for the hub to finish and re-scan so we pick up TempHub-AP
+      // (now back on ch 1) before the final attempt.
+      Serial.println("Waiting 5s then re-scanning and retrying...");
+      delay(5000);
+      uint8_t ch = detectWiFiChannel();
+      esp_wifi_set_channel(ch, WIFI_SECOND_CHAN_NONE);
+      sendDataWithRetry();
+    }
+
     goToSleep(SLEEP_TIME);
     //ESP.restart();  // Use this instead during testing
   } else {

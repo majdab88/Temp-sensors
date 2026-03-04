@@ -274,6 +274,32 @@ button {
   color: var(--text-1);
 }
 
+.sensor-delete-btn {
+  background: none;
+  border: none;
+  color: var(--text-3);
+  font-size: 13px;
+  padding: 1px 4px;
+  border-radius: var(--radius-sm);
+  line-height: 1;
+  flex-shrink: 0;
+  opacity: 0;
+  transition: opacity 0.15s, color 0.15s;
+}
+
+.sensor-card:hover .sensor-delete-btn {
+  opacity: 1;
+}
+
+.sensor-delete-btn:hover {
+  color: #e55;
+}
+
+.sensor-delete-btn:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
 .sensor-rename-form {
   display: flex;
   align-items: center;

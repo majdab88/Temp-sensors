@@ -71,6 +71,7 @@ struct SensorData {
   float         hum;
   int           rssi;
   unsigned long lastUpdate;
+  unsigned long lastRxMillis;  // millis() of last accepted reading (dedup guard)
   bool          active;
   char          name[20];
   uint8_t       battery;
@@ -78,6 +79,26 @@ struct SensorData {
 
 SensorData sensors[MAX_SENSORS];
 int        sensorCount = 0;
+
+// --- OFFLINE READING BUFFER ---
+// Readings received while MQTT is disconnected are stored here and flushed
+// to the cloud once the connection is restored.
+#define OFFLINE_BUFFER_SIZE 50
+
+struct BufferedReading {
+  uint8_t mac[6];
+  float   temp;
+  float   hum;
+  int8_t  rssi;
+  uint8_t battery;
+  char    ts[21];   // ISO-8601 timestamp captured at the time of the reading
+};
+
+static BufferedReading offlineBuf[OFFLINE_BUFFER_SIZE];
+static int bufHead  = 0;   // next write slot (circular)
+static int bufTail  = 0;   // next read slot  (circular)
+static int bufCount = 0;
+
 
 // --- WEB SERVER ---
 WebServer server(80);
@@ -118,6 +139,13 @@ char topicData[72];
 char topicStatus[72];
 char topicPairReq[80];
 char topicPairResp[80];
+// Cloud-sync topics (hub ↔ cloud sensor-list management)
+char topicSync[64];          // Cloud → Hub: authoritative sensor list
+char topicSyncReq[72];       // Hub → Cloud: local sensor list / sync request
+char topicSensorRemove[72];  // Cloud → Hub: remove a specific sensor
+char topicSensorRename[72];  // Cloud → Hub: rename a specific sensor
+char topicSensorRenamed[72]; // Hub → Cloud: local rename notification
+char topicSensorDeleted[72]; // Hub → Cloud: local delete notification
 
 bool cloudConfigured = false;  // true when MQTT credentials exist in NVS
 
@@ -133,6 +161,20 @@ struct {
 unsigned long      lastMqttReconnect    = 0;
 const unsigned long MQTT_RECONNECT_MS   = 5000;
 const unsigned long PAIRING_TIMEOUT_MS  = 60000;
+
+// WiFi credentials kept in RAM so maintainWiFi() can reconnect without NVS.
+static char wifiSsid[65] = "";
+static char wifiPass[65] = "";
+static unsigned long  lastWifiReconnect  = 0;
+const  unsigned long  WIFI_RECONNECT_MS  = 30000;  // one reconnect attempt per 30 s
+// Max time to wait for a single reconnect attempt before giving up and
+// restoring ch 1. Must be < the sensor's 5 s retry-wait so the hub is back
+// on ch 1 before the sensor's second transmission batch begins.
+const  unsigned long  WIFI_TRY_MS        = 4000;
+
+// Last WiFi channel the STA was on. Held so we can re-lock the radio to this
+// channel when WiFi drops, keeping ESP-NOW reachable while the STA reconnects.
+static uint8_t lastWifiChannel = 1;
 
 // Flags used only inside startBleProvisioning() to test MQTT before confirming "connected"
 volatile bool cloudProvReceived = false;  // set when PROV_CLOUD arrives while WiFi is already up
@@ -586,12 +628,13 @@ int addSensor(const uint8_t* mac) {
     return -1;
   }
   memcpy(sensors[sensorCount].mac, mac, 6);
-  sensors[sensorCount].active     = true;
-  sensors[sensorCount].temp       = 0;
-  sensors[sensorCount].hum        = 0;
-  sensors[sensorCount].rssi       = 0;
-  sensors[sensorCount].battery    = 0;
-  sensors[sensorCount].lastUpdate = millis();
+  sensors[sensorCount].active       = true;
+  sensors[sensorCount].temp         = 0;
+  sensors[sensorCount].hum          = 0;
+  sensors[sensorCount].rssi         = 0;
+  sensors[sensorCount].battery      = 0;
+  sensors[sensorCount].lastUpdate   = millis();
+  sensors[sensorCount].lastRxMillis = 0;
   sprintf(sensors[sensorCount].name, "Sensor-%02X%02X", mac[4], mac[5]);
   sensorCount++;
   Serial.printf("Sensor added. Total: %d\n", sensorCount);
@@ -607,11 +650,22 @@ int addSensor(const uint8_t* mac) {
 
 void updateSensor(int index, float temp, float hum, int rssi, uint8_t battery) {
   if (index < 0 || index >= sensorCount) return;
+
+  // The sensor retries the same reading up to MAX_RETRIES times when it
+  // doesn't receive an ESP-NOW ACK. Deduplicate by ignoring any reading
+  // that arrives within 5 s of the last accepted one from this sensor.
+  unsigned long now = millis();
+  if (now - sensors[index].lastRxMillis < 5000) {
+    Serial.println(" | Duplicate retry — skipped");
+    return;
+  }
+  sensors[index].lastRxMillis = now;
+
   sensors[index].temp       = temp;
   sensors[index].hum        = hum;
   sensors[index].rssi       = rssi;
   sensors[index].battery    = battery;
-  sensors[index].lastUpdate = millis();
+  sensors[index].lastUpdate = now;
   sensors[index].active     = true;
   publishSensorData(index);  // forward reading to cloud
 }
@@ -668,6 +722,7 @@ void loadPairedSensors() {
   prefs.end();
 }
 
+
 // ─────────────────────────────────────────────────────────────────────────────
 // CLOUD / MQTT
 // ─────────────────────────────────────────────────────────────────────────────
@@ -701,34 +756,322 @@ void buildTopics() {
   WiFi.macAddress(mac);
   snprintf(hubMacStr,    sizeof(hubMacStr),    "%02X:%02X:%02X:%02X:%02X:%02X",
            mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
-  snprintf(topicData,    sizeof(topicData),    "sensors/%s/data",             hubMacStr);
-  snprintf(topicStatus,  sizeof(topicStatus),  "sensors/%s/status",           hubMacStr);
-  snprintf(topicPairReq, sizeof(topicPairReq), "sensors/%s/pairing/request",  hubMacStr);
-  snprintf(topicPairResp,sizeof(topicPairResp),"sensors/%s/pairing/response", hubMacStr);
+  snprintf(topicData,         sizeof(topicData),         "sensors/%s/data",             hubMacStr);
+  snprintf(topicStatus,       sizeof(topicStatus),       "sensors/%s/status",           hubMacStr);
+  snprintf(topicPairReq,      sizeof(topicPairReq),      "sensors/%s/pairing/request",  hubMacStr);
+  snprintf(topicPairResp,     sizeof(topicPairResp),     "sensors/%s/pairing/response", hubMacStr);
+  snprintf(topicSync,         sizeof(topicSync),         "sensors/%s/sync",             hubMacStr);
+  snprintf(topicSyncReq,      sizeof(topicSyncReq),      "sensors/%s/sync/request",     hubMacStr);
+  snprintf(topicSensorRemove, sizeof(topicSensorRemove), "sensors/%s/sensor/remove",    hubMacStr);
+  snprintf(topicSensorRename, sizeof(topicSensorRename), "sensors/%s/sensor/rename",    hubMacStr);
+  snprintf(topicSensorRenamed,sizeof(topicSensorRenamed),"sensors/%s/sensor/renamed",   hubMacStr);
+  snprintf(topicSensorDeleted,sizeof(topicSensorDeleted),"sensors/%s/sensor/deleted",   hubMacStr);
   Serial.printf("[MQTT] Hub MAC: %s\n", hubMacStr);
 }
 
 // Called by PubSubClient when a subscribed message arrives.
 void mqttCallback(char* topic, byte* payload, unsigned int length) {
-  if (strcmp(topic, topicPairResp) != 0) return;
-  if (!pendingPairing.active) return;
-
   String json = String((char*)payload, length);
-  String sensorMac = jsonGetStr(json, "sensor_mac");
-  bool   approved  = json.indexOf("\"approved\":true") != -1;
 
-  // Match against the pending pairing MAC
-  char pendingMacStr[18];
-  snprintf(pendingMacStr, sizeof(pendingMacStr), "%02X:%02X:%02X:%02X:%02X:%02X",
-           pendingPairing.mac[0], pendingPairing.mac[1], pendingPairing.mac[2],
-           pendingPairing.mac[3], pendingPairing.mac[4], pendingPairing.mac[5]);
-
-  if (sensorMac.equalsIgnoreCase(pendingMacStr)) {
-    pendingPairing.approved = approved;
-    pendingPairing.resolved = true;
-    Serial.printf("[MQTT] Pairing response for %s: %s\n",
-                  pendingMacStr, approved ? "APPROVED" : "REJECTED");
+  // ── Pairing response (existing) ───────────────────────────────────────────
+  if (strcmp(topic, topicPairResp) == 0) {
+    if (!pendingPairing.active) return;
+    String sensorMac = jsonGetStr(json, "sensor_mac");
+    bool   approved  = json.indexOf("\"approved\":true") != -1;
+    char pendingMacStr[18];
+    snprintf(pendingMacStr, sizeof(pendingMacStr), "%02X:%02X:%02X:%02X:%02X:%02X",
+             pendingPairing.mac[0], pendingPairing.mac[1], pendingPairing.mac[2],
+             pendingPairing.mac[3], pendingPairing.mac[4], pendingPairing.mac[5]);
+    if (sensorMac.equalsIgnoreCase(pendingMacStr)) {
+      pendingPairing.approved = approved;
+      pendingPairing.resolved = true;
+      Serial.printf("[MQTT] Pairing response for %s: %s\n",
+                    pendingMacStr, approved ? "APPROVED" : "REJECTED");
+    }
+    return;
   }
+
+  // ── Cloud sends its authoritative sensor list → hub reconciles ────────────
+  if (strcmp(topic, topicSync) == 0) {
+    Serial.println("[MQTT] Cloud sync received");
+    applySyncFromCloud(json);
+    return;
+  }
+
+  // ── Cloud removes a specific sensor ───────────────────────────────────────
+  if (strcmp(topic, topicSensorRemove) == 0) {
+    String macStr = jsonGetStr(json, "sensor_mac");
+    uint8_t mac[6];
+    if (sscanf(macStr.c_str(), "%hhX:%hhX:%hhX:%hhX:%hhX:%hhX",
+               &mac[0], &mac[1], &mac[2], &mac[3], &mac[4], &mac[5]) == 6) {
+      Serial.printf("[MQTT] Cloud removing sensor %s\n", macStr.c_str());
+      removeSensorByMac(mac);
+    }
+    return;
+  }
+
+  // ── Cloud renames a specific sensor ───────────────────────────────────────
+  if (strcmp(topic, topicSensorRename) == 0) {
+    String macStr  = jsonGetStr(json, "sensor_mac");
+    String newName = jsonGetStr(json, "name");
+    uint8_t mac[6];
+    if (sscanf(macStr.c_str(), "%hhX:%hhX:%hhX:%hhX:%hhX:%hhX",
+               &mac[0], &mac[1], &mac[2], &mac[3], &mac[4], &mac[5]) == 6
+        && newName.length() > 0) {
+      int idx = findSensor(mac);
+      if (idx != -1) {
+        char sanitized[20];
+        strncpy(sanitized, newName.c_str(), 19);
+        sanitized[19] = '\0';
+        sanitizeName(sanitized, sizeof(sanitized));
+        if (strlen(sanitized) > 0) {
+          strncpy(sensors[idx].name, sanitized, sizeof(sensors[idx].name));
+          char nameKey[10];
+          snprintf(nameKey, sizeof(nameKey), "n%02X%02X%02X%02X",
+                   sensors[idx].mac[2], sensors[idx].mac[3],
+                   sensors[idx].mac[4], sensors[idx].mac[5]);
+          prefs.begin("sensors", false);
+          prefs.putString(nameKey, sanitized);
+          prefs.end();
+          Serial.printf("[MQTT] Sensor %s renamed to \"%s\"\n",
+                        macStr.c_str(), sanitized);
+        }
+      }
+    }
+    return;
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// CLOUD SYNC — hub ↔ cloud sensor-list reconciliation
+// The cloud is the single source of truth for which sensors are paired and
+// their names.  On every MQTT connect the hub reports its local list and the
+// cloud responds with its authoritative list; the hub then adjusts to match.
+// ─────────────────────────────────────────────────────────────────────────────
+
+// Rewrite the full sensor list into NVS (mac0…mac{n-1}, count, name keys).
+// Used after any add/remove operation that changes the indexed mac slots.
+void saveSensorsToNVS() {
+  prefs.begin("sensors", false);
+  prefs.putInt("count", sensorCount);
+  for (int i = 0; i < sensorCount; i++) {
+    char key[8];
+    snprintf(key, sizeof(key), "mac%d", i);
+    prefs.putBytes(key, sensors[i].mac, 6);
+    char nameKey[10];
+    snprintf(nameKey, sizeof(nameKey), "n%02X%02X%02X%02X",
+             sensors[i].mac[2], sensors[i].mac[3],
+             sensors[i].mac[4], sensors[i].mac[5]);
+    prefs.putString(nameKey, sensors[i].name);
+  }
+  // Clear any stale indexed slots beyond the current count
+  for (int i = sensorCount; i < MAX_SENSORS; i++) {
+    char key[8];
+    snprintf(key, sizeof(key), "mac%d", i);
+    prefs.remove(key);
+  }
+  prefs.end();
+}
+
+// Publish the hub's current sensor list to the cloud so it can diff and reply.
+// Payload: {"sensors":[{"mac":"AA:BB:CC:DD:EE:FF","name":"Room 1"},…]}
+void publishSyncRequest() {
+  if (!cloudConfigured || !mqttClient.connected()) return;
+
+  // Build payload in a 1 KB heap buffer to accommodate up to MAX_SENSORS entries.
+  const int BUF = 1024;
+  char* buf = (char*)malloc(BUF);
+  if (!buf) { Serial.println("[Sync] publishSyncRequest: malloc failed"); return; }
+
+  int pos = 0;
+  pos += snprintf(buf + pos, BUF - pos, "{\"sensors\":[");
+  for (int i = 0; i < sensorCount && pos < BUF - 60; i++) {
+    char macStr[18];
+    snprintf(macStr, sizeof(macStr), "%02X:%02X:%02X:%02X:%02X:%02X",
+             sensors[i].mac[0], sensors[i].mac[1], sensors[i].mac[2],
+             sensors[i].mac[3], sensors[i].mac[4], sensors[i].mac[5]);
+    pos += snprintf(buf + pos, BUF - pos,
+                    "%s{\"mac\":\"%s\",\"name\":\"%s\"}",
+                    i > 0 ? "," : "", macStr, sensors[i].name);
+  }
+  pos += snprintf(buf + pos, BUF - pos, "]}");
+
+  mqttClient.publish(topicSyncReq, buf);
+  Serial.printf("[Sync] Sync request published (%d sensors, %d bytes)\n", sensorCount, pos);
+  free(buf);
+}
+
+// Add a sensor that the cloud knows about but the hub does not.
+// Registers the ESP-NOW encrypted peer and persists to NVS.
+void addSensorFromCloud(const uint8_t* mac, const char* name) {
+  if (sensorCount >= MAX_SENSORS) {
+    Serial.println("[Sync] Max sensors reached — cannot add from cloud");
+    return;
+  }
+  memcpy(sensors[sensorCount].mac, mac, 6);
+  sensors[sensorCount].active     = false;
+  sensors[sensorCount].temp       = 0;
+  sensors[sensorCount].hum        = 0;
+  sensors[sensorCount].rssi       = 0;
+  sensors[sensorCount].battery    = 0;
+  sensors[sensorCount].lastUpdate = 0;
+
+  if (name && strlen(name) > 0) {
+    strncpy(sensors[sensorCount].name, name, 19);
+    sensors[sensorCount].name[19] = '\0';
+  } else {
+    sprintf(sensors[sensorCount].name, "Sensor-%02X%02X", mac[4], mac[5]);
+  }
+  sensorCount++;
+
+  // Register as an encrypted ESP-NOW peer so the hub can receive its data frames
+  if (!esp_now_is_peer_exist(mac)) {
+    esp_now_peer_info_t peer = {};
+    memcpy(peer.peer_addr, mac, 6);
+    peer.channel = 0;
+    peer.encrypt = true;
+    memcpy(peer.lmk, LMK_KEY, 16);
+    esp_now_add_peer(&peer);
+  }
+
+  // Persist
+  char key[8];
+  snprintf(key, sizeof(key), "mac%d", sensorCount - 1);
+  char nameKey[10];
+  snprintf(nameKey, sizeof(nameKey), "n%02X%02X%02X%02X", mac[2], mac[3], mac[4], mac[5]);
+  prefs.begin("sensors", false);
+  prefs.putBytes(key, mac, 6);
+  prefs.putInt("count", sensorCount);
+  prefs.putString(nameKey, sensors[sensorCount - 1].name);
+  prefs.end();
+
+  Serial.printf("[Sync] ✓ Added cloud sensor %02X:%02X:%02X:%02X:%02X:%02X (%s)\n",
+                mac[0], mac[1], mac[2], mac[3], mac[4], mac[5],
+                sensors[sensorCount - 1].name);
+}
+
+// Remove a sensor from memory, ESP-NOW peer table, and NVS.
+void removeSensorByMac(const uint8_t* mac) {
+  int idx = findSensor(mac);
+  if (idx == -1) {
+    Serial.println("[Sync] removeSensorByMac: sensor not found locally");
+    return;
+  }
+
+  // Unregister ESP-NOW peer
+  if (esp_now_is_peer_exist(mac)) esp_now_del_peer(mac);
+
+  // Capture the NVS name key before the array shifts
+  char nameKey[10];
+  snprintf(nameKey, sizeof(nameKey), "n%02X%02X%02X%02X",
+           sensors[idx].mac[2], sensors[idx].mac[3],
+           sensors[idx].mac[4], sensors[idx].mac[5]);
+
+  // Shift remaining entries down
+  for (int i = idx; i < sensorCount - 1; i++) sensors[i] = sensors[i + 1];
+  sensorCount--;
+  memset(&sensors[sensorCount], 0, sizeof(SensorData));
+
+  // Rewrite NVS: indexed mac slots + remove orphan name key
+  prefs.begin("sensors", false);
+  prefs.putInt("count", sensorCount);
+  for (int i = 0; i < sensorCount; i++) {
+    char key[8];
+    snprintf(key, sizeof(key), "mac%d", i);
+    prefs.putBytes(key, sensors[i].mac, 6);
+  }
+  char staleKey[8];
+  snprintf(staleKey, sizeof(staleKey), "mac%d", sensorCount);
+  prefs.remove(staleKey);
+  prefs.remove(nameKey);  // orphan name key for the removed sensor
+  prefs.end();
+
+  Serial.printf("[Sync] ✓ Sensor removed. Remaining: %d\n", sensorCount);
+}
+
+// Apply the cloud's authoritative sensor list: add missing, remove extras, sync names.
+// Payload format: {"sensors":[{"mac":"AA:BB:CC:DD:EE:FF","name":"Room 1"},…]}
+void applySyncFromCloud(const String& json) {
+  Serial.println("[Sync] Applying cloud sensor list...");
+
+  // ── Step 1: parse cloud sensor list into a local temp array ───────────────
+  uint8_t cloudMacs[MAX_SENSORS][6];
+  char    cloudNames[MAX_SENSORS][20];
+  int     cloudCount = 0;
+
+  int pos = 0;
+  while (cloudCount < MAX_SENSORS) {
+    int macStart = json.indexOf("\"mac\":\"", pos);
+    if (macStart == -1) break;
+    macStart += 7;
+    int macEnd = json.indexOf('"', macStart);
+    if (macEnd == -1) break;
+
+    String macStr = json.substring(macStart, macEnd);
+    uint8_t mac[6];
+    if (sscanf(macStr.c_str(), "%hhX:%hhX:%hhX:%hhX:%hhX:%hhX",
+               &mac[0], &mac[1], &mac[2], &mac[3], &mac[4], &mac[5]) == 6) {
+      memcpy(cloudMacs[cloudCount], mac, 6);
+
+      // Look for "name" key between this "mac" and the next "mac" (or end of JSON)
+      int nameSearch = macEnd;
+      int nextMac    = json.indexOf("\"mac\":\"", macEnd);
+      int nameStart  = json.indexOf("\"name\":\"", nameSearch);
+      cloudNames[cloudCount][0] = '\0';
+      if (nameStart != -1 && (nextMac == -1 || nameStart < nextMac)) {
+        nameStart += 8;
+        int nameEnd = json.indexOf('"', nameStart);
+        if (nameEnd != -1) {
+          String n = json.substring(nameStart, nameEnd);
+          strncpy(cloudNames[cloudCount], n.c_str(), 19);
+          cloudNames[cloudCount][19] = '\0';
+        }
+      }
+      cloudCount++;
+    }
+    pos = macEnd + 1;
+  }
+  Serial.printf("[Sync] Cloud has %d sensor(s)\n", cloudCount);
+
+  // ── Step 2: remove local sensors not in the cloud list ────────────────────
+  // Iterate backwards so array shifts don't corrupt the loop index.
+  for (int i = sensorCount - 1; i >= 0; i--) {
+    bool inCloud = false;
+    for (int j = 0; j < cloudCount; j++) {
+      if (memcmp(sensors[i].mac, cloudMacs[j], 6) == 0) { inCloud = true; break; }
+    }
+    if (!inCloud) {
+      Serial.printf("[Sync] Removing local sensor %02X:%02X:%02X:%02X:%02X:%02X (not in cloud)\n",
+                    sensors[i].mac[0], sensors[i].mac[1], sensors[i].mac[2],
+                    sensors[i].mac[3], sensors[i].mac[4], sensors[i].mac[5]);
+      removeSensorByMac(sensors[i].mac);
+    }
+  }
+
+  // ── Step 3: add cloud sensors not in local list; update names ─────────────
+  for (int j = 0; j < cloudCount; j++) {
+    int idx = findSensor(cloudMacs[j]);
+    if (idx == -1) {
+      addSensorFromCloud(cloudMacs[j], cloudNames[j]);
+    } else if (cloudNames[j][0] != '\0' &&
+               strcmp(sensors[idx].name, cloudNames[j]) != 0) {
+      // Name mismatch — cloud wins
+      strncpy(sensors[idx].name, cloudNames[j], 19);
+      sensors[idx].name[19] = '\0';
+      char nameKey[10];
+      snprintf(nameKey, sizeof(nameKey), "n%02X%02X%02X%02X",
+               sensors[idx].mac[2], sensors[idx].mac[3],
+               sensors[idx].mac[4], sensors[idx].mac[5]);
+      prefs.begin("sensors", false);
+      prefs.putString(nameKey, sensors[idx].name);
+      prefs.end();
+      Serial.printf("[Sync] Updated name for %02X:%02X%02X → %s\n",
+                    sensors[idx].mac[3], sensors[idx].mac[4],
+                    sensors[idx].mac[5], sensors[idx].name);
+    }
+  }
+
+  Serial.printf("[Sync] Done. Local sensor count: %d\n", sensorCount);
 }
 
 // Connect to the MQTT broker over TLS and set up LWT + subscriptions.
@@ -742,8 +1085,11 @@ bool connectCloud() {
 
   mqttClient.setServer(mqttHost, mqttPort);
   mqttClient.setCallback(mqttCallback);
-  mqttClient.setBufferSize(512);
+  mqttClient.setBufferSize(1024);  // sync payloads can reach ~500 bytes
   mqttClient.setKeepAlive(30);
+  // Limit how long connect() blocks waiting for CONNACK. The default is 15 s,
+  // which ties up the WiFi radio and prevents ESP-NOW ACKs from being sent.
+  mqttClient.setSocketTimeout(3);
 
   // Client ID includes last 3 MAC octets so it is unique per device
   uint8_t mac[6]; WiFi.macAddress(mac);
@@ -761,6 +1107,10 @@ bool connectCloud() {
 
   Serial.println("[MQTT] Connected!");
   mqttClient.subscribe(topicPairResp);
+  // Cloud-sync subscriptions: hub receives sensor-list updates from cloud
+  mqttClient.subscribe(topicSync);
+  mqttClient.subscribe(topicSensorRemove);
+  mqttClient.subscribe(topicSensorRename);
 
   // Publish retained online status so the dashboard sees us immediately
   String status = "{\"online\":true,\"ip\":\"" + WiFi.localIP().toString() + "\"}";
@@ -768,9 +1118,48 @@ bool connectCloud() {
   return true;
 }
 
+// Publish all readings that were buffered while MQTT was offline.
+// Called immediately after a successful (re)connect so readings are flushed
+// in the order they were received and with their original timestamps.
+void flushOfflineBuffer() {
+  if (bufCount == 0) return;
+  Serial.printf("[Buffer] Flushing %d buffered reading(s)...\n", bufCount);
+
+  while (bufCount > 0 && mqttClient.connected()) {
+    const BufferedReading& r = offlineBuf[bufTail];
+
+    char sensorMacStr[18];
+    snprintf(sensorMacStr, sizeof(sensorMacStr),
+             "%02X:%02X:%02X:%02X:%02X:%02X",
+             r.mac[0], r.mac[1], r.mac[2],
+             r.mac[3], r.mac[4], r.mac[5]);
+
+    char payload[220];
+    snprintf(payload, sizeof(payload),
+             "{\"sensor_mac\":\"%s\",\"temp\":%.2f,\"hum\":%.2f,"
+             "\"battery\":%d,\"rssi\":%d,\"ts\":\"%s\"}",
+             sensorMacStr, r.temp, r.hum, r.battery, r.rssi, r.ts);
+
+    mqttClient.publish(topicData, payload);
+    mqttClient.loop();   // let PubSubClient process the outgoing packet
+
+    bufTail = (bufTail + 1) % OFFLINE_BUFFER_SIZE;
+    bufCount--;
+
+    delay(20);   // brief yield to avoid flooding the broker
+  }
+
+  if (bufCount == 0) {
+    Serial.println("[Buffer] Flush complete.");
+  } else {
+    Serial.printf("[Buffer] Flush interrupted — %d reading(s) remain.\n", bufCount);
+  }
+}
+
 // Call every loop() iteration: keeps MQTT alive and reconnects after drops.
 void maintainCloud() {
   if (!cloudConfigured) return;
+  if (WiFi.status() != WL_CONNECTED) return;  // no WiFi → no TCP; don't block the radio
   if (mqttClient.connected()) {
     mqttClient.loop();
     return;
@@ -778,7 +1167,7 @@ void maintainCloud() {
   if (millis() - lastMqttReconnect < MQTT_RECONNECT_MS) return;
   lastMqttReconnect = millis();
   Serial.println("[MQTT] Reconnecting...");
-  connectCloud();
+  if (connectCloud()) { publishSyncRequest(); flushOfflineBuffer(); }
 }
 
 // Complete an ESP-NOW pairing handshake (used by both auto-accept and cloud-approve paths).
@@ -812,23 +1201,54 @@ void completePairing(const uint8_t* mac) {
 
   int index = findSensor(mac);
   if (index == -1) addSensor(mac);
+
+  // Tell the cloud the pairing is complete so it can persist the sensor to its database.
+  publishSyncRequest();
+
   digitalWrite(LED_PIN, HIGH); delay(200); digitalWrite(LED_PIN, LOW);
 }
 
 // Publish one sensor reading to the cloud.
 // Called from updateSensor() after the local store is updated.
 void publishSensorData(int idx) {
-  if (!cloudConfigured || !mqttClient.connected()) return;
-
   const SensorData& s = sensors[idx];
+
+  // ISO-8601 timestamp (UTC) — captured now so buffered readings keep their
+  // original read time rather than the later flush time.
+  // Use time()+gmtime_r() to get true UTC; getLocalTime() returns local time
+  // (UTC+2) which would be mislabelled by the literal 'Z' suffix.
+  char ts[21] = "";
+  time_t now = time(nullptr);
+  if (now > 1000000000UL) {   // sanity-check: after 2001 means NTP has synced
+    struct tm utcTm;
+    gmtime_r(&now, &utcTm);
+    strftime(ts, sizeof(ts), "%Y-%m-%dT%H:%M:%SZ", &utcTm);
+  }
+
+  if (!cloudConfigured || !mqttClient.connected()) {
+    // MQTT offline — store the reading in the circular buffer for later flush.
+    BufferedReading& r = offlineBuf[bufHead];
+    memcpy(r.mac, s.mac, 6);
+    r.temp    = s.temp;
+    r.hum     = s.hum;
+    r.rssi    = (int8_t)s.rssi;
+    r.battery = s.battery;
+    memcpy(r.ts, ts, sizeof(r.ts));
+
+    bufHead = (bufHead + 1) % OFFLINE_BUFFER_SIZE;
+    if (bufCount < OFFLINE_BUFFER_SIZE) {
+      bufCount++;
+    } else {
+      // Buffer full — overwrite oldest entry; advance the read pointer.
+      bufTail = (bufTail + 1) % OFFLINE_BUFFER_SIZE;
+    }
+    Serial.printf("[Buffer] Queued reading (%d buffered)\n", bufCount);
+    return;
+  }
+
   char sensorMacStr[18];
   snprintf(sensorMacStr, sizeof(sensorMacStr), "%02X:%02X:%02X:%02X:%02X:%02X",
            s.mac[0], s.mac[1], s.mac[2], s.mac[3], s.mac[4], s.mac[5]);
-
-  // ISO-8601 timestamp (UTC)
-  char ts[21] = "";
-  struct tm ti;
-  if (getLocalTime(&ti)) strftime(ts, sizeof(ts), "%Y-%m-%dT%H:%M:%SZ", &ti);
 
   char payload[220];
   snprintf(payload, sizeof(payload),
@@ -880,6 +1300,8 @@ void handleRoot() {
   html += ".rename-input { font-size:1.1em; padding:2px 6px; border:1px solid #bdc3c7; border-radius:4px; width:160px; }";
   html += ".rename-save { background:#2ecc71; color:white; border:none; border-radius:4px; padding:3px 8px; cursor:pointer; margin-left:4px; }";
   html += ".rename-cancel { background:#e74c3c; color:white; border:none; border-radius:4px; padding:3px 8px; cursor:pointer; margin-left:2px; }";
+  html += ".delete-btn { background:none; border:1px solid #e74c3c; color:#e74c3c; border-radius:4px; cursor:pointer; font-size:0.85em; padding:3px 9px; margin-left:8px; }";
+  html += ".delete-btn:hover { background:#e74c3c; color:white; }";
   html += "</style>";
   html += "<script>";
   html += "var _rt=setTimeout(function(){location.reload();},10000);";
@@ -903,6 +1325,14 @@ void handleRoot() {
   html +=   ".then(function(r){return r.json();})";
   html +=   ".then(function(d){if(d.ok){document.getElementById('sname-'+id).textContent=n;cancelRename(id);}})";
   html +=   ".catch(function(){alert('Rename failed');});";
+  html += "}";
+  html += "function removeSensor(id){";
+  html +=   "if(!confirm('Remove this sensor? It will be unpaired from the hub and deleted from the cloud.'))return;";
+  html +=   "clearTimeout(_rt);";
+  html +=   "fetch('/api/sensors',{method:'DELETE',headers:{'Content-Type':'application/json'},body:JSON.stringify({id:id})})";
+  html +=   ".then(function(r){return r.json();})";
+  html +=   ".then(function(d){if(d.ok){location.reload();}else{alert('Remove failed: '+(d.error||'unknown'));}})";
+  html +=   ".catch(function(){alert('Remove failed');});";
   html += "}";
   html += "</script>";
   html += "</head><body>";
@@ -932,9 +1362,12 @@ void handleRoot() {
         html += String(buf); if (j < 5) html += ":";
       }
       html += "</div></div>";
+      html += "<div style='display:flex;align-items:center;gap:8px'>";
       html += "<span class='status ";
       html += sensors[i].active ? "active'>ACTIVE" : "inactive'>OFFLINE";
-      html += "</span></div>";
+      html += "</span>";
+      html += "<button class='delete-btn' onclick='removeSensor(" + String(i) + ")'>Remove</button>";
+      html += "</div></div>";
 
       html += "<div class='sensor-data'>";
 
@@ -1042,6 +1475,51 @@ void handleRenameSensor() {
   prefs.putString(nameKey, sanitized);
   prefs.end();
 
+  // Notify cloud so its database stays in sync with the local rename
+  if (cloudConfigured && mqttClient.connected()) {
+    char sensorMacStr[18];
+    snprintf(sensorMacStr, sizeof(sensorMacStr), "%02X:%02X:%02X:%02X:%02X:%02X",
+             sensors[id].mac[0], sensors[id].mac[1], sensors[id].mac[2],
+             sensors[id].mac[3], sensors[id].mac[4], sensors[id].mac[5]);
+    char renamePayload[120];
+    snprintf(renamePayload, sizeof(renamePayload),
+             "{\"sensor_mac\":\"%s\",\"name\":\"%s\"}", sensorMacStr, sanitized);
+    mqttClient.publish(topicSensorRenamed, renamePayload);
+  }
+
+  server.send(200, "application/json", "{\"ok\":true}");
+}
+
+// DELETE /api/sensors  — body: {"id":N}
+void handleRemoveSensor() {
+  String body = server.arg("plain");
+
+  int idPos = body.indexOf("\"id\"");
+  if (idPos < 0) { server.send(400, "application/json", "{\"error\":\"missing id\"}"); return; }
+  int colonId = body.indexOf(':', idPos);
+  int id = body.substring(colonId + 1).toInt();
+  if (id < 0 || id >= sensorCount) {
+    server.send(404, "application/json", "{\"error\":\"sensor not found\"}");
+    return;
+  }
+
+  // Capture MAC before the array shifts
+  uint8_t mac[6];
+  memcpy(mac, sensors[id].mac, 6);
+
+  removeSensorByMac(mac);
+
+  // Notify cloud so it can remove the sensor from its database
+  if (cloudConfigured && mqttClient.connected()) {
+    char sensorMacStr[18];
+    snprintf(sensorMacStr, sizeof(sensorMacStr), "%02X:%02X:%02X:%02X:%02X:%02X",
+             mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
+    char deletePayload[80];
+    snprintf(deletePayload, sizeof(deletePayload),
+             "{\"sensor_mac\":\"%s\"}", sensorMacStr);
+    mqttClient.publish(topicSensorDeleted, deletePayload);
+  }
+
   server.send(200, "application/json", "{\"ok\":true}");
 }
 
@@ -1138,10 +1616,39 @@ void OnDataRecv(const esp_now_recv_info_t* esp_now_info,
     printCurrentTime();
 
     int index = findSensor(esp_now_info->src_addr);
-    if (index == -1) index = addSensor(esp_now_info->src_addr);
-    if (index != -1)
-      updateSensor(index, incomingData.temp, incomingData.hum,
-                   incomingRSSI, incomingData.battery);
+    if (index == -1) {
+      Serial.println(" | Unknown sensor — ignoring. Re-pair to register.");
+      return;
+    }
+    updateSensor(index, incomingData.temp, incomingData.hum,
+                 incomingRSSI, incomingData.battery);
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// WIFI EVENT HANDLER
+// ─────────────────────────────────────────────────────────────────────────────
+
+// Runs in the WiFi task — keep it short; no heap alloc.
+void onWiFiEvent(WiFiEvent_t event, WiFiEventInfo_t info) {
+  switch (event) {
+    case ARDUINO_EVENT_WIFI_STA_GOT_IP:
+      // Record the channel the router assigned so we can restore it on drop.
+      lastWifiChannel = WiFi.channel();
+      Serial.printf("[WiFi] Connected — channel %d\n", lastWifiChannel);
+      break;
+
+    case ARDUINO_EVENT_WIFI_STA_DISCONNECTED:
+      // Lock to ch 1 — the sensor falls back to ch 1 too when it cannot see
+      // the hub's AP, so both sides agree on a stable offline channel.
+      // Auto-reconnect is disabled; maintainWiFi() retries every 30 s so the
+      // radio is only off ch 1 for the brief scan burst during that attempt.
+      Serial.println("[WiFi] Disconnected — locking to ch 1 for ESP-NOW");
+      esp_wifi_set_channel(1, WIFI_SECOND_CHAN_NONE);
+      break;
+
+    default:
+      break;
   }
 }
 
@@ -1174,12 +1681,20 @@ void setup() {
   // ── WiFi connect with stored credentials ────────────────────────────────
   // Use AP_STA from the start — switching modes while connected drops the STA.
   // Set tx-power and protocol before connecting so they never disrupt the STA.
-  Serial.printf("Connecting to WiFi: %s\n", storedSsid.c_str());
+  // Keep credentials in RAM for manual reconnects in maintainWiFi().
+  strncpy(wifiSsid, storedSsid.c_str(), sizeof(wifiSsid) - 1);
+  strncpy(wifiPass, storedPass.c_str(), sizeof(wifiPass) - 1);
+
+  Serial.printf("Connecting to WiFi: %s\n", wifiSsid);
   WiFi.mode(WIFI_AP_STA);
   WiFi.setTxPower(WIFI_POWER_19_5dBm);
   esp_wifi_set_protocol(WIFI_IF_STA, WIFI_PROTOCOL_11B | WIFI_PROTOCOL_11G |
                                       WIFI_PROTOCOL_11N | WIFI_PROTOCOL_LR);
-  WiFi.begin(storedSsid.c_str(), storedPass.c_str());
+  // Disable auto-reconnect: its continuous channel scanning disrupts ESP-NOW.
+  // maintainWiFi() in loop() issues one targeted reconnect attempt every 30 s.
+  WiFi.setAutoReconnect(false);
+  WiFi.onEvent(onWiFiEvent);
+  WiFi.begin(wifiSsid, wifiPass);
 
   unsigned long wifiStart = millis();
   while (WiFi.status() != WL_CONNECTED) {
@@ -1191,6 +1706,7 @@ void setup() {
     delay(200);
   }
   Serial.printf("✓ WiFi connected! IP: %s\n", WiFi.localIP().toString().c_str());
+  esp_wifi_set_ps(WIFI_PS_NONE);  // disable power save — radio must always be listening
 
   // ── MQTT cloud uplink ────────────────────────────────────────────────────
   loadCloudConfig();
@@ -1230,8 +1746,9 @@ void setup() {
   // ── Web server ───────────────────────────────────────────────────────────
   // Start before ESP-NOW so the dashboard is available even if ESP-NOW fails.
   server.on("/", handleRoot);
-  server.on("/api/sensors", HTTP_GET, handleJSON);
-  server.on("/api/sensors", HTTP_PUT, handleRenameSensor);
+  server.on("/api/sensors", HTTP_GET,    handleJSON);
+  server.on("/api/sensors", HTTP_PUT,    handleRenameSensor);
+  server.on("/api/sensors", HTTP_DELETE, handleRemoveSensor);
   server.begin();
   Serial.println("✓ Web server started");
 
@@ -1248,8 +1765,46 @@ void setup() {
   loadPairedSensors();
   esp_now_register_recv_cb(OnDataRecv);
 
+  // Now that the sensor list is loaded from NVS, tell the cloud what we have.
+  // The cloud responds with its authoritative list (retained); applySyncFromCloud
+  // in loop() will add/remove sensors to match the cloud truth.
+  publishSyncRequest();
+
   Serial.println("\n=== Hub Ready ===");
   Serial.println("Waiting for sensor data...\n");
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// WIFI RECONNECT
+// ─────────────────────────────────────────────────────────────────────────────
+
+// Called every loop() iteration. Attempts one WiFi reconnect every 30 s.
+// The function blocks for up to WIFI_TRY_MS (4 s) then explicitly stops
+// the IDF connection attempt. Without this, the IDF WiFi driver keeps
+// retrying internally and scanning channels for ~10 s, which prevents
+// ESP-NOW ACKs from being sent even after the Arduino disconnect event
+// fires. By calling WiFi.disconnect() on timeout we guarantee the radio
+// is back on ch 1 within WIFI_TRY_MS — safely inside the sensor's 5 s
+// retry-wait window.
+void maintainWiFi() {
+  if (WiFi.status() == WL_CONNECTED) return;
+  if (millis() - lastWifiReconnect < WIFI_RECONNECT_MS) return;
+  lastWifiReconnect = millis();
+  Serial.println("[WiFi] Reconnecting...");
+  WiFi.begin(wifiSsid, wifiPass);
+
+  unsigned long start = millis();
+  while (WiFi.status() != WL_CONNECTED && millis() - start < WIFI_TRY_MS) {
+    delay(50);
+  }
+
+  if (WiFi.status() != WL_CONNECTED) {
+    // Stop IDF internal retries so they don't keep the radio off ch 1.
+    WiFi.disconnect(false);
+    delay(100);
+    esp_wifi_set_channel(1, WIFI_SECOND_CHAN_NONE);
+    Serial.println("[WiFi] Reconnect failed — restored ch 1");
+  }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1258,6 +1813,7 @@ void setup() {
 
 void loop() {
   server.handleClient();
+  maintainWiFi();
   maintainCloud();
 
   // Cloud-gated pairing: resolve once the dashboard approves/rejects or timeout

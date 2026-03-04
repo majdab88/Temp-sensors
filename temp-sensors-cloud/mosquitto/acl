@@ -22,15 +22,22 @@ user backend
 topic readwrite #
 
 # ----------------------------------------------------------
-# Hub devices — restricted to their own MAC-addressed topics.
+# Hub devices — shared username (MQTT_HUB_USER), identified
+# by MAC address in the topic path, not the username.
 #
-# Allowed topics (where %u = hub MAC, e.g. AABBCCDDEEFF):
-#   sensors/AABBCCDDEEFF/data              (hub publishes sensor readings)
-#   sensors/AABBCCDDEEFF/status            (hub publishes online/offline + LWT)
-#   sensors/AABBCCDDEEFF/pairing/request   (hub publishes new pairing requests)
-#   sensors/AABBCCDDEEFF/pairing/response  (hub subscribes — cloud decision)
-#   sensors/AABBCCDDEEFF/command           (hub subscribes — future commands)
-#
-# Hubs cannot read or write any other device's topics.
+# All hubs connect with the same user/pass pair; the hub MAC
+# in the topic hierarchy identifies each device:
+#   sensors/<HUB_MAC>/data
+#   sensors/<HUB_MAC>/status
+#   sensors/<HUB_MAC>/sync
+#   sensors/<HUB_MAC>/sync/request
+#   sensors/<HUB_MAC>/pairing/request
+#   sensors/<HUB_MAC>/pairing/response
+#   sensors/<HUB_MAC>/sensor/remove
+#   sensors/<HUB_MAC>/sensor/rename
+#   sensors/<HUB_MAC>/sensor/renamed
+#   sensors/<HUB_MAC>/sensor/deleted
+#   sensors/<HUB_MAC>/command
 # ----------------------------------------------------------
-pattern readwrite sensors/%u/#
+user hub
+topic readwrite sensors/#

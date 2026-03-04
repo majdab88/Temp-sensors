@@ -31,6 +31,8 @@ function initMqtt(io) {
       'sensors/+/data',
       'sensors/+/status',
       'sensors/+/pairing/request',
+      'sensors/+/sync/request',
+      'sensors/+/sensor/deleted',   // hub notifies cloud after a local-dashboard delete
     ], (err) => {
       if (err) console.error('MQTT subscribe error:', err.message);
     });
@@ -70,11 +72,15 @@ async function handleMessage(topic, payload) {
     handleHubStatus(hubMac, data);
   } else if (parts[2] === 'pairing' && parts[3] === 'request') {
     await handlePairingRequest(hubMac, data);
+  } else if (parts[2] === 'sync' && parts[3] === 'request') {
+    await handleSyncRequest(hubMac);
+  } else if (parts[2] === 'sensor' && parts[3] === 'deleted') {
+    await handleSensorDeleted(hubMac, data);
   }
 }
 
 async function handleSensorData(hubMac, data) {
-  const { sensor_mac, temp, hum, battery, rssi } = data;
+  const { sensor_mac, temp, hum, battery, rssi, ts } = data;
   if (!sensor_mac) return;
 
   // Hub must be registered
@@ -82,25 +88,36 @@ async function handleSensorData(hubMac, data) {
   if (devRes.rows.length === 0) return;
   const deviceId = devRes.rows[0].id;
 
-  // Upsert sensor — auto-creates record on first data; preserves custom name
+  // Upsert sensor — auto-creates record on first data; preserves custom name.
+  // The WHERE clause prevents re-activating a sensor that was soft-deleted
+  // (active = FALSE); those data frames are silently dropped so a deleted sensor
+  // cannot re-appear via an incoming reading.
   const normMac    = sensor_mac.toUpperCase();
   const defaultName = 'TempSens-' + normMac.replace(/:/g, '').slice(-6);
   const sensorRes = await query(
     `INSERT INTO sensors (device_id, mac, name)
      VALUES ($1, $2, $3)
-     ON CONFLICT (device_id, mac) DO UPDATE SET active = TRUE
+     ON CONFLICT (device_id, mac) DO UPDATE
+       SET active = TRUE
+       WHERE sensors.active = TRUE
      RETURNING id`,
     [deviceId, normMac, defaultName]
   );
+  if (sensorRes.rows.length === 0) return; // sensor was soft-deleted — ignore data
   const sensorId = sensorRes.rows[0].id;
 
   // Convert -999 sentinel values to NULL
   const tempVal = (temp === -999 || temp == null) ? null : temp;
   const humVal  = (hum  === -999 || hum  == null) ? null : hum;
 
+  // Trust the hub's NTP timestamp as-is. Falls back to server time only if ts
+  // is absent or unparseable.
+  const hubTime    = (ts && !isNaN(Date.parse(ts))) ? new Date(ts) : null;
+  const recordedAt = hubTime ?? new Date();
+
   await query(
-    'INSERT INTO readings (sensor_id, temp, hum, battery, rssi) VALUES ($1, $2, $3, $4, $5)',
-    [sensorId, tempVal, humVal, battery ?? null, rssi ?? null]
+    'INSERT INTO readings (sensor_id, temp, hum, battery, rssi, recorded_at) VALUES ($1, $2, $3, $4, $5, $6)',
+    [sensorId, tempVal, humVal, battery ?? null, rssi ?? null, recordedAt]
   );
 
   _io.to(`hub:${hubMac.toUpperCase()}`).emit('sensorData', {
@@ -109,7 +126,7 @@ async function handleSensorData(hubMac, data) {
     hum: humVal,
     battery: battery ?? null,
     rssi: rssi ?? null,
-    ts: Date.now(),
+    ts: recordedAt.getTime(),
   });
 }
 
@@ -154,6 +171,56 @@ async function handlePairingRequest(hubMac, data) {
 }
 
 /**
+ * Hub locally deleted a sensor via its web dashboard and has already removed it
+ * from its own NVS/peer table.  Soft-delete the row in the DB so the next
+ * sync/request response does NOT include the sensor and the hub won't re-add it.
+ */
+async function handleSensorDeleted(hubMac, data) {
+  const { sensor_mac } = data;
+  if (!sensor_mac) return;
+
+  const mac = hubMac.toUpperCase();
+  const normSensorMac = sensor_mac.toUpperCase();
+
+  const result = await query(
+    `UPDATE sensors SET active = FALSE
+     WHERE mac = $1
+       AND device_id = (SELECT id FROM devices WHERE mac = $2)
+       AND active = TRUE
+     RETURNING mac`,
+    [normSensorMac, mac]
+  );
+
+  if (result.rows.length > 0) {
+    console.log(`[MQTT] Hub ${mac} locally deleted sensor ${normSensorMac} — marked inactive in DB`);
+  }
+}
+
+/**
+ * Respond to a hub's sync/request with the authoritative sensor list from the DB.
+ * Hub publishes its local list on every MQTT connect; we reply with the DB truth
+ * so the hub can add/remove/rename sensors to match.
+ */
+async function handleSyncRequest(hubMac) {
+  if (!client || !client.connected) return;
+  const mac = hubMac.toUpperCase();
+  const devRes = await query('SELECT id FROM devices WHERE mac = $1', [mac]);
+  if (devRes.rows.length === 0) return;
+  const deviceId = devRes.rows[0].id;
+
+  const sensorRes = await query(
+    'SELECT mac, name FROM sensors WHERE device_id = $1 AND active = TRUE',
+    [deviceId]
+  );
+
+  const payload = JSON.stringify({ sensors: sensorRes.rows });
+  // retain: true so the hub receives the current authoritative list the moment
+  // it subscribes — even if it was offline when the delete/rename was triggered.
+  client.publish(`sensors/${mac}/sync`, payload, { retain: true });
+  console.log(`[Sync] Pushed retained sync to ${mac} with ${sensorRes.rows.length} sensor(s)`);
+}
+
+/**
  * Publish a pairing approve/reject decision back to the hub.
  * Called by the pairing route handler.
  */
@@ -165,4 +232,19 @@ function publishPairingResponse(hubMac, sensorMac, approved) {
   client.publish(`sensors/${hubMac}/pairing/response`, payload);
 }
 
-module.exports = { initMqtt, publishPairingResponse, getHubStatus };
+/**
+ * Tell a hub to remove a sensor from its local memory, peer table, and NVS.
+ * Called by the sensors DELETE route after the DB row is removed.
+ * Fire-and-forget — if the hub is offline it will receive the sync on next connect.
+ */
+function publishSensorRemove(hubMac, sensorMac) {
+  if (!client || !client.connected) {
+    console.warn(`[MQTT] publishSensorRemove: client not connected — ${sensorMac} will be removed from hub ${hubMac} on next sync/request`);
+    return;
+  }
+  const payload = JSON.stringify({ sensor_mac: sensorMac });
+  client.publish(`sensors/${hubMac}/sensor/remove`, payload);
+  console.log(`[MQTT] Sent sensor/remove for ${sensorMac} to hub ${hubMac}`);
+}
+
+module.exports = { initMqtt, publishPairingResponse, publishSensorRemove, getHubStatus, pushSyncToHub: handleSyncRequest };

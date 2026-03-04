@@ -25,6 +25,19 @@ function formatLabel(isoStr) {
   })
 }
 
+// Full timestamp with seconds for the table so drift is immediately visible
+function formatTimestamp(isoStr) {
+  if (!isoStr) return '—'
+  return new Date(isoStr).toLocaleString(undefined, {
+    year:   'numeric',
+    month:  'short',
+    day:    'numeric',
+    hour:   '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+  })
+}
+
 export default function ReadingChart({ sensorId, from, to }) {
   const [readings, setReadings] = useState([])
   const [loading, setLoading] = useState(false)
@@ -125,5 +138,54 @@ export default function ReadingChart({ sensorId, from, to }) {
     },
   }
 
-  return <Line data={data} options={options} />
+  // Table shows newest first
+  const tableRows = [...readings].reverse()
+
+  return (
+    <>
+      <Line data={data} options={options} />
+
+      <div style={{ marginTop: 32 }}>
+        <h3 style={{ fontSize: 14, fontWeight: 600, color: 'var(--text-2)', marginBottom: 10 }}>
+          Readings ({readings.length})
+        </h3>
+        <div className="table-wrap" style={{ maxHeight: 360, overflowY: 'auto' }}>
+          <table>
+            <thead>
+              <tr>
+                <th>#</th>
+                <th>Time (stored)</th>
+                <th style={{ color: '#ef4444' }}>Temp (°C)</th>
+                <th style={{ color: '#3b82f6' }}>Humidity (%)</th>
+                <th>RSSI</th>
+                <th>Battery</th>
+              </tr>
+            </thead>
+            <tbody>
+              {tableRows.map((r, i) => (
+                <tr key={r.id}>
+                  <td style={{ color: 'var(--text-3)', fontSize: 12 }}>{readings.length - i}</td>
+                  <td style={{ fontFamily: 'monospace', fontSize: 12, whiteSpace: 'nowrap' }}>
+                    {formatTimestamp(r.recorded_at)}
+                  </td>
+                  <td style={{ fontWeight: 600, color: '#ef4444' }}>
+                    {r.temp != null ? r.temp.toFixed(2) : '—'}
+                  </td>
+                  <td style={{ fontWeight: 600, color: '#3b82f6' }}>
+                    {r.hum != null ? r.hum.toFixed(1) : '—'}
+                  </td>
+                  <td style={{ color: 'var(--text-3)' }}>
+                    {r.rssi != null ? `${r.rssi} dBm` : '—'}
+                  </td>
+                  <td style={{ color: 'var(--text-3)' }}>
+                    {r.battery != null && r.battery !== 255 ? `${r.battery}%` : '—'}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </>
+  )
 }

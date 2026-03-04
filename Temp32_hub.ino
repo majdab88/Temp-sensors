@@ -167,6 +167,10 @@ static char wifiSsid[65] = "";
 static char wifiPass[65] = "";
 static unsigned long  lastWifiReconnect  = 0;
 const  unsigned long  WIFI_RECONNECT_MS  = 30000;  // one reconnect attempt per 30 s
+// Max time to wait for a single reconnect attempt before giving up and
+// restoring ch 1. Must be < the sensor's 5 s retry-wait so the hub is back
+// on ch 1 before the sensor's second transmission batch begins.
+const  unsigned long  WIFI_TRY_MS        = 4000;
 
 // Last WiFi channel the STA was on. Held so we can re-lock the radio to this
 // channel when WiFi drops, keeping ESP-NOW reachable while the STA reconnects.
@@ -1768,17 +1772,33 @@ void setup() {
 // WIFI RECONNECT
 // ─────────────────────────────────────────────────────────────────────────────
 
-// Called every loop() iteration. Issues one WiFi.begin() attempt every 30 s
-// when the STA is not connected. The 30 s gap means the radio spends only a
-// brief scan burst (~2 s) off ch 1, leaving it free for ESP-NOW the rest of
-// the time. On reconnect the STA_GOT_IP event updates lastWifiChannel and
-// maintainCloud() resumes the MQTT session automatically.
+// Called every loop() iteration. Attempts one WiFi reconnect every 30 s.
+// The function blocks for up to WIFI_TRY_MS (4 s) then explicitly stops
+// the IDF connection attempt. Without this, the IDF WiFi driver keeps
+// retrying internally and scanning channels for ~10 s, which prevents
+// ESP-NOW ACKs from being sent even after the Arduino disconnect event
+// fires. By calling WiFi.disconnect() on timeout we guarantee the radio
+// is back on ch 1 within WIFI_TRY_MS — safely inside the sensor's 5 s
+// retry-wait window.
 void maintainWiFi() {
   if (WiFi.status() == WL_CONNECTED) return;
   if (millis() - lastWifiReconnect < WIFI_RECONNECT_MS) return;
   lastWifiReconnect = millis();
   Serial.println("[WiFi] Reconnecting...");
   WiFi.begin(wifiSsid, wifiPass);
+
+  unsigned long start = millis();
+  while (WiFi.status() != WL_CONNECTED && millis() - start < WIFI_TRY_MS) {
+    delay(50);
+  }
+
+  if (WiFi.status() != WL_CONNECTED) {
+    // Stop IDF internal retries so they don't keep the radio off ch 1.
+    WiFi.disconnect(false);
+    delay(100);
+    esp_wifi_set_channel(1, WIFI_SECOND_CHAN_NONE);
+    Serial.println("[WiFi] Reconnect failed — restored ch 1");
+  }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

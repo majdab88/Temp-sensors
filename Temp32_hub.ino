@@ -162,6 +162,10 @@ unsigned long      lastMqttReconnect    = 0;
 const unsigned long MQTT_RECONNECT_MS   = 5000;
 const unsigned long PAIRING_TIMEOUT_MS  = 60000;
 
+// Last WiFi channel the STA was on. Held so we can re-lock the radio to this
+// channel when WiFi drops, keeping ESP-NOW reachable while the STA reconnects.
+static uint8_t lastWifiChannel = 1;
+
 // Flags used only inside startBleProvisioning() to test MQTT before confirming "connected"
 volatile bool cloudProvReceived = false;  // set when PROV_CLOUD arrives while WiFi is already up
 bool          wifiOkInProv      = false;  // WiFi connected inside the provisioning loop
@@ -1605,6 +1609,34 @@ void OnDataRecv(const esp_now_recv_info_t* esp_now_info,
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// WIFI EVENT HANDLER
+// ─────────────────────────────────────────────────────────────────────────────
+
+// Runs in the WiFi task — keep it short; no heap alloc.
+void onWiFiEvent(WiFiEvent_t event, WiFiEventInfo_t info) {
+  switch (event) {
+    case ARDUINO_EVENT_WIFI_STA_GOT_IP:
+      // Record the channel the router assigned so we can restore it on drop.
+      lastWifiChannel = WiFi.channel();
+      Serial.printf("[WiFi] Connected — channel %d\n", lastWifiChannel);
+      break;
+
+    case ARDUINO_EVENT_WIFI_STA_DISCONNECTED:
+      // The STA auto-reconnect now scans all channels, which moves the radio
+      // away from the ESP-NOW channel and causes sensors to lose ACKs.
+      // Re-lock the AP interface to the last known channel immediately so
+      // ESP-NOW keeps working between reconnect scan bursts.
+      Serial.printf("[WiFi] Disconnected — locking channel %d for ESP-NOW\n",
+                    lastWifiChannel);
+      esp_wifi_set_channel(lastWifiChannel, WIFI_SECOND_CHAN_NONE);
+      break;
+
+    default:
+      break;
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // SETUP
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -1638,6 +1670,10 @@ void setup() {
   WiFi.setTxPower(WIFI_POWER_19_5dBm);
   esp_wifi_set_protocol(WIFI_IF_STA, WIFI_PROTOCOL_11B | WIFI_PROTOCOL_11G |
                                       WIFI_PROTOCOL_11N | WIFI_PROTOCOL_LR);
+  // Re-lock the radio to the last known channel on drop so ESP-NOW keeps
+  // receiving sensor packets while the STA reconnects in the background.
+  WiFi.setAutoReconnect(true);
+  WiFi.onEvent(onWiFiEvent);
   WiFi.begin(storedSsid.c_str(), storedPass.c_str());
 
   unsigned long wifiStart = millis();

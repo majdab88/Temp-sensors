@@ -112,8 +112,13 @@ async function handleSensorData(hubMac, data) {
 
   // Use the timestamp from the hub payload so buffered readings that were held
   // during a network outage are stored with their original reading time, not the
-  // flush time. Fall back to NOW() if the field is absent or unparseable.
-  const recordedAt = (ts && !isNaN(Date.parse(ts))) ? new Date(ts) : new Date();
+  // flush time. Cap at server NOW() so a hub clock that is slightly ahead of the
+  // server doesn't push readings into the future (which would make them invisible
+  // until the server clock catches up). Falls back to NOW() if ts is absent or
+  // unparseable.
+  const serverNow = new Date();
+  const hubTime   = (ts && !isNaN(Date.parse(ts))) ? new Date(ts) : null;
+  const recordedAt = (hubTime && hubTime < serverNow) ? hubTime : serverNow;
 
   await query(
     'INSERT INTO readings (sensor_id, temp, hum, battery, rssi, recorded_at) VALUES ($1, $2, $3, $4, $5, $6)',

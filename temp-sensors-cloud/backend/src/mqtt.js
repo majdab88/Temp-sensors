@@ -80,7 +80,7 @@ async function handleMessage(topic, payload) {
 }
 
 async function handleSensorData(hubMac, data) {
-  const { sensor_mac, temp, hum, battery, rssi } = data;
+  const { sensor_mac, temp, hum, battery, rssi, ts } = data;
   if (!sensor_mac) return;
 
   // Hub must be registered
@@ -110,9 +110,14 @@ async function handleSensorData(hubMac, data) {
   const tempVal = (temp === -999 || temp == null) ? null : temp;
   const humVal  = (hum  === -999 || hum  == null) ? null : hum;
 
+  // Use the timestamp from the hub payload so buffered readings that were held
+  // during a network outage are stored with their original reading time, not the
+  // flush time. Fall back to NOW() if the field is absent or unparseable.
+  const recordedAt = (ts && !isNaN(Date.parse(ts))) ? new Date(ts) : new Date();
+
   await query(
-    'INSERT INTO readings (sensor_id, temp, hum, battery, rssi) VALUES ($1, $2, $3, $4, $5)',
-    [sensorId, tempVal, humVal, battery ?? null, rssi ?? null]
+    'INSERT INTO readings (sensor_id, temp, hum, battery, rssi, recorded_at) VALUES ($1, $2, $3, $4, $5, $6)',
+    [sensorId, tempVal, humVal, battery ?? null, rssi ?? null, recordedAt]
   );
 
   _io.to(`hub:${hubMac.toUpperCase()}`).emit('sensorData', {
@@ -121,7 +126,7 @@ async function handleSensorData(hubMac, data) {
     hum: humVal,
     battery: battery ?? null,
     rssi: rssi ?? null,
-    ts: Date.now(),
+    ts: recordedAt.getTime(),
   });
 }
 

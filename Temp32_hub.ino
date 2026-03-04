@@ -1215,9 +1215,15 @@ void publishSensorData(int idx) {
 
   // ISO-8601 timestamp (UTC) — captured now so buffered readings keep their
   // original read time rather than the later flush time.
+  // Use time()+gmtime_r() to get true UTC; getLocalTime() returns local time
+  // (UTC+2) which would be mislabelled by the literal 'Z' suffix.
   char ts[21] = "";
-  struct tm ti;
-  if (getLocalTime(&ti)) strftime(ts, sizeof(ts), "%Y-%m-%dT%H:%M:%SZ", &ti);
+  time_t now = time(nullptr);
+  if (now > 1000000000UL) {   // sanity-check: after 2001 means NTP has synced
+    struct tm utcTm;
+    gmtime_r(&now, &utcTm);
+    strftime(ts, sizeof(ts), "%Y-%m-%dT%H:%M:%SZ", &utcTm);
+  }
 
   if (!cloudConfigured || !mqttClient.connected()) {
     // MQTT offline — store the reading in the circular buffer for later flush.

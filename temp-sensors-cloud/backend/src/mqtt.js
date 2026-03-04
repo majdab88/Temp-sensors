@@ -110,15 +110,17 @@ async function handleSensorData(hubMac, data) {
   const tempVal = (temp === -999 || temp == null) ? null : temp;
   const humVal  = (hum  === -999 || hum  == null) ? null : hum;
 
-  // Use the timestamp from the hub payload so buffered readings that were held
-  // during a network outage are stored with their original reading time, not the
-  // flush time. Allow up to 5 minutes in the future to tolerate small clock skew
-  // between the hub (NTP-synced) and the server. Falls back to NOW() if ts is
-  // absent, unparseable, or more than 5 minutes in the future.
+  // Timestamp strategy:
+  //  - Live readings  (<60 s old): use server time — eliminates NTP skew between
+  //    hub and server so the dashboard clock matches wall time.
+  //  - Buffered readings (>60 s old): use hub time — preserves the original read
+  //    time for data that was held during a WiFi outage and flushed later.
+  //  - Absent / unparseable / >5 min in the future: fall back to server time.
   const serverNow  = new Date();
   const hubTime    = (ts && !isNaN(Date.parse(ts))) ? new Date(ts) : null;
   const maxFuture  = new Date(serverNow.getTime() + 5 * 60 * 1000);
-  const recordedAt = (hubTime && hubTime < maxFuture) ? hubTime : serverNow;
+  const isBuffered = hubTime && (serverNow - hubTime) > 60 * 1000;
+  const recordedAt = (isBuffered && hubTime < maxFuture) ? hubTime : serverNow;
 
   await query(
     'INSERT INTO readings (sensor_id, temp, hum, battery, rssi, recorded_at) VALUES ($1, $2, $3, $4, $5, $6)',

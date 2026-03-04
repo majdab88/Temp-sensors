@@ -489,7 +489,16 @@ void setup() {
     myData.msgType  = MSG_DATA;
     myData.battery  = (uint8_t)bat.percentage;
     readSensor();
-    sendDataWithRetry();
+
+    if (!sendDataWithRetry()) {
+      // All retries failed — the hub may have been briefly off-channel for a
+      // WiFi reconnect scan (~2 s every 30 s). Wait for the scan to finish
+      // and the hub to settle back on ch 1, then try once more before sleeping.
+      Serial.println("Waiting 5s then making one final attempt...");
+      delay(5000);
+      sendDataWithRetry();
+    }
+
     goToSleep(SLEEP_TIME);
     //ESP.restart();  // Use this instead during testing
   } else {

@@ -491,11 +491,14 @@ void setup() {
     readSensor();
 
     if (!sendDataWithRetry()) {
-      // All retries failed — the hub may have been briefly off-channel for a
-      // WiFi reconnect scan (~2 s every 30 s). Wait for the scan to finish
-      // and the hub to settle back on ch 1, then try once more before sleeping.
-      Serial.println("Waiting 5s then making one final attempt...");
+      // All retries failed. The hub may have been mid-WiFi-reconnect when we
+      // scanned, making its AP invisible and landing us on the wrong channel.
+      // Wait 5 s for the hub to finish and re-scan so we pick up TempHub-AP
+      // (now back on ch 1) before the final attempt.
+      Serial.println("Waiting 5s then re-scanning and retrying...");
       delay(5000);
+      uint8_t ch = detectWiFiChannel();
+      esp_wifi_set_channel(ch, WIFI_SECOND_CHAN_NONE);
       sendDataWithRetry();
     }
 

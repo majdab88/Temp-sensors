@@ -23,7 +23,9 @@
 #define TX_TIMEOUT_MS  500
 
 // --- COMMUNICATION CHANNEL ---
-#define ESPNOW_CHANNEL 0  // 0 = auto-detect
+#define ESPNOW_CHANNEL 0          // 0 = auto-detect
+#define HUB_AP_SSID   "TempHub-AP"  // hub's hidden AP — always on the ESP-NOW channel
+#define FALLBACK_CHANNEL 1        // used when neither hub AP nor any router is visible
 
 // --- BATTERY MONITOR ---
 #define ADC_SAMPLES      20  // Readings to average for a stable result
@@ -330,24 +332,39 @@ bool sendDataWithRetry() {
   return false;
 }
 
-// Scan for the strongest nearby AP and return its WiFi channel.
-// Used before pairing so the ESP-NOW broadcast goes out on the same
-// channel the hub is locked to by its router connection.
+// Scan for the hub's hidden AP first — it is always on the exact channel the
+// hub's ESP-NOW radio is listening on (ch 1 when WiFi is down, router channel
+// when WiFi is up). Fall back to the strongest visible router if the hub AP
+// is not seen, and to FALLBACK_CHANNEL (1) if nothing is found at all.
 uint8_t detectWiFiChannel() {
   Serial.print("Scanning for WiFi channel...");
-  int n = WiFi.scanNetworks(/*async=*/false, /*show_hidden=*/false);
-  if (n <= 0) {
-    Serial.println(" no APs found, defaulting to ch 1");
-    return 1;
+  // show_hidden=true is required to see the hub's hidden AP "TempHub-AP".
+  int n = WiFi.scanNetworks(/*async=*/false, /*show_hidden=*/true);
+
+  // Prefer the hub's own AP — its channel is always correct.
+  for (int i = 0; i < n; i++) {
+    if (WiFi.SSID(i) == HUB_AP_SSID) {
+      uint8_t ch = (uint8_t)WiFi.channel(i);
+      Serial.printf(" hub AP on ch %d\n", ch);
+      WiFi.scanDelete();
+      return ch;
+    }
   }
-  int bestIdx = 0;
-  for (int i = 1; i < n; i++) {
-    if (WiFi.RSSI(i) > WiFi.RSSI(bestIdx)) bestIdx = i;
+
+  // Hub AP not visible — use the strongest router as a channel hint.
+  if (n > 0) {
+    int bestIdx = 0;
+    for (int i = 1; i < n; i++) {
+      if (WiFi.RSSI(i) > WiFi.RSSI(bestIdx)) bestIdx = i;
+    }
+    uint8_t ch = (uint8_t)WiFi.channel(bestIdx);
+    Serial.printf(" ch %d (%s, %d dBm)\n", ch, WiFi.SSID(bestIdx).c_str(), WiFi.RSSI(bestIdx));
+    WiFi.scanDelete();
+    return ch;
   }
-  uint8_t ch = (uint8_t)WiFi.channel(bestIdx);
-  Serial.printf(" ch %d (%s, %d dBm)\n", ch, WiFi.SSID(bestIdx).c_str(), WiFi.RSSI(bestIdx));
-  WiFi.scanDelete();
-  return ch;
+
+  Serial.printf(" no APs found, defaulting to ch %d\n", FALLBACK_CHANNEL);
+  return FALLBACK_CHANNEL;
 }
 
 // --- PAIRING MODE ---

@@ -162,6 +162,12 @@ unsigned long      lastMqttReconnect    = 0;
 const unsigned long MQTT_RECONNECT_MS   = 5000;
 const unsigned long PAIRING_TIMEOUT_MS  = 60000;
 
+// WiFi credentials kept in RAM so maintainWiFi() can reconnect without NVS.
+static char wifiSsid[65] = "";
+static char wifiPass[65] = "";
+static unsigned long  lastWifiReconnect  = 0;
+const  unsigned long  WIFI_RECONNECT_MS  = 30000;  // one reconnect attempt per 30 s
+
 // Last WiFi channel the STA was on. Held so we can re-lock the radio to this
 // channel when WiFi drops, keeping ESP-NOW reachable while the STA reconnects.
 static uint8_t lastWifiChannel = 1;
@@ -1623,13 +1629,12 @@ void onWiFiEvent(WiFiEvent_t event, WiFiEventInfo_t info) {
       break;
 
     case ARDUINO_EVENT_WIFI_STA_DISCONNECTED:
-      // The STA auto-reconnect now scans all channels, which moves the radio
-      // away from the ESP-NOW channel and causes sensors to lose ACKs.
-      // Re-lock the AP interface to the last known channel immediately so
-      // ESP-NOW keeps working between reconnect scan bursts.
-      Serial.printf("[WiFi] Disconnected — locking channel %d for ESP-NOW\n",
-                    lastWifiChannel);
-      esp_wifi_set_channel(lastWifiChannel, WIFI_SECOND_CHAN_NONE);
+      // Lock to ch 1 — the sensor falls back to ch 1 too when it cannot see
+      // the hub's AP, so both sides agree on a stable offline channel.
+      // Auto-reconnect is disabled; maintainWiFi() retries every 30 s so the
+      // radio is only off ch 1 for the brief scan burst during that attempt.
+      Serial.println("[WiFi] Disconnected — locking to ch 1 for ESP-NOW");
+      esp_wifi_set_channel(1, WIFI_SECOND_CHAN_NONE);
       break;
 
     default:
@@ -1666,16 +1671,20 @@ void setup() {
   // ── WiFi connect with stored credentials ────────────────────────────────
   // Use AP_STA from the start — switching modes while connected drops the STA.
   // Set tx-power and protocol before connecting so they never disrupt the STA.
-  Serial.printf("Connecting to WiFi: %s\n", storedSsid.c_str());
+  // Keep credentials in RAM for manual reconnects in maintainWiFi().
+  strncpy(wifiSsid, storedSsid.c_str(), sizeof(wifiSsid) - 1);
+  strncpy(wifiPass, storedPass.c_str(), sizeof(wifiPass) - 1);
+
+  Serial.printf("Connecting to WiFi: %s\n", wifiSsid);
   WiFi.mode(WIFI_AP_STA);
   WiFi.setTxPower(WIFI_POWER_19_5dBm);
   esp_wifi_set_protocol(WIFI_IF_STA, WIFI_PROTOCOL_11B | WIFI_PROTOCOL_11G |
                                       WIFI_PROTOCOL_11N | WIFI_PROTOCOL_LR);
-  // Re-lock the radio to the last known channel on drop so ESP-NOW keeps
-  // receiving sensor packets while the STA reconnects in the background.
-  WiFi.setAutoReconnect(true);
+  // Disable auto-reconnect: its continuous channel scanning disrupts ESP-NOW.
+  // maintainWiFi() in loop() issues one targeted reconnect attempt every 30 s.
+  WiFi.setAutoReconnect(false);
   WiFi.onEvent(onWiFiEvent);
-  WiFi.begin(storedSsid.c_str(), storedPass.c_str());
+  WiFi.begin(wifiSsid, wifiPass);
 
   unsigned long wifiStart = millis();
   while (WiFi.status() != WL_CONNECTED) {
@@ -1687,6 +1696,7 @@ void setup() {
     delay(200);
   }
   Serial.printf("✓ WiFi connected! IP: %s\n", WiFi.localIP().toString().c_str());
+  esp_wifi_set_ps(WIFI_PS_NONE);  // disable power save — radio must always be listening
 
   // ── MQTT cloud uplink ────────────────────────────────────────────────────
   loadCloudConfig();
@@ -1755,11 +1765,29 @@ void setup() {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// WIFI RECONNECT
+// ─────────────────────────────────────────────────────────────────────────────
+
+// Called every loop() iteration. Issues one WiFi.begin() attempt every 30 s
+// when the STA is not connected. The 30 s gap means the radio spends only a
+// brief scan burst (~2 s) off ch 1, leaving it free for ESP-NOW the rest of
+// the time. On reconnect the STA_GOT_IP event updates lastWifiChannel and
+// maintainCloud() resumes the MQTT session automatically.
+void maintainWiFi() {
+  if (WiFi.status() == WL_CONNECTED) return;
+  if (millis() - lastWifiReconnect < WIFI_RECONNECT_MS) return;
+  lastWifiReconnect = millis();
+  Serial.println("[WiFi] Reconnecting...");
+  WiFi.begin(wifiSsid, wifiPass);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // LOOP
 // ─────────────────────────────────────────────────────────────────────────────
 
 void loop() {
   server.handleClient();
+  maintainWiFi();
   maintainCloud();
 
   // Cloud-gated pairing: resolve once the dashboard approves/rejects or timeout

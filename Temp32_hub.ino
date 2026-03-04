@@ -1149,6 +1149,7 @@ void flushOfflineBuffer() {
 // Call every loop() iteration: keeps MQTT alive and reconnects after drops.
 void maintainCloud() {
   if (!cloudConfigured) return;
+  if (WiFi.status() != WL_CONNECTED) return;  // no WiFi → no TCP; don't block the radio
   if (mqttClient.connected()) {
     mqttClient.loop();
     return;

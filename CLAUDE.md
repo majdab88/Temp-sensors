@@ -20,8 +20,16 @@ This is a wireless temperature/humidity monitoring system. One **hub** station r
 
 ```
 Temp-sensors/
-├── Temp32_hub.ino           # Hub firmware (receiver + web dashboard)
-├── Temp32_sensor.ino        # Sensor node firmware (SHT40 + deep sleep)
+├── hub/                     # PlatformIO project — hub firmware
+│   ├── platformio.ini
+│   └── src/
+│       └── main.cpp         # Hub firmware (receiver + web dashboard)
+├── sensor/                  # PlatformIO project — sensor node firmware
+│   ├── platformio.ini
+│   └── src/
+│       └── main.cpp         # Sensor node firmware (SHT40 + deep sleep)
+├── Temp32_hub.ino           # Original Arduino IDE source (kept for reference)
+├── Temp32_sensor.ino        # Original Arduino IDE source (kept for reference)
 ├── CLOUD_MIGRATION_PLAN.md  # Plan to migrate to custom cloud + BLE provisioning
 ├── README.md                # Project title placeholder
 └── CLAUDE.md                # This file
@@ -137,9 +145,10 @@ SHT40 I2C address: `0x44`.
 | Language | C++ (Arduino framework) |
 | Target MCU | Seeed XIAO ESP32-C6 |
 | Arduino core | ESP32 Arduino core (Espressif) |
-| Board package | `esp32` by Espressif |
-| **Partition scheme** | **Huge APP (3MB No OTA/1MB SPIFFS)** — required when NimBLE-Arduino is included; default 1.25 MB partition is too small for the BLE stack. Set in Arduino IDE: Tools → Partition Scheme. |
-| Optimize | Smallest Code (-Os) recommended — Tools → Optimize |
+| Build system | **PlatformIO** (`hub/platformio.ini`, `sensor/platformio.ini`) |
+| Board ID | `seeed_xiao_esp32c6` |
+| **Partition scheme** | **`huge_app.csv`** (hub only) — required for NimBLE-Arduino; set via `board_build.partitions` in `platformio.ini` |
+| Optimize | `-Os` (Smallest Code) — set via `build_flags` in `platformio.ini` |
 
 ### Required Libraries
 | Library | Source | Used in |

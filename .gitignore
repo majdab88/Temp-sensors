@@ -1,0 +1,5 @@
+# PlatformIO build artifacts and downloaded libraries
+.pio/
+
+# VS Code workspace file (optional — remove this line if you want to commit it)
+*.code-workspace

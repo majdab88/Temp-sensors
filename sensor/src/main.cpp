@@ -13,8 +13,8 @@
 #define RESET_PIN  0    // External reset button on D0 (GPIO0 — LP GPIO, supports deep sleep wakeup)
 #define SDA_PIN   22    // I2C SDA (D4)
 #define SCL_PIN   23    // I2C SCL (D5)
-#define BAT_ADC_PIN        D2   // GPIO2/D2 — ADC input (resistor divider midpoint)
-#define DIVIDER_ENABLE_PIN D1   // GPIO1/D1 — ground switch; LOW enables divider, INPUT (Hi-Z) during sleep
+#define BAT_ADC_PIN         2   // GPIO2/D2 — ADC input (resistor divider midpoint)
+#define DIVIDER_ENABLE_PIN  1   // GPIO1/D1 — ground switch; LOW enables divider, INPUT (Hi-Z) during sleep
 
 // --- SLEEP SETTINGS ---
 #define SLEEP_TIME 900  // Seconds

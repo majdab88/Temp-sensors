@@ -76,9 +76,11 @@ async function resolveRequest(req, res, approved) {
     // publishPairingResponse so that when data frames arrive the upsert
     // in handleSensorData finds active = TRUE and accepts them.
     if (approved) {
+      // Insert the sensor if brand-new; re-activate if it was previously soft-deleted.
       await query(
-        `UPDATE sensors SET active = TRUE
-         WHERE device_id = $1 AND mac = $2 AND active = FALSE`,
+        `INSERT INTO sensors (device_id, mac, active)
+         VALUES ($1, $2, TRUE)
+         ON CONFLICT (device_id, mac) DO UPDATE SET active = TRUE`,
         [row.device_id, row.slave_mac.toUpperCase()]
       );
     }

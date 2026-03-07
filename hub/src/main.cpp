@@ -1635,8 +1635,10 @@ void OnDataRecv(const esp_now_recv_info_t* esp_now_info,
     for (int i = 0; i < 5; i++) Serial.printf("%02X:", esp_now_info->src_addr[i]);
     Serial.printf("%02X", esp_now_info->src_addr[5]);
 
-    if (incomingData.temp < -50 || incomingData.temp > 100 ||
-        incomingData.hum  <   0 || incomingData.hum  > 100) {
+    // hum == -999 is a valid sentinel meaning "no humidity sensor" (NTC-only nodes).
+    bool humInvalid = (incomingData.hum != -999) &&
+                      (incomingData.hum < 0 || incomingData.hum > 100);
+    if (incomingData.temp < -50 || incomingData.temp > 100 || humInvalid) {
       Serial.println(" | ERROR: Invalid sensor data!"); return;
     }
 

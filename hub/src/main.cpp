@@ -161,6 +161,13 @@ char topicSensorDeleted[72]; // Hub → Cloud: local delete notification
 
 bool cloudConfigured = false;  // true when MQTT credentials exist in NVS
 
+// After a pairing completes, suppress applySyncFromCloud removals for this long.
+// The cloud needs a moment to persist the new sensor before it sends an
+// authoritative list that includes it — without this guard the hub removes the
+// sensor the instant the cloud replies with its (still-stale) retained list.
+#define PAIRING_GRACE_MS 15000UL
+unsigned long pairingGraceUntil = 0;  // millis() deadline; 0 = no grace active
+
 // Non-blocking pending pairing — sensor waits for cloud approval in loop()
 struct {
   uint8_t      mac[6];
@@ -1047,16 +1054,24 @@ void applySyncFromCloud(const String& json) {
 
   // ── Step 2: remove local sensors not in the cloud list ────────────────────
   // Iterate backwards so array shifts don't corrupt the loop index.
-  for (int i = sensorCount - 1; i >= 0; i--) {
-    bool inCloud = false;
-    for (int j = 0; j < cloudCount; j++) {
-      if (memcmp(sensors[i].mac, cloudMacs[j], 6) == 0) { inCloud = true; break; }
-    }
-    if (!inCloud) {
-      Serial.printf("[Sync] Removing local sensor %02X:%02X:%02X:%02X:%02X:%02X (not in cloud)\n",
-                    sensors[i].mac[0], sensors[i].mac[1], sensors[i].mac[2],
-                    sensors[i].mac[3], sensors[i].mac[4], sensors[i].mac[5]);
-      removeSensorByMac(sensors[i].mac);
+  if (millis() < pairingGraceUntil) {
+    // A pairing just completed — the cloud may not have persisted the new
+    // sensor yet, so its authoritative list could still be stale.  Skip
+    // removals for the remainder of the grace window to avoid evicting the
+    // sensor we literally just added.
+    Serial.println("[Sync] Skipping removals — pairing grace window active");
+  } else {
+    for (int i = sensorCount - 1; i >= 0; i--) {
+      bool inCloud = false;
+      for (int j = 0; j < cloudCount; j++) {
+        if (memcmp(sensors[i].mac, cloudMacs[j], 6) == 0) { inCloud = true; break; }
+      }
+      if (!inCloud) {
+        Serial.printf("[Sync] Removing local sensor %02X:%02X:%02X:%02X:%02X:%02X (not in cloud)\n",
+                      sensors[i].mac[0], sensors[i].mac[1], sensors[i].mac[2],
+                      sensors[i].mac[3], sensors[i].mac[4], sensors[i].mac[5]);
+        removeSensorByMac(sensors[i].mac);
+      }
     }
   }
 
@@ -1213,6 +1228,9 @@ void completePairing(const uint8_t* mac) {
 
   int index = findSensor(mac);
   if (index == -1) addSensor(mac);
+
+  // Grace window: suppress cloud-sync removals while the cloud persists this sensor.
+  pairingGraceUntil = millis() + PAIRING_GRACE_MS;
 
   // Tell the cloud the pairing is complete so it can persist the sensor to its database.
   publishSyncRequest();

@@ -11,8 +11,9 @@
 #define RESET_PIN           0   // External reset button on D0 (GPIO0 — LP GPIO, supports deep sleep wakeup)
 #define BAT_ADC_PIN         2   // GPIO2/D2 — ADC input (battery resistor divider midpoint)
 #define DIVIDER_ENABLE_PIN  1   // GPIO1/D1 — battery divider GND switch; LOW enables divider, INPUT (Hi-Z) during sleep
-#define NTC_PIN             3   // GPIO3 — ADC input for NTC voltage divider midpoint
-#define NTC_ENABLE_PIN      5   // GPIO5 — NTC divider GND switch; LOW enables divider, INPUT (Hi-Z) during sleep
+#define NTC_PIN             3   // GPIO3/D3 — ADC input for NTC voltage divider midpoint
+#define NTC_ENABLE_PIN     22   // GPIO22/D4 — NTC divider GND switch; LOW enables divider, INPUT (Hi-Z) during sleep
+                                // D4 is freed from I2C (no SHT40 in this variant)
 
 // --- NTC PROBE PARAMETERS ---
 // Adjust these constants to match your specific NTC thermistor's datasheet.

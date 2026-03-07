@@ -9,10 +9,14 @@ This file provides guidance for AI assistants (Claude, Copilot, etc.) working in
 **Repository:** `Temp-sensors`
 **Owner:** majdab88
 **Hardware:** XIAO ESP32-C6 (hub + sensor nodes)
-**Sensor:** Sensirion SHT40 (±0.2°C, high-precision temperature & humidity)
+**Sensor:** Sensirion SHT40 (±0.2°C, high-precision temperature & humidity) **or** NTC thermistor probe (temperature-only variant)
 **Protocol:** ESP-NOW (peer-to-peer, no router required for sensor communication)
 
-This is a wireless temperature/humidity monitoring system. One **hub** station receives sensor data via ESP-NOW, serves a live web dashboard, and connects to WiFi. Up to 10 **sensor** nodes wake from deep sleep, read the SHT40, transmit to the hub, and go back to sleep.
+This is a wireless temperature/humidity monitoring system. One **hub** station receives sensor data via ESP-NOW, serves a live web dashboard, and connects to WiFi. Up to 10 **sensor** nodes wake from deep sleep, read their sensor, transmit to the hub, and go back to sleep.
+
+Two sensor node variants exist:
+- **`sensor/`** — SHT40 (I2C), measures temperature + humidity
+- **`sensor-ntc/`** — NTC thermistor probe (ADC), measures temperature only; `hum` field is always `-999`
 
 ---
 
@@ -24,10 +28,14 @@ Temp-sensors/
 │   ├── platformio.ini
 │   └── src/
 │       └── main.cpp         # Hub firmware (receiver + web dashboard)
-├── sensor/                  # PlatformIO project — sensor node firmware
+├── sensor/                  # PlatformIO project — sensor node firmware (SHT40)
 │   ├── platformio.ini
 │   └── src/
 │       └── main.cpp         # Sensor node firmware (SHT40 + deep sleep)
+├── sensor-ntc/              # PlatformIO project — NTC probe sensor variant
+│   ├── platformio.ini
+│   └── src/
+│       └── main.cpp         # NTC probe firmware (ADC + Steinhart-Hart + deep sleep)
 ├── Temp32_hub.ino           # Original Arduino IDE source (kept for reference)
 ├── Temp32_sensor.ino        # Original Arduino IDE source (kept for reference)
 ├── CLOUD_MIGRATION_PLAN.md  # Plan to migrate to custom cloud + BLE provisioning
@@ -92,15 +100,32 @@ typedef struct struct_message {
 | BOOT button | 9 | WiFi reset (hold 3 s) |
 | Built-in LED | 15 | Blinks on pairing |
 
-### Sensor (XIAO ESP32-C6)
+### Sensor — SHT40 variant (`sensor/`, XIAO ESP32-C6)
 | Pin | GPIO | Function |
 |-----|------|----------|
 | External button | 0 (D0) | Factory reset (hold 3 s) **and** deep sleep wakeup; LP GPIO |
 | Built-in LED | 15 | Status indicator |
+| Battery ADC | 2 (D2) | ADC midpoint of battery voltage divider |
+| Divider enable | 1 (D1) | GND switch for battery divider (OUTPUT LOW = on; INPUT = Hi-Z during sleep) |
 | SDA | 22 (D4) | SHT40 I2C data |
 | SCL | 23 (D5) | SHT40 I2C clock |
 
 SHT40 I2C address: `0x44`.
+
+### Sensor — NTC probe variant (`sensor-ntc/`, XIAO ESP32-C6)
+| Pin | GPIO | Function |
+|-----|------|----------|
+| External button | 0 (D0) | Factory reset (hold 3 s) **and** deep sleep wakeup; LP GPIO |
+| Built-in LED | 15 | Status indicator |
+| Battery ADC | 2 (D2) | ADC midpoint of battery voltage divider |
+| Divider enable | 1 (D1) | GND switch for battery divider (OUTPUT LOW = on; INPUT = Hi-Z during sleep) |
+| NTC ADC | 3 | ADC midpoint of NTC voltage divider |
+| NTC enable | 5 | GND switch for NTC divider (OUTPUT LOW = on; INPUT = Hi-Z during sleep) |
+
+NTC PCB circuit: `3.3V → 10 kΩ (series) → GPIO3 (ADC) → NTC probe → GPIO5 (GND switch)`
+- No I2C bus — GPIO22 (D4) and GPIO23 (D5) are not used.
+- `hum` is always sent as `-999`; the hub should display "N/A" for these nodes.
+- NTC parameters (`NTC_NOMINAL`, `NTC_BCOEFF`, `SERIES_RESISTOR`) must match your probe's datasheet.
 
 ---
 
@@ -116,7 +141,7 @@ SHT40 I2C address: `0x44`.
 | WiFiManager AP SSID | `Temp-sensor-Hub` | First-boot captive portal |
 | WiFiManager AP pass | `12345678` | |
 
-### Sensor
+### Sensor (both variants)
 | Constant | Value | Notes |
 |----------|-------|-------|
 | `SLEEP_TIME` | 900 s | 15 min; adjust as needed |
@@ -124,6 +149,17 @@ SHT40 I2C address: `0x44`.
 | `RETRY_DELAY_MS` | 100 ms | Delay between retries |
 | `TX_TIMEOUT_MS` | 500 ms | Wait for ACK callback |
 | `ESPNOW_CHANNEL` | 0 | Auto-detect channel |
+
+### NTC variant only (`sensor-ntc/`)
+| Constant | Value | Notes |
+|----------|-------|-------|
+| `NTC_NOMINAL` | 10000 Ω | NTC resistance at reference temp — check datasheet |
+| `NTC_BCOEFF` | 3950 K | Beta coefficient — check datasheet |
+| `NTC_T0_CELSIUS` | 25 °C | Reference temperature for `NTC_NOMINAL` |
+| `SERIES_RESISTOR` | 10000 Ω | Fixed series resistor — use ≥1 % tolerance |
+| `NTC_SAMPLES` | 20 | ADC readings averaged per measurement |
+| `NTC_PIN` | 3 | ADC GPIO — adjust if PCB differs |
+| `NTC_ENABLE_PIN` | 5 | GND switch GPIO — adjust if PCB differs |
 
 ### Encryption (both files)
 | Item | Detail |

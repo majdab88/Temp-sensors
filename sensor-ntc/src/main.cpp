@@ -18,7 +18,7 @@
 // Adjust these constants to match your specific NTC thermistor's datasheet.
 // Common 10kΩ probe (e.g. 10k @ 25°C, B=3950):
 #define NTC_NOMINAL     10000   // NTC resistance at reference temperature (Ω)
-#define NTC_BCOEFF       3950   // Beta coefficient of the NTC (K)
+#define NTC_BCOEFF       3435   // Beta coefficient of the NTC (K) — Eliwell/Carel/Dixell standard NTC 10K curve
 #define NTC_T0_CELSIUS     25   // Reference temperature for NTC_NOMINAL (°C)
 #define SERIES_RESISTOR 10000   // Series resistor value (Ω) — must be 1% tolerance or better
 #define NTC_SAMPLES        20   // ADC readings to average for stable result

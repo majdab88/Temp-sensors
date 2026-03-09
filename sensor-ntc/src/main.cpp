@@ -10,9 +10,9 @@
 #define LED_PIN            15   // Built-in LED on XIAO ESP32-C6
 #define RESET_PIN           0   // External reset button on D0 (GPIO0 — LP GPIO, supports deep sleep wakeup)
 #define BAT_ADC_PIN         2   // GPIO2/D2 — ADC input (battery resistor divider midpoint)
-#define DIVIDER_ENABLE_PIN  1   // GPIO1/D1 — battery divider GND switch; LOW enables divider, INPUT (Hi-Z) during sleep
-#define NTC_PIN             3   // GPIO3 — ADC input for NTC voltage divider midpoint (NOTE: D3 on this board is GPIO21, not GPIO3)
-#define NTC_ENABLE_PIN     23   // GPIO23/D5 — NTC divider GND switch; LOW enables divider, INPUT (Hi-Z) during sleep
+#define DIVIDER_ENABLE_PIN 21   // GPIO21/D3 — battery divider GND switch; LOW enables divider, INPUT (Hi-Z) during sleep
+#define NTC_PIN             1   // GPIO1/D1 — ADC input for NTC voltage divider midpoint
+#define NTC_ENABLE_PIN     22   // GPIO22/D4 — NTC divider GND switch; LOW enables divider, INPUT (Hi-Z) during sleep
 
 // --- NTC PROBE PARAMETERS ---
 // Adjust these constants to match your specific NTC thermistor's datasheet.
@@ -259,7 +259,7 @@ bool readSensor() {
 }
 
 // --- BATTERY MONITOR ---
-// Circuit: BAT+ → R1(120kΩ) → GPIO2/D2(ADC) → R2(120kΩ) → GPIO1/D1(GND switch)
+// Circuit: BAT+ → R1(120kΩ) → GPIO2/D2(ADC) → R2(120kΩ) → GPIO21/D3(GND switch)
 // D1=OUTPUT LOW enables divider; D1=INPUT (Hi-Z) cuts current during sleep.
 float readADCVoltage() {
   analogReadMilliVolts(BAT_ADC_PIN);   // discard first conversion (settling)

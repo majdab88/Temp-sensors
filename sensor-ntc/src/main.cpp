@@ -22,6 +22,10 @@
 #define NTC_T0_CELSIUS     25   // Reference temperature for NTC_NOMINAL (°C)
 #define SERIES_RESISTOR 10000   // Series resistor value (Ω) — must be 1% tolerance or better
 #define NTC_SAMPLES        20   // ADC readings to average for stable result
+// Calibration offset applied after Steinhart-Hart calculation.
+// To calibrate: compare NTC reading against a known-accurate reference at room temperature,
+// then set NTC_OFFSET_C = (reference_temp - raw_ntc_temp). Example: ref=20.5, raw=22.3 → offset=-1.8
+#define NTC_OFFSET_C      0.0f  // °C — adjust until NTC matches your reference thermometer
 
 // PCB circuit (for reference):
 //   3.3V ─── SERIES_RESISTOR ─── NTC_PIN (ADC) ─── NTC probe ─── NTC_ENABLE_PIN (GND switch)
@@ -232,6 +236,7 @@ float readNTC() {
   float steinhart = log(r_ntc / (float)NTC_NOMINAL) / (float)NTC_BCOEFF + 1.0f / t0K;
   float tempC    = (1.0f / steinhart) - 273.15f;
 
+  tempC += NTC_OFFSET_C;
   Serial.printf("[NTC] adc=%.0fmV  R_ntc=%.0fΩ  T=%.2f°C\n", adcMv, r_ntc, tempC);
 
   if (tempC < -55.0f || tempC > 125.0f) {

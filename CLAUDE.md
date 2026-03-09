@@ -118,12 +118,12 @@ SHT40 I2C address: `0x44`.
 | External button | 0 (D0) | Factory reset (hold 3 s) **and** deep sleep wakeup; LP GPIO |
 | Built-in LED | 15 | Status indicator |
 | Battery ADC | 2 (D2) | ADC midpoint of battery voltage divider |
-| Divider enable | 1 (D1) | GND switch for battery divider (OUTPUT LOW = on; INPUT = Hi-Z during sleep) |
-| NTC ADC | 3 | ADC midpoint of NTC voltage divider |
-| NTC enable | 5 | GND switch for NTC divider (OUTPUT LOW = on; INPUT = Hi-Z during sleep) |
+| Divider enable | 21 (D3) | GND switch for battery divider (OUTPUT LOW = on; INPUT = Hi-Z during sleep) |
+| NTC ADC | 1 (D1) | ADC midpoint of NTC voltage divider |
+| NTC enable | 22 (D4) | GND switch for NTC divider (OUTPUT LOW = on; INPUT = Hi-Z during sleep) |
 
-NTC PCB circuit: `3.3V → 10 kΩ (series) → GPIO3 (ADC) → NTC probe → GPIO5 (GND switch)`
-- No I2C bus — GPIO22 (D4) and GPIO23 (D5) are not used.
+NTC PCB circuit: `3.3V → 10 kΩ (series) → GPIO1/D1 (ADC) → NTC probe → GPIO22/D4 (GND switch)`
+- No I2C bus — GPIO22 (D4) is repurposed as NTC GND switch; GPIO23 (D5) is unused.
 - `hum` is always sent as `-999`; the hub should display "N/A" for these nodes.
 - NTC parameters (`NTC_NOMINAL`, `NTC_BCOEFF`, `SERIES_RESISTOR`) must match your probe's datasheet.
 
@@ -158,8 +158,8 @@ NTC PCB circuit: `3.3V → 10 kΩ (series) → GPIO3 (ADC) → NTC probe → GPI
 | `NTC_T0_CELSIUS` | 25 °C | Reference temperature for `NTC_NOMINAL` |
 | `SERIES_RESISTOR` | 10000 Ω | Fixed series resistor — use ≥1 % tolerance |
 | `NTC_SAMPLES` | 20 | ADC readings averaged per measurement |
-| `NTC_PIN` | 3 | ADC GPIO — adjust if PCB differs |
-| `NTC_ENABLE_PIN` | 5 | GND switch GPIO — adjust if PCB differs |
+| `NTC_PIN` | 1 | ADC GPIO — adjust if PCB differs |
+| `NTC_ENABLE_PIN` | 22 | GND switch GPIO — adjust if PCB differs |
 
 ### Encryption (both files)
 | Item | Detail |

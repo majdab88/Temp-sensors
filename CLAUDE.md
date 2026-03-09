@@ -119,7 +119,7 @@ SHT40 I2C address: `0x44`.
 | Built-in LED | 15 | Status indicator |
 | Battery ADC | 2 (D2) | ADC midpoint of battery voltage divider |
 | Divider enable | 1 (D1) | GND switch for battery divider (OUTPUT LOW = on; INPUT = Hi-Z during sleep) |
-| NTC ADC | 3 | ADC midpoint of NTC voltage divider |
+| NTC ADC | GPIO3 | ADC midpoint of NTC voltage divider (**not** D3 — D3 on XIAO ESP32-C6 is GPIO21, not ADC-capable) |
 | NTC enable | 23 (D5) | GND switch for NTC divider (OUTPUT LOW = on; INPUT = Hi-Z during sleep) |
 
 NTC PCB circuit: `3.3V → 10 kΩ (series) → GPIO3 (ADC) → NTC probe → GPIO23/D5 (GND switch)`

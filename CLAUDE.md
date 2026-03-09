@@ -120,10 +120,10 @@ SHT40 I2C address: `0x44`.
 | Battery ADC | 2 (D2) | ADC midpoint of battery voltage divider |
 | Divider enable | 1 (D1) | GND switch for battery divider (OUTPUT LOW = on; INPUT = Hi-Z during sleep) |
 | NTC ADC | 3 | ADC midpoint of NTC voltage divider |
-| NTC enable | 5 | GND switch for NTC divider (OUTPUT LOW = on; INPUT = Hi-Z during sleep) |
+| NTC enable | 23 (D5) | GND switch for NTC divider (OUTPUT LOW = on; INPUT = Hi-Z during sleep) |
 
-NTC PCB circuit: `3.3V → 10 kΩ (series) → GPIO3 (ADC) → NTC probe → GPIO5 (GND switch)`
-- No I2C bus — GPIO22 (D4) and GPIO23 (D5) are not used.
+NTC PCB circuit: `3.3V → 10 kΩ (series) → GPIO3 (ADC) → NTC probe → GPIO23/D5 (GND switch)`
+- No I2C bus — GPIO22 (D4) is not used. GPIO23 (D5) is repurposed as NTC GND switch.
 - `hum` is always sent as `-999`; the hub should display "N/A" for these nodes.
 - NTC parameters (`NTC_NOMINAL`, `NTC_BCOEFF`, `SERIES_RESISTOR`) must match your probe's datasheet.
 

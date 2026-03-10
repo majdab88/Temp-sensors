@@ -18,10 +18,19 @@
 // Adjust these constants to match your specific NTC thermistor's datasheet.
 // Common 10kΩ probe (e.g. 10k @ 25°C, B=3950):
 #define NTC_NOMINAL     10000   // NTC resistance at reference temperature (Ω)
-#define NTC_BCOEFF       3950   // Beta coefficient of the NTC (K)
+#define NTC_BCOEFF       3435   // Beta coefficient of the NTC (K) — Eliwell/Carel/Dixell standard NTC 10K curve
 #define NTC_T0_CELSIUS     25   // Reference temperature for NTC_NOMINAL (°C)
 #define SERIES_RESISTOR 10000   // Series resistor value (Ω) — must be 1% tolerance or better
 #define NTC_SAMPLES        20   // ADC readings to average for stable result
+// Two-point linear calibration: T_cal = T_raw * NTC_CAL_GAIN + NTC_CAL_OFFSET
+// How to calibrate:
+//   1. Stabilize sensor, note raw T (serial log) and reference T at a COLD point → (raw1, ref1)
+//   2. Repeat at a HOT point (e.g. warm water vs ice water, or fridge vs room) → (raw2, ref2)
+//   3. gain   = (ref2 - ref1) / (raw2 - raw1)
+//      offset = ref1 - gain * raw1
+// Single-point only: leave NTC_CAL_GAIN=1.0 and set NTC_CAL_OFFSET = ref - raw
+#define NTC_CAL_GAIN      1.0f  // slope — 1.0 = no gain correction
+#define NTC_CAL_OFFSET    0.0f  // °C offset — 0.0 = no offset
 
 // PCB circuit (for reference):
 //   3.3V ─── SERIES_RESISTOR ─── NTC_PIN (ADC) ─── NTC probe ─── NTC_ENABLE_PIN (GND switch)
@@ -232,6 +241,7 @@ float readNTC() {
   float steinhart = log(r_ntc / (float)NTC_NOMINAL) / (float)NTC_BCOEFF + 1.0f / t0K;
   float tempC    = (1.0f / steinhart) - 273.15f;
 
+  tempC = tempC * NTC_CAL_GAIN + NTC_CAL_OFFSET;
   Serial.printf("[NTC] adc=%.0fmV  R_ntc=%.0fΩ  T=%.2f°C\n", adcMv, r_ntc, tempC);
 
   if (tempC < -55.0f || tempC > 125.0f) {

@@ -170,9 +170,8 @@ button{cursor:pointer;font-family:inherit;font-size:inherit}
      ═══════════════════════════════════════════════════════════ -->
 <div class="preview-tabs">
   <button class="preview-tab active" data-page="login">Login</button>
-  <button class="preview-tab" data-page="admin-dashboard">Superadmin: Dashboard</button>
-  <button class="preview-tab" data-page="admin-users">Superadmin: Users</button>
   <button class="preview-tab" data-page="admin-orgs">Superadmin: Orgs</button>
+  <button class="preview-tab" data-page="admin-users">Superadmin: Users</button>
   <button class="preview-tab" data-page="admin-imp">Superadmin: Impersonating</button>
   <button class="preview-tab" data-page="owner-dashboard">Owner: Dashboard</button>
   <button class="preview-tab" data-page="owner-orgs">Owner: My Org</button>
@@ -209,54 +208,14 @@ button{cursor:pointer;font-family:inherit;font-size:inherit}
 </div>
 
 <!-- ═══════════════════════════════════════════════════════════
-     2. SUPERADMIN — DASHBOARD (unscoped, all sensors)
-     ═══════════════════════════════════════════════════════════ -->
-<div class="page-section" id="page-admin-dashboard">
-  <div class="layout">
-    <!-- Sidebar (superadmin) -->
-    <nav class="sidebar" id="sidebar-admin">
-      <div class="sidebar-brand">
-        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 14.76V3.5a2.5 2.5 0 0 0-5 0v11.26a4.5 4.5 0 1 0 5 0z"/></svg>
-        <span>TempSensors</span>
-      </div>
-      <ul class="nav-list">
-        <li><a class="nav-link active"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg> Dashboard</a></li>
-        <li><a class="nav-link"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg> History</a></li>
-        <li><a class="nav-link"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg> Pairing <span class="nav-badge">2</span></a></li>
-        <li><a class="nav-link"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg> Devices</a></li>
-        <li><a class="nav-link"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg> Setup</a></li>
-        <li><a class="nav-link"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg> Orgs</a></li>
-        <li><a class="nav-link"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg> Users</a></li>
-      </ul>
-      <div class="sidebar-footer">
-        <div style="font-size:12px;color:var(--text-3);margin-bottom:8px;text-align:center">admin <span style="opacity:.6">(superadmin)</span></div>
-        <button class="logout-btn"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg> Logout</button>
-      </div>
-    </nav>
-    <main class="main-content">
-      <div class="page-header">
-        <h1 class="page-title">Dashboard</h1>
-        <p class="page-subtitle">All sensors across all organizations — live updates via Socket.IO</p>
-      </div>
-      <div class="sensor-grid">
-        <div class="sensor-card"><div class="sensor-card-header"><div><div class="sensor-name">Greenhouse #1</div><div class="sensor-mac">AA:BB:CC:DD:E1:01</div></div><div class="status-dot online"></div></div><div class="sensor-readings"><div class="reading-item"><div class="reading-label">Temp</div><div class="reading-value temp">23.4<span class="reading-unit">&deg;C</span></div></div><div class="reading-item"><div class="reading-label">Humidity</div><div class="reading-value hum">58<span class="reading-unit">%</span></div></div></div><div class="sensor-meta"><span>Hub: John's Hub &middot; Bat: 87%</span></div></div>
-        <div class="sensor-card"><div class="sensor-card-header"><div><div class="sensor-name">Server Room</div><div class="sensor-mac">AA:BB:CC:DD:E2:02</div></div><div class="status-dot online"></div></div><div class="sensor-readings"><div class="reading-item"><div class="reading-label">Temp</div><div class="reading-value temp">19.8<span class="reading-unit">&deg;C</span></div></div><div class="reading-item"><div class="reading-label">Humidity</div><div class="reading-value hum">42<span class="reading-unit">%</span></div></div></div><div class="sensor-meta"><span>Hub: Office Hub &middot; Bat: 94%</span></div></div>
-        <div class="sensor-card"><div class="sensor-card-header"><div><div class="sensor-name">Cold Storage</div><div class="sensor-mac">AA:BB:CC:DD:E3:03</div></div><div class="status-dot stale"></div></div><div class="sensor-readings"><div class="reading-item"><div class="reading-label">Temp</div><div class="reading-value temp">4.1<span class="reading-unit">&deg;C</span></div></div><div class="reading-item"><div class="reading-label">Humidity</div><div class="reading-value na">N/A</div></div></div><div class="sensor-meta"><span>Hub: Mary's Hub &middot; Bat: 72% &middot; NTC</span></div></div>
-        <div class="sensor-card"><div class="sensor-card-header"><div><div class="sensor-name">Living Room</div><div class="sensor-mac">AA:BB:CC:DD:E4:04</div></div><div class="status-dot offline"></div></div><div class="sensor-readings"><div class="reading-item"><div class="reading-label">Temp</div><div class="reading-value temp">21.2<span class="reading-unit">&deg;C</span></div></div><div class="reading-item"><div class="reading-label">Humidity</div><div class="reading-value hum">55<span class="reading-unit">%</span></div></div></div><div class="sensor-meta"><span>Hub: John's Hub &middot; Bat: 15% &middot; Offline 12m ago</span></div></div>
-      </div>
-    </main>
-  </div>
-</div>
-
-<!-- ═══════════════════════════════════════════════════════════
-     3. SUPERADMIN — USERS PAGE
+     2. SUPERADMIN — USERS PAGE
      ═══════════════════════════════════════════════════════════ -->
 <div class="page-section" id="page-admin-users">
   <div class="layout">
     <nav class="sidebar">
       <div class="sidebar-brand"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 14.76V3.5a2.5 2.5 0 0 0-5 0v11.26a4.5 4.5 0 1 0 5 0z"/></svg><span>TempSensors</span></div>
       <ul class="nav-list">
-        <li><a class="nav-link">Dashboard</a></li><li><a class="nav-link">History</a></li><li><a class="nav-link">Pairing</a></li><li><a class="nav-link">Devices</a></li><li><a class="nav-link">Setup</a></li><li><a class="nav-link">Orgs</a></li><li><a class="nav-link active">Users</a></li>
+        <li><a class="nav-link">Orgs</a></li><li><a class="nav-link active">Users</a></li>
       </ul>
       <div class="sidebar-footer"><div style="font-size:12px;color:var(--text-3);margin-bottom:8px;text-align:center">admin <span style="opacity:.6">(superadmin)</span></div><button class="logout-btn">Logout</button></div>
     </nav>
@@ -335,14 +294,14 @@ button{cursor:pointer;font-family:inherit;font-size:inherit}
 </div>
 
 <!-- ═══════════════════════════════════════════════════════════
-     4. SUPERADMIN — ORGANIZATIONS PAGE
+     3. SUPERADMIN — ORGANIZATIONS PAGE
      ═══════════════════════════════════════════════════════════ -->
 <div class="page-section" id="page-admin-orgs">
   <div class="layout">
     <nav class="sidebar">
       <div class="sidebar-brand"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 14.76V3.5a2.5 2.5 0 0 0-5 0v11.26a4.5 4.5 0 1 0 5 0z"/></svg><span>TempSensors</span></div>
       <ul class="nav-list">
-        <li><a class="nav-link">Dashboard</a></li><li><a class="nav-link">History</a></li><li><a class="nav-link">Pairing</a></li><li><a class="nav-link">Devices</a></li><li><a class="nav-link">Setup</a></li><li><a class="nav-link active">Orgs</a></li><li><a class="nav-link">Users</a></li>
+        <li><a class="nav-link active">Orgs</a></li><li><a class="nav-link">Users</a></li>
       </ul>
       <div class="sidebar-footer"><div style="font-size:12px;color:var(--text-3);margin-bottom:8px;text-align:center">admin <span style="opacity:.6">(superadmin)</span></div><button class="logout-btn">Logout</button></div>
     </nav>
@@ -416,7 +375,7 @@ button{cursor:pointer;font-family:inherit;font-size:inherit}
 </div>
 
 <!-- ═══════════════════════════════════════════════════════════
-     5. SUPERADMIN — IMPERSONATING AN ORG
+     4. SUPERADMIN — IMPERSONATING AN ORG
      ═══════════════════════════════════════════════════════════ -->
 <div class="page-section" id="page-admin-imp">
   <div class="layout">
@@ -445,7 +404,7 @@ button{cursor:pointer;font-family:inherit;font-size:inherit}
 </div>
 
 <!-- ═══════════════════════════════════════════════════════════
-     6. OWNER — DASHBOARD (scoped to their org)
+     5. OWNER — DASHBOARD (scoped to their org)
      ═══════════════════════════════════════════════════════════ -->
 <div class="page-section" id="page-owner-dashboard">
   <div class="layout">
@@ -470,7 +429,7 @@ button{cursor:pointer;font-family:inherit;font-size:inherit}
 </div>
 
 <!-- ═══════════════════════════════════════════════════════════
-     7. OWNER — MY ORG (manage members)
+     6. OWNER — MY ORG (manage members)
      ═══════════════════════════════════════════════════════════ -->
 <div class="page-section" id="page-owner-orgs">
   <div class="layout">
@@ -518,7 +477,7 @@ button{cursor:pointer;font-family:inherit;font-size:inherit}
 </div>
 
 <!-- ═══════════════════════════════════════════════════════════
-     8. OWNER — DEVICES
+     7. OWNER — DEVICES
      ═══════════════════════════════════════════════════════════ -->
 <div class="page-section" id="page-owner-devices">
   <div class="layout">
@@ -558,7 +517,7 @@ button{cursor:pointer;font-family:inherit;font-size:inherit}
 </div>
 
 <!-- ═══════════════════════════════════════════════════════════
-     9. MEMBER — DASHBOARD (scoped, read + manage own sensors)
+     8. MEMBER — DASHBOARD (scoped, read + manage own sensors)
      ═══════════════════════════════════════════════════════════ -->
 <div class="page-section" id="page-member-dashboard">
   <div class="layout">

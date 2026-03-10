@@ -113,18 +113,26 @@ export default function Layout() {
     navigate('/organizations')
   }
 
-  const navLinks = [
-    { to: '/', end: true,  icon: <IconDashboard />, label: 'Dashboard' },
-    { to: '/history',      icon: <IconHistory />,   label: 'History'   },
-    { to: '/pairing',      icon: <IconPairing />,   label: 'Pairing', onClick: handlePairingClick, badge: pendingCount },
-    { to: '/devices',      icon: <IconDevices />,   label: 'Devices'   },
-    { to: '/setup',        icon: <IconSetup />,     label: 'Setup'     },
-  ]
+  // Sensor pages only shown when the user has an org context
+  // (owners/members always do; superadmin only when impersonating)
+  const showSensorPages = !isSuperadmin || impersonation
+
+  const navLinks = []
+
+  if (showSensorPages) {
+    navLinks.push(
+      { to: '/', end: true,  icon: <IconDashboard />, label: 'Dashboard' },
+      { to: '/history',      icon: <IconHistory />,   label: 'History'   },
+      { to: '/pairing',      icon: <IconPairing />,   label: 'Pairing', onClick: handlePairingClick, badge: pendingCount },
+      { to: '/devices',      icon: <IconDevices />,   label: 'Devices'   },
+      { to: '/setup',        icon: <IconSetup />,     label: 'Setup'     },
+    )
+  }
 
   // Admin-only nav links
   if (isSuperadmin) {
     navLinks.push(
-      { to: '/organizations', icon: <IconOrg />,   label: 'Orgs' },
+      { to: '/organizations', end: !showSensorPages, icon: <IconOrg />,   label: 'Orgs' },
       { to: '/users',         icon: <IconUsers />, label: 'Users' },
     )
   } else if (user?.role === 'owner') {

@@ -23,6 +23,24 @@ function SuperadminRoute({ children }) {
   return children
 }
 
+/** Redirect superadmin (not impersonating) away from sensor pages */
+function OrgScopedRoute({ children }) {
+  const { user, impersonation } = useAuth()
+  if (user?.role === 'superadmin' && !impersonation) {
+    return <Navigate to="/organizations" replace />
+  }
+  return children
+}
+
+/** Superadmin lands on /organizations; everyone else lands on Dashboard */
+function IndexRedirect() {
+  const { user, impersonation } = useAuth()
+  if (user?.role === 'superadmin' && !impersonation) {
+    return <Navigate to="/organizations" replace />
+  }
+  return <Dashboard />
+}
+
 export default function App() {
   return (
     <AuthProvider>
@@ -37,11 +55,11 @@ export default function App() {
               </ProtectedRoute>
             }
           >
-            <Route index element={<Dashboard />} />
-            <Route path="history" element={<History />} />
-            <Route path="pairing" element={<Pairing />} />
-            <Route path="devices" element={<Devices />} />
-            <Route path="setup" element={<Provision />} />
+            <Route index element={<IndexRedirect />} />
+            <Route path="history" element={<OrgScopedRoute><History /></OrgScopedRoute>} />
+            <Route path="pairing" element={<OrgScopedRoute><Pairing /></OrgScopedRoute>} />
+            <Route path="devices" element={<OrgScopedRoute><Devices /></OrgScopedRoute>} />
+            <Route path="setup" element={<OrgScopedRoute><Provision /></OrgScopedRoute>} />
             <Route path="organizations" element={<Organizations />} />
             <Route path="users" element={<SuperadminRoute><Users /></SuperadminRoute>} />
           </Route>

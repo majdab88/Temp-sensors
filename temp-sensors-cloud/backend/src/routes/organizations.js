@@ -14,7 +14,8 @@ router.get('/', async (req, res) => {
     let result;
     if (isSuperadminUnscoped(req)) {
       result = await query(
-        `SELECT o.id, o.name, o.owner_id, o.created_at, u.username AS owner_username,
+        `SELECT o.id, o.name, o.owner_id, o.created_at,
+                u.username AS owner_username, u.email AS owner_email,
                 (SELECT COUNT(*) FROM devices d WHERE d.org_id = o.id) AS device_count,
                 (SELECT COUNT(*) FROM memberships m WHERE m.org_id = o.id) AS member_count
          FROM organizations o
@@ -23,7 +24,8 @@ router.get('/', async (req, res) => {
       );
     } else {
       result = await query(
-        `SELECT o.id, o.name, o.owner_id, o.created_at, u.username AS owner_username,
+        `SELECT o.id, o.name, o.owner_id, o.created_at,
+                u.username AS owner_username, u.email AS owner_email,
                 (SELECT COUNT(*) FROM devices d WHERE d.org_id = o.id) AS device_count,
                 (SELECT COUNT(*) FROM memberships m WHERE m.org_id = o.id) AS member_count
          FROM organizations o
@@ -58,7 +60,7 @@ router.get('/:id/members', async (req, res) => {
 
   try {
     const result = await query(
-      `SELECT u.id, u.username, u.role AS user_role, m.role AS org_role, m.joined_at
+      `SELECT u.id, u.username, u.email, u.role AS user_role, m.role AS org_role, m.joined_at
        FROM memberships m
        JOIN users u ON u.id = m.user_id
        WHERE m.org_id = $1
@@ -72,23 +74,22 @@ router.get('/:id/members', async (req, res) => {
   }
 });
 
-// POST /api/organizations/:id/members — invite a member to an org
-// Owner (or superadmin) creates a new member user and adds them to the org
+// POST /api/organizations/:id/members — invite a member to an org by email
+// Owner (or superadmin) creates a new member user and adds them to the org.
+// If a user with that email already exists, they are added to the org directly.
 router.post('/:id/members', requireOwner, async (req, res) => {
   const orgId = parseInt(req.params.id, 10);
   if (!Number.isInteger(orgId) || orgId <= 0) {
     return res.status(400).json({ error: 'Invalid org id' });
   }
 
-  const { username, password } = req.body || {};
-  if (!username || !password) {
-    return res.status(400).json({ error: 'username and password are required' });
+  const { email, password } = req.body || {};
+  if (!email) {
+    return res.status(400).json({ error: 'email is required' });
   }
-  if (typeof username !== 'string' || username.trim().length < 2) {
-    return res.status(400).json({ error: 'username must be at least 2 characters' });
-  }
-  if (typeof password !== 'string' || password.length < 6) {
-    return res.status(400).json({ error: 'password must be at least 6 characters' });
+  const emailStr = String(email).trim().toLowerCase();
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(emailStr)) {
+    return res.status(400).json({ error: 'A valid email address is required' });
   }
 
   // Access check: owner must own this org (or be superadmin)
@@ -101,13 +102,45 @@ router.post('/:id/members', requireOwner, async (req, res) => {
   }
 
   try {
+    // Check if user already exists by email
+    const existing = await query('SELECT id, username, email FROM users WHERE email = $1', [emailStr]);
+
+    if (existing.rows.length > 0) {
+      // Existing user — just add them to the org
+      const user = existing.rows[0];
+      await query(
+        'INSERT INTO memberships (user_id, org_id, role) VALUES ($1, $2, $3) ON CONFLICT DO NOTHING',
+        [user.id, orgId, 'member']
+      );
+      return res.status(200).json({ id: user.id, email: user.email, username: user.username, org_role: 'member', note: 'Existing user added to organization' });
+    }
+
+    // New user — password required
+    if (!password || typeof password !== 'string' || password.length < 6) {
+      return res.status(400).json({ error: 'password (min 6 characters) is required for new members' });
+    }
+
     const hash = await bcrypt.hash(password, 12);
+    const username = emailStr.split('@')[0].slice(0, 64);
 
     // Create the member user
-    const userRes = await query(
-      'INSERT INTO users (username, password_hash, role) VALUES ($1, $2, $3) RETURNING id, username, role, created_at',
-      [username.trim(), hash, 'member']
-    );
+    let userRes;
+    try {
+      userRes = await query(
+        'INSERT INTO users (username, email, password_hash, role) VALUES ($1, $2, $3, $4) RETURNING id, username, email, role, created_at',
+        [username, emailStr, hash, 'member']
+      );
+    } catch (e) {
+      if (e.code === '23505' && e.constraint && e.constraint.includes('username')) {
+        const suffix = Math.random().toString(36).slice(2, 6);
+        userRes = await query(
+          'INSERT INTO users (username, email, password_hash, role) VALUES ($1, $2, $3, $4) RETURNING id, username, email, role, created_at',
+          [`${username}_${suffix}`, emailStr, hash, 'member']
+        );
+      } else {
+        throw e;
+      }
+    }
     const user = userRes.rows[0];
 
     // Add to org
@@ -119,20 +152,7 @@ router.post('/:id/members', requireOwner, async (req, res) => {
     res.status(201).json({ ...user, org_role: 'member' });
   } catch (err) {
     if (err.code === '23505') {
-      // User may already exist — try adding existing user as member
-      try {
-        const existing = await query('SELECT id FROM users WHERE username = $1', [username.trim()]);
-        if (existing.rows.length > 0) {
-          await query(
-            'INSERT INTO memberships (user_id, org_id, role) VALUES ($1, $2, $3) ON CONFLICT DO NOTHING',
-            [existing.rows[0].id, orgId, 'member']
-          );
-          return res.status(200).json({ id: existing.rows[0].id, username: username.trim(), org_role: 'member', note: 'Existing user added to organization' });
-        }
-      } catch (e) {
-        console.error(e);
-      }
-      return res.status(409).json({ error: 'Username already taken' });
+      return res.status(409).json({ error: 'User is already a member of this organization' });
     }
     console.error(err);
     res.status(500).json({ error: 'Database error' });

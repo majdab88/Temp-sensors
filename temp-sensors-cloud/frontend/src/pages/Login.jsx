@@ -7,7 +7,7 @@ import api from '../services/api'
 export default function Login() {
   const { login } = useAuth()
   const navigate = useNavigate()
-  const [username, setUsername] = useState('')
+  const [identifier, setIdentifier] = useState('')
   const [password, setPassword] = useState('')
   const [error, setError] = useState(null)
   const [loading, setLoading] = useState(false)
@@ -17,8 +17,14 @@ export default function Login() {
     setError(null)
     setLoading(true)
 
+    // Send as email if it looks like one, otherwise as username (for superadmin)
+    const isEmail = identifier.includes('@')
+    const body = isEmail
+      ? { email: identifier, password }
+      : { username: identifier, password }
+
     try {
-      const { data } = await api.post('/auth/login', { username, password })
+      const { data } = await api.post('/auth/login', body)
       login(data.accessToken, data.refreshToken)
       socket.connect()
       navigate('/')
@@ -45,15 +51,15 @@ export default function Login() {
 
         <form onSubmit={handleSubmit}>
           <div className="form-group">
-            <label htmlFor="username">Username</label>
+            <label htmlFor="login-id">Email</label>
             <input
-              id="username"
+              id="login-id"
               type="text"
-              value={username}
-              onChange={(e) => setUsername(e.target.value)}
-              placeholder="admin"
+              value={identifier}
+              onChange={(e) => setIdentifier(e.target.value)}
+              placeholder="you@example.com"
               autoFocus
-              autoComplete="username"
+              autoComplete="email"
               required
             />
           </div>

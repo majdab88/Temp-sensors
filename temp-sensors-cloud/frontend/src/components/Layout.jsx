@@ -171,7 +171,7 @@ export default function Layout() {
         <div className="sidebar-footer">
           {user && (
             <div style={{ fontSize: 12, color: 'var(--text-3)', marginBottom: 8, textAlign: 'center' }}>
-              {user.username} <span style={{ opacity: 0.6 }}>({user.role})</span>
+              {user.email || user.username} <span style={{ opacity: 0.6 }}>({user.role})</span>
             </div>
           )}
           <button className="logout-btn" onClick={handleLogout}>

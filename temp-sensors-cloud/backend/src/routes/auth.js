@@ -18,17 +18,26 @@ const loginLimiter = rateLimit({
 });
 
 // POST /api/auth/login
+// Accepts { email, password } for owners/members, or { username, password } for superadmin.
 router.post('/login', loginLimiter, async (req, res) => {
-  const { username, password } = req.body || {};
-  if (!username || !password) {
-    return res.status(400).json({ error: 'username and password are required' });
+  const { email, username, password } = req.body || {};
+  const login = email || username;
+  if (!login || !password) {
+    return res.status(400).json({ error: 'email (or username) and password are required' });
   }
 
   try {
-    const result = await query(
-      'SELECT id, username, password_hash, role FROM users WHERE username = $1',
-      [username]
+    // Try email first (owners/members), then fall back to username (superadmin)
+    let result = await query(
+      'SELECT id, username, email, password_hash, role FROM users WHERE email = $1',
+      [login]
     );
+    if (result.rows.length === 0) {
+      result = await query(
+        'SELECT id, username, email, password_hash, role FROM users WHERE username = $1',
+        [login]
+      );
+    }
     if (result.rows.length === 0) {
       return res.status(401).json({ error: 'Invalid credentials' });
     }
@@ -49,7 +58,10 @@ router.post('/login', loginLimiter, async (req, res) => {
       if (orgRes.rows.length > 0) orgId = orgRes.rows[0].org_id;
     }
 
-    const payload = { sub: user.id, username: user.username, role: user.role, orgId };
+    const payload = {
+      sub: user.id, username: user.username, email: user.email || null,
+      role: user.role, orgId,
+    };
 
     const accessToken = jwt.sign(payload, process.env.JWT_SECRET, { expiresIn: '1h' });
     const refreshToken = jwt.sign(payload, process.env.JWT_REFRESH_SECRET, { expiresIn: '7d' });
@@ -70,7 +82,7 @@ router.post('/refresh', (req, res) => {
   try {
     const decoded = jwt.verify(refreshToken, process.env.JWT_REFRESH_SECRET);
     const accessToken = jwt.sign(
-      { sub: decoded.sub, username: decoded.username, role: decoded.role, orgId: decoded.orgId },
+      { sub: decoded.sub, username: decoded.username, email: decoded.email || null, role: decoded.role, orgId: decoded.orgId },
       process.env.JWT_SECRET,
       { expiresIn: '1h' }
     );

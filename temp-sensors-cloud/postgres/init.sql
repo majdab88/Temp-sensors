@@ -5,9 +5,11 @@
 -- ============================================================
 
 -- Users (superadmin, owners, members)
+-- Owners and members are identified by email; superadmin uses username only.
 CREATE TABLE users (
   id            SERIAL PRIMARY KEY,
-  username      VARCHAR(64) UNIQUE NOT NULL,
+  username      VARCHAR(64) UNIQUE NOT NULL,       -- display name (superadmin login key)
+  email         VARCHAR(255) UNIQUE,               -- primary login for owners/members
   password_hash VARCHAR(255) NOT NULL,
   role          VARCHAR(12) DEFAULT 'owner' CHECK (role IN ('superadmin', 'owner', 'member')),
   created_at    TIMESTAMPTZ DEFAULT NOW()

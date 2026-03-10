@@ -24,7 +24,7 @@ export default function Organizations() {
 
   // Add member form
   const [showAddMember, setShowAddMember] = useState(false)
-  const [memberForm, setMemberForm] = useState({ username: '', password: '' })
+  const [memberForm, setMemberForm] = useState({ email: '', password: '' })
   const [addingMember, setAddingMember] = useState(false)
   const [memberError, setMemberError] = useState(null)
 
@@ -62,10 +62,10 @@ export default function Organizations() {
     setAddingMember(true)
     try {
       await api.post(`/organizations/${orgId}/members`, {
-        username: memberForm.username,
-        password: memberForm.password,
+        email: memberForm.email,
+        password: memberForm.password || undefined,
       })
-      setMemberForm({ username: '', password: '' })
+      setMemberForm({ email: '', password: '' })
       setShowAddMember(false)
       // Refresh members
       const res = await api.get(`/organizations/${orgId}/members`)
@@ -77,8 +77,8 @@ export default function Organizations() {
     }
   }
 
-  async function handleRemoveMember(orgId, userId, username) {
-    if (!window.confirm(`Remove "${username}" from this organization?`)) return
+  async function handleRemoveMember(orgId, userId, displayName) {
+    if (!window.confirm(`Remove "${displayName}" from this organization?`)) return
     try {
       await api.delete(`/organizations/${orgId}/members/${userId}`)
       setMembers((prev) => prev.filter((m) => m.id !== userId))
@@ -123,7 +123,7 @@ export default function Organizations() {
               >
                 <div className="device-card-info">
                   <div className="device-name">{org.name}</div>
-                  <div className="device-mac">Owner: {org.owner_username}</div>
+                  <div className="device-mac">Owner: {org.owner_email || org.owner_username}</div>
                   <div className="device-meta">
                     {org.device_count} hub{org.device_count !== 1 ? 's' : ''} &middot; {org.member_count} member{org.member_count !== 1 ? 's' : ''}
                   </div>
@@ -165,26 +165,26 @@ export default function Organizations() {
                       <form onSubmit={(e) => handleAddMember(e, org.id)}>
                         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
                           <input
-                            type="text"
-                            value={memberForm.username}
-                            onChange={(e) => setMemberForm({ ...memberForm, username: e.target.value })}
-                            placeholder="Username"
+                            type="email"
+                            value={memberForm.email}
+                            onChange={(e) => setMemberForm({ ...memberForm, email: e.target.value })}
+                            placeholder="member@example.com"
                             required
-                            minLength={2}
-                            style={{ flex: 1, minWidth: 120 }}
+                            style={{ flex: 1, minWidth: 160 }}
                           />
                           <input
                             type="password"
                             value={memberForm.password}
                             onChange={(e) => setMemberForm({ ...memberForm, password: e.target.value })}
-                            placeholder="Password (min 6)"
-                            required
-                            minLength={6}
+                            placeholder="Password (new users only)"
                             style={{ flex: 1, minWidth: 120 }}
                           />
                           <button type="submit" className="btn btn-primary btn-sm" disabled={addingMember}>
                             {addingMember ? 'Adding...' : 'Add'}
                           </button>
+                        </div>
+                        <div style={{ fontSize: 11, color: 'var(--text-3)', marginTop: 6 }}>
+                          If the email already has an account, they'll be added directly (no password needed).
                         </div>
                       </form>
                     </div>
@@ -202,7 +202,7 @@ export default function Organizations() {
                           padding: '8px 0', borderBottom: '1px solid var(--border, #e2e8f0)',
                         }}>
                           <div>
-                            <span style={{ fontWeight: 500 }}>{m.username}</span>
+                            <span style={{ fontWeight: 500 }}>{m.email || m.username}</span>
                             <span style={{
                               marginLeft: 8, fontSize: 11, padding: '2px 6px',
                               borderRadius: 4, background: m.org_role === 'owner' ? '#dbeafe' : '#f1f5f9',
@@ -215,7 +215,7 @@ export default function Organizations() {
                           {m.org_role !== 'owner' && (isSuperadmin || user?.role === 'owner') && (
                             <button
                               className="btn btn-danger btn-sm"
-                              onClick={() => handleRemoveMember(org.id, m.id, m.username)}
+                              onClick={() => handleRemoveMember(org.id, m.id, m.email || m.username)}
                               style={{ fontSize: 11, padding: '2px 8px' }}
                             >
                               Remove

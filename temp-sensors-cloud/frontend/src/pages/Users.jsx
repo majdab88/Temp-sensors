@@ -13,7 +13,7 @@ export default function Users() {
 
   // Create user form
   const [showForm, setShowForm] = useState(false)
-  const [formData, setFormData] = useState({ username: '', password: '', orgName: '' })
+  const [formData, setFormData] = useState({ email: '', password: '', orgName: '' })
   const [creating, setCreating] = useState(false)
   const [formError, setFormError] = useState(null)
 
@@ -33,12 +33,12 @@ export default function Users() {
     setCreating(true)
     try {
       await api.post('/users', {
-        username: formData.username,
+        email: formData.email,
         password: formData.password,
         role: 'owner',
         orgName: formData.orgName || undefined,
       })
-      setFormData({ username: '', password: '', orgName: '' })
+      setFormData({ email: '', password: '', orgName: '' })
       setShowForm(false)
       fetchUsers()
     } catch (err) {
@@ -48,8 +48,8 @@ export default function Users() {
     }
   }
 
-  async function handleDelete(userId, username) {
-    if (!window.confirm(`Delete user "${username}"? Their devices will become unassigned.`)) return
+  async function handleDelete(userId, displayName) {
+    if (!window.confirm(`Delete user "${displayName}"? Their devices will become unassigned.`)) return
     try {
       await api.delete(`/users/${userId}`)
       setUsers((prev) => prev.filter((u) => u.id !== userId))
@@ -82,14 +82,13 @@ export default function Users() {
           {formError && <div className="alert alert-error" style={{ marginBottom: 12 }}>{formError}</div>}
           <form onSubmit={handleCreate}>
             <div className="form-group">
-              <label>Username</label>
+              <label>Email</label>
               <input
-                type="text"
-                value={formData.username}
-                onChange={(e) => setFormData({ ...formData, username: e.target.value })}
-                placeholder="e.g. john"
+                type="email"
+                value={formData.email}
+                onChange={(e) => setFormData({ ...formData, email: e.target.value })}
+                placeholder="e.g. john@example.com"
                 required
-                minLength={2}
               />
             </div>
             <div className="form-group" style={{ marginTop: 10 }}>
@@ -129,7 +128,10 @@ export default function Users() {
           {users.map((user) => (
             <div key={user.id} className="device-card">
               <div className="device-card-info">
-                <div className="device-name">{user.username}</div>
+                <div className="device-name">{user.email || user.username}</div>
+                {user.email && (
+                  <div className="device-mac">{user.username}</div>
+                )}
                 <div className="device-mac" style={{ textTransform: 'capitalize' }}>{user.role}</div>
                 <div className="device-meta">Joined: {formatDate(user.created_at)}</div>
                 {user.organizations && user.organizations.length > 0 && (
@@ -148,7 +150,7 @@ export default function Users() {
                 {user.role !== 'superadmin' && (
                   <button
                     className="btn btn-danger btn-sm"
-                    onClick={() => handleDelete(user.id, user.username)}
+                    onClick={() => handleDelete(user.id, user.email || user.username)}
                   >
                     Delete
                   </button>

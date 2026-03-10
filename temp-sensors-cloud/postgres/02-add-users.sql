@@ -7,10 +7,14 @@
 CREATE TABLE IF NOT EXISTS users (
   id            SERIAL PRIMARY KEY,
   username      VARCHAR(64) UNIQUE NOT NULL,
+  email         VARCHAR(255) UNIQUE,
   password_hash VARCHAR(255) NOT NULL,
   role          VARCHAR(12) DEFAULT 'owner' CHECK (role IN ('superadmin', 'owner', 'member')),
   created_at    TIMESTAMPTZ DEFAULT NOW()
 );
+
+-- Add email column if table already existed without it
+ALTER TABLE users ADD COLUMN IF NOT EXISTS email VARCHAR(255) UNIQUE;
 
 CREATE TABLE IF NOT EXISTS organizations (
   id         SERIAL PRIMARY KEY,

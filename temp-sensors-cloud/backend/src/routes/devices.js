@@ -3,19 +3,35 @@
 const express = require('express');
 const crypto  = require('crypto');
 const { query } = require('../db');
-const { requireAuth } = require('../middleware/auth');
+const { requireAuth, requireSuperadmin, isSuperadminUnscoped } = require('../middleware/auth');
 
 const router = express.Router();
 router.use(requireAuth);
 
 const MAC_RE = /^[0-9A-Fa-f]{2}(:[0-9A-Fa-f]{2}){5}$/;
 
-// GET /api/devices — list all registered hubs
-router.get('/', async (_req, res) => {
+// GET /api/devices — list registered hubs (scoped by org)
+router.get('/', async (req, res) => {
   try {
-    const result = await query(
-      'SELECT id, mac, name, registered_at FROM devices ORDER BY registered_at DESC'
-    );
+    let result;
+    if (isSuperadminUnscoped(req)) {
+      result = await query(
+        `SELECT d.id, d.mac, d.name, d.org_id, d.registered_at,
+                o.name AS org_name
+         FROM devices d
+         LEFT JOIN organizations o ON o.id = d.org_id
+         ORDER BY d.registered_at DESC`
+      );
+    } else if (req.orgId) {
+      result = await query(
+        `SELECT id, mac, name, org_id, registered_at
+         FROM devices WHERE org_id = $1
+         ORDER BY registered_at DESC`,
+        [req.orgId]
+      );
+    } else {
+      result = { rows: [] };
+    }
     res.json(result.rows);
   } catch (err) {
     console.error(err);
@@ -35,19 +51,43 @@ router.post('/register', async (req, res) => {
 
   const normMac = mac.toUpperCase();
   const apiKey  = crypto.randomBytes(32).toString('hex'); // 64-char hex string
+  const orgId   = req.orgId || null;
 
   try {
     // On re-provisioning (hub BOOT-reset), update api_key so old credentials are invalidated.
+    // Only set org_id on new devices or if previously unowned.
     const result = await query(
-      `INSERT INTO devices (mac, name, api_key)
-       VALUES ($1, $2, $3)
+      `INSERT INTO devices (mac, name, api_key, org_id)
+       VALUES ($1, $2, $3, $4)
        ON CONFLICT (mac) DO UPDATE
          SET name    = COALESCE(EXCLUDED.name, devices.name),
-             api_key = EXCLUDED.api_key
-       RETURNING id, mac, name, api_key, registered_at`,
-      [normMac, name || null, apiKey]
+             api_key = EXCLUDED.api_key,
+             org_id  = COALESCE(devices.org_id, EXCLUDED.org_id)
+       RETURNING id, mac, name, api_key, org_id, registered_at`,
+      [normMac, name || null, apiKey, orgId]
     );
     res.status(201).json(result.rows[0]);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Database error' });
+  }
+});
+
+// PUT /api/devices/:id/assign — superadmin assigns a device to an org
+router.put('/:id/assign', requireSuperadmin, async (req, res) => {
+  const id = parseInt(req.params.id, 10);
+  if (!Number.isInteger(id) || id <= 0) {
+    return res.status(400).json({ error: 'Invalid device id' });
+  }
+  const { org_id } = req.body || {};
+
+  try {
+    const result = await query(
+      'UPDATE devices SET org_id = $1 WHERE id = $2 RETURNING id, mac, name, org_id',
+      [org_id || null, id]
+    );
+    if (result.rows.length === 0) return res.status(404).json({ error: 'Device not found' });
+    res.json(result.rows[0]);
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'Database error' });

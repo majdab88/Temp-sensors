@@ -2,23 +2,38 @@
 
 const express = require('express');
 const { query } = require('../db');
-const { requireAuth } = require('../middleware/auth');
+const { requireAuth, isSuperadminUnscoped } = require('../middleware/auth');
 const { publishSensorRemove, pushSyncToHub } = require('../mqtt');
 
 const router = express.Router();
 router.use(requireAuth);
 
-// GET /api/sensors — list all sensor nodes with their hub info
-router.get('/', async (_req, res) => {
+// GET /api/sensors — list sensor nodes scoped by org
+router.get('/', async (req, res) => {
   try {
-    const result = await query(
-      `SELECT s.id, s.device_id, s.mac, s.name, s.paired_at, s.active,
-              d.mac AS hub_mac, d.name AS hub_name
-       FROM sensors s
-       JOIN devices d ON d.id = s.device_id
-       WHERE s.active = TRUE
-       ORDER BY s.paired_at DESC`
-    );
+    let result;
+    if (isSuperadminUnscoped(req)) {
+      result = await query(
+        `SELECT s.id, s.device_id, s.mac, s.name, s.paired_at, s.active,
+                d.mac AS hub_mac, d.name AS hub_name, d.org_id
+         FROM sensors s
+         JOIN devices d ON d.id = s.device_id
+         WHERE s.active = TRUE
+         ORDER BY s.paired_at DESC`
+      );
+    } else if (req.orgId) {
+      result = await query(
+        `SELECT s.id, s.device_id, s.mac, s.name, s.paired_at, s.active,
+                d.mac AS hub_mac, d.name AS hub_name
+         FROM sensors s
+         JOIN devices d ON d.id = s.device_id
+         WHERE s.active = TRUE AND d.org_id = $1
+         ORDER BY s.paired_at DESC`,
+        [req.orgId]
+      );
+    } else {
+      result = { rows: [] };
+    }
     res.json(result.rows);
   } catch (err) {
     console.error(err);
@@ -26,7 +41,7 @@ router.get('/', async (_req, res) => {
   }
 });
 
-// PUT /api/sensors/:id — rename a sensor
+// PUT /api/sensors/:id — rename a sensor (with ownership check)
 router.put('/:id', async (req, res) => {
   const id = parseInt(req.params.id, 10);
   if (!Number.isInteger(id) || id <= 0) {
@@ -36,6 +51,16 @@ router.put('/:id', async (req, res) => {
   if (!name || typeof name !== 'string' || !name.trim()) {
     return res.status(400).json({ error: 'name is required' });
   }
+
+  // Ownership check for non-superadmin
+  if (!isSuperadminUnscoped(req) && req.orgId) {
+    const check = await query(
+      'SELECT 1 FROM sensors s JOIN devices d ON d.id = s.device_id WHERE s.id = $1 AND d.org_id = $2',
+      [id, req.orgId]
+    );
+    if (check.rows.length === 0) return res.status(404).json({ error: 'Sensor not found' });
+  }
+
   try {
     const result = await query(
       'UPDATE sensors SET name = $1 WHERE id = $2 RETURNING id, mac, name',
@@ -58,11 +83,16 @@ router.delete('/:id', async (req, res) => {
   try {
     // Fetch hub MAC before deleting so we can publish the MQTT remove message
     const lookup = await query(
-      'SELECT s.mac AS sensor_mac, d.mac AS hub_mac FROM sensors s JOIN devices d ON d.id = s.device_id WHERE s.id = $1',
+      'SELECT s.mac AS sensor_mac, d.mac AS hub_mac, d.org_id FROM sensors s JOIN devices d ON d.id = s.device_id WHERE s.id = $1',
       [id]
     );
     if (lookup.rows.length === 0) return res.status(404).json({ error: 'Sensor not found' });
-    const { sensor_mac, hub_mac } = lookup.rows[0];
+    const { sensor_mac, hub_mac, org_id } = lookup.rows[0];
+
+    // Ownership check for non-superadmin
+    if (!isSuperadminUnscoped(req) && req.orgId && org_id !== req.orgId) {
+      return res.status(404).json({ error: 'Sensor not found' });
+    }
 
     // Delete all readings first, then soft-delete the sensor row.
     // Soft-delete (active = FALSE) prevents the upsert in handleSensorData

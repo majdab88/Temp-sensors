@@ -66,10 +66,32 @@ function IconThermo({ size = 20 }) {
   )
 }
 
+function IconUsers({ size = 22 }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/>
+      <circle cx="9" cy="7" r="4"/>
+      <path d="M23 21v-2a4 4 0 0 0-3-3.87"/>
+      <path d="M16 3.13a4 4 0 0 1 0 7.75"/>
+    </svg>
+  )
+}
+
+function IconOrg({ size = 22 }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>
+      <polyline points="9 22 9 12 15 12 15 22"/>
+    </svg>
+  )
+}
+
 export default function Layout() {
-  const { logout } = useAuth()
+  const { user, logout, impersonation, stopImpersonating } = useAuth()
   const navigate = useNavigate()
   const [pendingCount, setPendingCount] = useState(0)
+
+  const isSuperadmin = user?.role === 'superadmin'
 
   useEffect(() => {
     socket.on('pairingRequest', () => setPendingCount((n) => n + 1))
@@ -86,6 +108,11 @@ export default function Layout() {
     setPendingCount(0)
   }
 
+  function handleStopImpersonating() {
+    stopImpersonating()
+    navigate('/organizations')
+  }
+
   const navLinks = [
     { to: '/', end: true,  icon: <IconDashboard />, label: 'Dashboard' },
     { to: '/history',      icon: <IconHistory />,   label: 'History'   },
@@ -93,6 +120,18 @@ export default function Layout() {
     { to: '/devices',      icon: <IconDevices />,   label: 'Devices'   },
     { to: '/setup',        icon: <IconSetup />,     label: 'Setup'     },
   ]
+
+  // Admin-only nav links
+  if (isSuperadmin) {
+    navLinks.push(
+      { to: '/organizations', icon: <IconOrg />,   label: 'Orgs' },
+      { to: '/users',         icon: <IconUsers />, label: 'Users' },
+    )
+  } else if (user?.role === 'owner') {
+    navLinks.push(
+      { to: '/organizations', icon: <IconOrg />, label: 'My Org' },
+    )
+  }
 
   return (
     <div className="layout">
@@ -130,6 +169,11 @@ export default function Layout() {
           ))}
         </ul>
         <div className="sidebar-footer">
+          {user && (
+            <div style={{ fontSize: 12, color: 'var(--text-3)', marginBottom: 8, textAlign: 'center' }}>
+              {user.username} <span style={{ opacity: 0.6 }}>({user.role})</span>
+            </div>
+          )}
           <button className="logout-btn" onClick={handleLogout}>
             <IconLogout /> Logout
           </button>
@@ -138,6 +182,22 @@ export default function Layout() {
 
       {/* ── Main content ───────────────────────────────────── */}
       <main className="main-content">
+        {impersonation && (
+          <div style={{
+            background: '#fef3c7', color: '#92400e', padding: '8px 16px',
+            display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+            borderRadius: 8, marginBottom: 16, fontSize: 13, fontWeight: 500,
+          }}>
+            <span>Viewing as: <strong>{impersonation.orgName}</strong></span>
+            <button
+              className="btn btn-ghost btn-sm"
+              style={{ color: '#92400e', fontWeight: 600 }}
+              onClick={handleStopImpersonating}
+            >
+              Stop Viewing
+            </button>
+          </div>
+        )}
         <Outlet />
       </main>
 

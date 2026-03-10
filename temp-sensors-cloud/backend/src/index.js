@@ -4,6 +4,7 @@ const express  = require('express');
 const http     = require('http');
 const { Server } = require('socket.io');
 
+const { query } = require('./db');
 const { initMqtt, getHubStatus } = require('./mqtt');
 const authRoutes      = require('./routes/auth');
 const deviceRoutes    = require('./routes/devices');
@@ -11,6 +12,8 @@ const sensorRoutes    = require('./routes/sensors');
 const readingRoutes   = require('./routes/readings');
 const pairingRoutes   = require('./routes/pairing');
 const provisionRoutes = require('./routes/provision');
+const userRoutes      = require('./routes/users');
+const orgRoutes       = require('./routes/organizations');
 
 const app    = express();
 const server = http.createServer(app);
@@ -35,6 +38,8 @@ app.use('/api/sensors',              sensorRoutes);
 app.use('/api/sensors/:id/readings', readingRoutes);
 app.use('/api/pairing',              pairingRoutes);
 app.use('/api/provision',            provisionRoutes);
+app.use('/api/users',                userRoutes);
+app.use('/api/organizations',        orgRoutes);
 
 // ── 404 fallback ──────────────────────────────────────────────────────────────
 app.use((_req, res) => res.status(404).json({ error: 'Not found' }));
@@ -64,8 +69,28 @@ io.on('connection', (socket) => {
 // ── MQTT bridge ───────────────────────────────────────────────────────────────
 initMqtt(io);
 
+// ── Seed superadmin on first boot ─────────────────────────────────────────────
+async function seedSuperadmin() {
+  try {
+    const { rows } = await query("SELECT id FROM users WHERE role = 'superadmin' LIMIT 1");
+    if (rows.length > 0) return;
+    const username = process.env.ADMIN_USERNAME || 'admin';
+    const hash = process.env.ADMIN_PASSWORD_HASH;
+    if (!hash) { console.error('ADMIN_PASSWORD_HASH not set — cannot seed superadmin'); return; }
+    await query(
+      'INSERT INTO users (username, password_hash, role) VALUES ($1, $2, $3) ON CONFLICT (username) DO NOTHING',
+      [username, hash, 'superadmin']
+    );
+    console.log(`Seeded superadmin user: ${username}`);
+  } catch (err) {
+    console.error('Failed to seed superadmin:', err.message);
+  }
+}
+
 // ── Start ─────────────────────────────────────────────────────────────────────
 const PORT = process.env.PORT || 3000;
-server.listen(PORT, () => {
-  console.log(`Backend listening on port ${PORT}`);
+seedSuperadmin().then(() => {
+  server.listen(PORT, () => {
+    console.log(`Backend listening on port ${PORT}`);
+  });
 });

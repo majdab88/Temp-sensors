@@ -2,10 +2,20 @@ import axios from 'axios'
 
 const api = axios.create({ baseURL: '/api' })
 
-// Attach JWT to every request
+// Attach JWT + impersonation header to every request
 api.interceptors.request.use((config) => {
   const token = localStorage.getItem('accessToken')
   if (token) config.headers.Authorization = `Bearer ${token}`
+
+  // Superadmin org impersonation
+  const imp = sessionStorage.getItem('impersonation')
+  if (imp) {
+    try {
+      const { orgId } = JSON.parse(imp)
+      if (orgId) config.headers['X-Org-Id'] = String(orgId)
+    } catch { /* ignore */ }
+  }
+
   return config
 })
 

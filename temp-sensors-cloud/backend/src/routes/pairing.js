@@ -2,7 +2,7 @@
 
 const express = require('express');
 const { query } = require('../db');
-const { requireAuth } = require('../middleware/auth');
+const { requireAuth, isSuperadminUnscoped } = require('../middleware/auth');
 const { publishPairingResponse } = require('../mqtt');
 
 const router = express.Router();
@@ -14,15 +14,28 @@ router.get('/requests', async (req, res) => {
   const VALID_STATUSES = ['pending', 'approved', 'rejected'];
 
   const params = [];
-  let where = '';
+  const conditions = [];
+  let nextParam = 1;
 
   if (status) {
     if (!VALID_STATUSES.includes(status)) {
       return res.status(400).json({ error: 'status must be pending, approved, or rejected' });
     }
-    where = 'WHERE pr.status = $1';
+    conditions.push(`pr.status = $${nextParam++}`);
     params.push(status);
   }
+
+  // Org scoping
+  if (!isSuperadminUnscoped(req)) {
+    if (req.orgId) {
+      conditions.push(`d.org_id = $${nextParam++}`);
+      params.push(req.orgId);
+    } else {
+      return res.json([]);
+    }
+  }
+
+  const where = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
 
   try {
     const result = await query(
@@ -54,9 +67,18 @@ async function resolveRequest(req, res, approved) {
     return res.status(400).json({ error: 'Invalid pairing request id' });
   }
 
-  const resolvedBy = req.user?.sub || 'admin';
+  const resolvedBy = req.user?.username || String(req.user?.sub) || 'admin';
 
   try {
+    // Ownership check for non-superadmin
+    if (!isSuperadminUnscoped(req) && req.orgId) {
+      const check = await query(
+        'SELECT 1 FROM pairing_requests pr JOIN devices d ON d.id = pr.device_id WHERE pr.id = $1 AND d.org_id = $2',
+        [id, req.orgId]
+      );
+      if (check.rows.length === 0) return res.status(404).json({ error: 'Pending pairing request not found' });
+    }
+
     const result = await query(
       `UPDATE pairing_requests
        SET status = $1, resolved_at = NOW(), resolved_by = $2

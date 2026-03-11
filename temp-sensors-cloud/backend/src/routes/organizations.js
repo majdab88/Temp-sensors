@@ -22,6 +22,17 @@ router.get('/', async (req, res) => {
          JOIN users u ON u.id = o.owner_id
          ORDER BY o.created_at DESC`
       );
+    } else if (req.user.role === 'superadmin' && req.impersonating) {
+      result = await query(
+        `SELECT o.id, o.name, o.owner_id, o.created_at,
+                u.username AS owner_username, u.email AS owner_email,
+                (SELECT COUNT(*) FROM devices d WHERE d.org_id = o.id) AS device_count,
+                (SELECT COUNT(*) FROM memberships m WHERE m.org_id = o.id) AS member_count
+         FROM organizations o
+         JOIN users u ON u.id = o.owner_id
+         WHERE o.id = $1`,
+        [req.orgId]
+      );
     } else {
       result = await query(
         `SELECT o.id, o.name, o.owner_id, o.created_at,

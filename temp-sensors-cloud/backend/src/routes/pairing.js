@@ -99,11 +99,13 @@ async function resolveRequest(req, res, approved) {
     // in handleSensorData finds active = TRUE and accepts them.
     if (approved) {
       // Insert the sensor if brand-new; re-activate if it was previously soft-deleted.
+      const normMac = row.slave_mac.toUpperCase();
+      const defaultName = 'Sensor-' + normMac.replace(/:/g, '').slice(-4);
       await query(
-        `INSERT INTO sensors (device_id, mac, active)
-         VALUES ($1, $2, TRUE)
-         ON CONFLICT (device_id, mac) DO UPDATE SET active = TRUE`,
-        [row.device_id, row.slave_mac.toUpperCase()]
+        `INSERT INTO sensors (device_id, mac, name, active)
+         VALUES ($1, $2, $3, TRUE)
+         ON CONFLICT (device_id, mac) DO UPDATE SET active = TRUE, name = COALESCE(sensors.name, EXCLUDED.name)`,
+        [row.device_id, normMac, defaultName]
       );
     }
 

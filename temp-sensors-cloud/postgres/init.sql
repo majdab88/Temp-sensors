@@ -4,14 +4,51 @@
 -- /docker-entrypoint-initdb.d/01-init.sql
 -- ============================================================
 
+-- Users (superadmin, owners, members)
+-- Owners and members are identified by email; superadmin uses username only.
+CREATE TABLE users (
+  id            SERIAL PRIMARY KEY,
+  username      VARCHAR(64) UNIQUE NOT NULL,       -- display name (superadmin login key)
+  email         VARCHAR(255) UNIQUE,               -- primary login for owners/members
+  password_hash VARCHAR(255) NOT NULL,
+  role          VARCHAR(12) DEFAULT 'owner' CHECK (role IN ('superadmin', 'owner', 'member')),
+  created_at    TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- Organizations — each owner gets one; represents their standalone sensor system
+CREATE TABLE organizations (
+  id         SERIAL PRIMARY KEY,
+  name       VARCHAR(128) NOT NULL,
+  owner_id   INT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX ON organizations (owner_id);
+
+-- Memberships — links members (and owners) to organizations
+CREATE TABLE memberships (
+  id        SERIAL PRIMARY KEY,
+  user_id   INT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  org_id    INT NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+  role      VARCHAR(10) DEFAULT 'member' CHECK (role IN ('owner', 'member')),
+  joined_at TIMESTAMPTZ DEFAULT NOW(),
+  UNIQUE (user_id, org_id)
+);
+
+CREATE INDEX ON memberships (user_id);
+CREATE INDEX ON memberships (org_id);
+
 -- Hub devices (one row per physical hub ESP32)
 CREATE TABLE devices (
   id            SERIAL PRIMARY KEY,
   mac           VARCHAR(17) UNIQUE NOT NULL,   -- e.g. "AA:BB:CC:DD:EE:FF"
   name          VARCHAR(64),
   api_key       VARCHAR(64) UNIQUE NOT NULL,   -- MQTT password + app auth token
+  org_id        INT REFERENCES organizations(id) ON DELETE SET NULL,
   registered_at TIMESTAMPTZ DEFAULT NOW()
 );
+
+CREATE INDEX ON devices (org_id);
 
 -- Sensor nodes paired to a hub
 CREATE TABLE sensors (

@@ -100,7 +100,7 @@ async function resolveRequest(req, res, approved) {
     if (approved) {
       // Insert the sensor if brand-new; re-activate if it was previously soft-deleted.
       const normMac = row.slave_mac.toUpperCase();
-      const defaultName = 'Sensor-' + normMac.replace(/:/g, '').slice(-4);
+      const defaultName = 'TempSens-' + normMac.replace(/:/g, '').slice(-6);
       await query(
         `INSERT INTO sensors (device_id, mac, name, active)
          VALUES ($1, $2, $3, TRUE)

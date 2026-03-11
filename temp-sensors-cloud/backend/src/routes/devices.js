@@ -73,6 +73,39 @@ router.post('/register', async (req, res) => {
   }
 });
 
+// PUT /api/devices/:id — rename a device
+router.put('/:id', async (req, res) => {
+  const id = parseInt(req.params.id, 10);
+  if (!Number.isInteger(id) || id <= 0) {
+    return res.status(400).json({ error: 'Invalid device id' });
+  }
+  const { name } = req.body || {};
+  if (!name || typeof name !== 'string' || !name.trim()) {
+    return res.status(400).json({ error: 'name is required' });
+  }
+
+  // Ownership check for non-superadmin
+  if (!isSuperadminUnscoped(req) && req.orgId) {
+    const check = await query(
+      'SELECT 1 FROM devices WHERE id = $1 AND org_id = $2',
+      [id, req.orgId]
+    );
+    if (check.rows.length === 0) return res.status(404).json({ error: 'Device not found' });
+  }
+
+  try {
+    const result = await query(
+      'UPDATE devices SET name = $1 WHERE id = $2 RETURNING id, mac, name',
+      [name.trim().slice(0, 64), id]
+    );
+    if (result.rows.length === 0) return res.status(404).json({ error: 'Device not found' });
+    res.json(result.rows[0]);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Database error' });
+  }
+});
+
 // PUT /api/devices/:id/assign — superadmin assigns a device to an org
 router.put('/:id/assign', requireSuperadmin, async (req, res) => {
   const id = parseInt(req.params.id, 10);

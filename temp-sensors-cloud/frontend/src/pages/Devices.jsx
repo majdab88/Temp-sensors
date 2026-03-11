@@ -14,6 +14,10 @@ export default function Devices() {
   // Track online/offline status per hub MAC via hubStatus socket events
   const [hubStatus, setHubStatus] = useState({}) // MAC -> { online, ip, ts }
 
+  // Device rename
+  const [editingId, setEditingId] = useState(null)
+  const [editingName, setEditingName] = useState('')
+
   useEffect(() => {
     api.get('/devices')
       .then((res) => {
@@ -36,6 +40,18 @@ export default function Devices() {
       socket.off('hubStatus', onHubStatus)
     }
   }, [])
+
+  async function handleRename(deviceId) {
+    const trimmed = editingName.trim()
+    if (!trimmed) return
+    try {
+      const res = await api.put(`/devices/${deviceId}`, { name: trimmed })
+      setDevices((prev) => prev.map(d => d.id === deviceId ? { ...d, name: res.data.name } : d))
+      setEditingId(null)
+    } catch {
+      alert('Failed to rename device')
+    }
+  }
 
   if (loading) return <div className="state-loading">Loading devices...</div>
   if (error)   return <div className="state-error"><h3>Error</h3><p>{error}</p></div>
@@ -61,7 +77,35 @@ export default function Devices() {
             return (
               <div key={device.id} className="device-card">
                 <div className="device-card-info">
-                  <div className="device-name">{device.name || 'Unnamed Hub'}</div>
+                  {editingId === device.id ? (
+                    <form
+                      onSubmit={(e) => { e.preventDefault(); handleRename(device.id) }}
+                      style={{ display: 'flex', gap: 6, alignItems: 'center', marginBottom: 4 }}
+                    >
+                      <input
+                        type="text"
+                        value={editingName}
+                        onChange={(e) => setEditingName(e.target.value)}
+                        autoFocus
+                        style={{ fontSize: 14, padding: '3px 8px', width: 200 }}
+                        onKeyDown={(e) => { if (e.key === 'Escape') setEditingId(null) }}
+                      />
+                      <button type="submit" className="btn btn-primary btn-sm" style={{ fontSize: 12, padding: '3px 10px' }}>Save</button>
+                      <button type="button" className="btn btn-ghost btn-sm" style={{ fontSize: 12, padding: '3px 10px' }} onClick={() => setEditingId(null)}>Cancel</button>
+                    </form>
+                  ) : (
+                    <div className="device-name">
+                      {device.name || 'Unnamed Hub'}
+                      <button
+                        className="btn btn-ghost btn-sm"
+                        onClick={() => { setEditingId(device.id); setEditingName(device.name || '') }}
+                        style={{ fontSize: 12, padding: '1px 6px', marginLeft: 6, opacity: 0.6 }}
+                        title="Rename device"
+                      >
+                        &#9998;
+                      </button>
+                    </div>
+                  )}
                   <div className="device-mac">{device.mac}</div>
                   <div className="device-meta">Registered: {formatDate(device.registered_at)}</div>
                   {status?.ip && (

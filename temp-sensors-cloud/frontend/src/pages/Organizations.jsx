@@ -17,16 +17,22 @@ export default function Organizations() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
 
-  // Expanded org (show members)
+  // Expanded org (show members + devices)
   const [expandedOrg, setExpandedOrg] = useState(null)
   const [members, setMembers] = useState([])
   const [membersLoading, setMembersLoading] = useState(false)
+  const [devices, setDevices] = useState([])
+  const [devicesLoading, setDevicesLoading] = useState(false)
 
   // Add member form
   const [showAddMember, setShowAddMember] = useState(false)
   const [memberForm, setMemberForm] = useState({ email: '', password: '' })
   const [addingMember, setAddingMember] = useState(false)
   const [memberError, setMemberError] = useState(null)
+
+  // Device rename
+  const [editingDeviceId, setEditingDeviceId] = useState(null)
+  const [editingDeviceName, setEditingDeviceName] = useState('')
 
   const fetchOrgs = useCallback(() => {
     setLoading(true)
@@ -45,15 +51,18 @@ export default function Organizations() {
     }
     setExpandedOrg(orgId)
     setMembersLoading(true)
+    setDevicesLoading(true)
     setShowAddMember(false)
-    try {
-      const res = await api.get(`/organizations/${orgId}/members`)
-      setMembers(res.data)
-    } catch {
-      setMembers([])
-    } finally {
-      setMembersLoading(false)
-    }
+    setEditingDeviceId(null)
+
+    const [membersRes, devicesRes] = await Promise.allSettled([
+      api.get(`/organizations/${orgId}/members`),
+      api.get(`/organizations/${orgId}/devices`),
+    ])
+    setMembers(membersRes.status === 'fulfilled' ? membersRes.value.data : [])
+    setMembersLoading(false)
+    setDevices(devicesRes.status === 'fulfilled' ? devicesRes.value.data : [])
+    setDevicesLoading(false)
   }
 
   async function handleAddMember(e, orgId) {
@@ -84,6 +93,18 @@ export default function Organizations() {
       setMembers((prev) => prev.filter((m) => m.id !== userId))
     } catch {
       alert('Failed to remove member')
+    }
+  }
+
+  async function handleRenameDevice(deviceId) {
+    const trimmed = editingDeviceName.trim()
+    if (!trimmed) return
+    try {
+      const res = await api.put(`/devices/${deviceId}`, { name: trimmed })
+      setDevices((prev) => prev.map(d => d.id === deviceId ? { ...d, name: res.data.name } : d))
+      setEditingDeviceId(null)
+    } catch {
+      alert('Failed to rename device')
     }
   }
 
@@ -144,9 +165,11 @@ export default function Organizations() {
                 </div>
               </div>
 
-              {/* Expanded: Members panel */}
+              {/* Expanded panel: Members + Devices/Sensors */}
               {expandedOrg === org.id && (
                 <div className="card" style={{ margin: '0 0 12px 0', padding: 16, borderTop: 'none', borderTopLeftRadius: 0, borderTopRightRadius: 0 }}>
+
+                  {/* --- Members Section --- */}
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
                     <h4 style={{ margin: 0, fontSize: 14, fontWeight: 600 }}>Members</h4>
                     {(isSuperadmin || user?.role === 'owner') && (
@@ -225,6 +248,100 @@ export default function Organizations() {
                       ))}
                     </div>
                   )}
+
+                  {/* --- Devices & Sensors Section --- */}
+                  <div style={{ marginTop: 20, borderTop: '1px solid var(--border, #e2e8f0)', paddingTop: 16 }}>
+                    <h4 style={{ margin: '0 0 12px 0', fontSize: 14, fontWeight: 600 }}>Devices</h4>
+
+                    {devicesLoading ? (
+                      <div style={{ color: 'var(--text-3)', fontSize: 13 }}>Loading devices...</div>
+                    ) : devices.length === 0 ? (
+                      <div style={{ color: 'var(--text-3)', fontSize: 13 }}>No devices registered</div>
+                    ) : (
+                      <div>
+                        {devices.map((device) => (
+                          <div key={device.id} style={{ marginBottom: 12 }}>
+                            {/* Device row */}
+                            <div style={{
+                              display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+                              padding: '8px 0', borderBottom: '1px solid var(--border, #e2e8f0)',
+                            }}>
+                              <div style={{ flex: 1 }}>
+                                {editingDeviceId === device.id ? (
+                                  <form
+                                    onSubmit={(e) => { e.preventDefault(); handleRenameDevice(device.id) }}
+                                    style={{ display: 'flex', gap: 6, alignItems: 'center' }}
+                                  >
+                                    <input
+                                      type="text"
+                                      value={editingDeviceName}
+                                      onChange={(e) => setEditingDeviceName(e.target.value)}
+                                      autoFocus
+                                      style={{ fontSize: 13, padding: '2px 6px', width: 180 }}
+                                      onKeyDown={(e) => { if (e.key === 'Escape') setEditingDeviceId(null) }}
+                                    />
+                                    <button type="submit" className="btn btn-primary btn-sm" style={{ fontSize: 11, padding: '2px 8px' }}>Save</button>
+                                    <button type="button" className="btn btn-ghost btn-sm" style={{ fontSize: 11, padding: '2px 8px' }} onClick={() => setEditingDeviceId(null)}>Cancel</button>
+                                  </form>
+                                ) : (
+                                  <div>
+                                    <span style={{ fontWeight: 500 }}>{device.name || 'Unnamed Hub'}</span>
+                                    <button
+                                      className="btn btn-ghost btn-sm"
+                                      onClick={() => { setEditingDeviceId(device.id); setEditingDeviceName(device.name || '') }}
+                                      style={{ fontSize: 11, padding: '1px 6px', marginLeft: 6, opacity: 0.6 }}
+                                      title="Rename device"
+                                    >
+                                      &#9998;
+                                    </button>
+                                    <span style={{ marginLeft: 8, fontSize: 12, color: 'var(--text-3)' }}>{device.mac}</span>
+                                  </div>
+                                )}
+                                <div style={{ fontSize: 11, color: 'var(--text-3)', marginTop: 2 }}>
+                                  Registered: {formatDate(device.registered_at)}
+                                </div>
+                              </div>
+                            </div>
+
+                            {/* Sensors under this device */}
+                            {device.sensors && device.sensors.length > 0 ? (
+                              <div style={{ paddingLeft: 20, marginTop: 4 }}>
+                                {device.sensors.map((sensor) => (
+                                  <div key={sensor.id} style={{
+                                    display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+                                    padding: '4px 0', borderBottom: '1px solid var(--border, #e2e8f0)',
+                                    fontSize: 12,
+                                  }}>
+                                    <div>
+                                      <span style={{ fontWeight: 500 }}>{sensor.name || sensor.mac}</span>
+                                      {sensor.name && (
+                                        <span style={{ marginLeft: 8, color: 'var(--text-3)' }}>{sensor.mac}</span>
+                                      )}
+                                      <span style={{
+                                        marginLeft: 8, fontSize: 10, padding: '1px 5px',
+                                        borderRadius: 4,
+                                        background: sensor.active ? '#dcfce7' : '#fef2f2',
+                                        color: sensor.active ? '#166534' : '#991b1b',
+                                      }}>
+                                        {sensor.active ? 'active' : 'inactive'}
+                                      </span>
+                                    </div>
+                                    <div style={{ color: 'var(--text-3)', fontSize: 11 }}>
+                                      Paired: {formatDate(sensor.paired_at)}
+                                    </div>
+                                  </div>
+                                ))}
+                              </div>
+                            ) : (
+                              <div style={{ paddingLeft: 20, marginTop: 4, fontSize: 11, color: 'var(--text-3)' }}>
+                                No sensors paired
+                              </div>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
                 </div>
               )}
             </div>

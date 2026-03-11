@@ -193,6 +193,61 @@ router.delete('/:id/members/:userId', requireOwner, async (req, res) => {
   }
 });
 
+// GET /api/organizations/:id/devices — list devices with nested sensors
+router.get('/:id/devices', async (req, res) => {
+  const orgId = parseInt(req.params.id, 10);
+  if (!Number.isInteger(orgId) || orgId <= 0) {
+    return res.status(400).json({ error: 'Invalid org id' });
+  }
+
+  // Access check: superadmin can see any org; others must be a member
+  if (req.user.role !== 'superadmin') {
+    const check = await query(
+      'SELECT 1 FROM memberships WHERE user_id = $1 AND org_id = $2',
+      [req.user.sub, orgId]
+    );
+    if (check.rows.length === 0) return res.status(403).json({ error: 'Not a member of this organization' });
+  }
+
+  try {
+    const devResult = await query(
+      `SELECT id, mac, name, registered_at
+       FROM devices WHERE org_id = $1
+       ORDER BY registered_at DESC`,
+      [orgId]
+    );
+    const devices = devResult.rows;
+
+    if (devices.length === 0) return res.json([]);
+
+    const deviceIds = devices.map(d => d.id);
+    const senResult = await query(
+      `SELECT id, device_id, mac, name, active, paired_at
+       FROM sensors
+       WHERE device_id = ANY($1::int[]) AND active = TRUE
+       ORDER BY paired_at DESC`,
+      [deviceIds]
+    );
+
+    // Group sensors by device_id
+    const sensorsByDevice = {};
+    for (const s of senResult.rows) {
+      if (!sensorsByDevice[s.device_id]) sensorsByDevice[s.device_id] = [];
+      sensorsByDevice[s.device_id].push(s);
+    }
+
+    const result = devices.map(d => ({
+      ...d,
+      sensors: sensorsByDevice[d.id] || [],
+    }));
+
+    res.json(result);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Database error' });
+  }
+});
+
 // PUT /api/organizations/:id — rename an org (owner or superadmin)
 router.put('/:id', requireOwner, async (req, res) => {
   const orgId = parseInt(req.params.id, 10);

@@ -44,7 +44,7 @@ router.get('/', async (req, res) => {
 });
 
 // PUT /api/sensors/:id — rename a sensor (with ownership check)
-router.put('/:id', requirePermission('can_manage_devices'), async (req, res) => {
+router.put('/:id', requirePermission('editor'), async (req, res) => {
   const id = parseInt(req.params.id, 10);
   if (!Number.isInteger(id) || id <= 0) {
     return res.status(400).json({ error: 'Invalid sensor id' });
@@ -78,7 +78,7 @@ router.put('/:id', requirePermission('can_manage_devices'), async (req, res) => 
 });
 
 // DELETE /api/sensors/:id — remove a sensor and all its readings, notify hub via MQTT
-router.delete('/:id', requirePermission('can_manage_devices'), async (req, res) => {
+router.delete('/:id', requirePermission('editor'), async (req, res) => {
   const id = parseInt(req.params.id, 10);
   if (!Number.isInteger(id) || id <= 0) {
     return res.status(400).json({ error: 'Invalid sensor id' });

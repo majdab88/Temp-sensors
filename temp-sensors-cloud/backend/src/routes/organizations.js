@@ -74,9 +74,7 @@ router.get('/:id/members', async (req, res) => {
   try {
     const result = await query(
       `SELECT u.id, u.username, u.email, u.role AS user_role, m.role AS org_role,
-              m.can_manage_members, m.can_manage_devices,
-              m.can_approve_pairing, m.can_view_readings,
-              m.joined_at
+              m.permission_level, m.joined_at
        FROM memberships m
        JOIN users u ON u.id = m.user_id
        WHERE m.org_id = $1
@@ -93,13 +91,13 @@ router.get('/:id/members', async (req, res) => {
 // POST /api/organizations/:id/members — invite a member to an org by email
 // Owner (or superadmin) creates a new member user and adds them to the org.
 // If a user with that email already exists, they are added to the org directly.
-router.post('/:id/members', requirePermission('can_manage_members'), async (req, res) => {
+router.post('/:id/members', requirePermission('admin'), async (req, res) => {
   const orgId = parseInt(req.params.id, 10);
   if (!Number.isInteger(orgId) || orgId <= 0) {
     return res.status(400).json({ error: 'Invalid org id' });
   }
 
-  const { email, password, permissions } = req.body || {};
+  const { email, password, permission_level } = req.body || {};
   if (!email) {
     return res.status(400).json({ error: 'email is required' });
   }
@@ -108,13 +106,8 @@ router.post('/:id/members', requirePermission('can_manage_members'), async (req,
     return res.status(400).json({ error: 'A valid email address is required' });
   }
 
-  // Build permission values from request (defaults: view_readings only)
-  const perms = {
-    can_manage_members:  !!(permissions && permissions.can_manage_members),
-    can_manage_devices:  !!(permissions && permissions.can_manage_devices),
-    can_approve_pairing: !!(permissions && permissions.can_approve_pairing),
-    can_view_readings:   permissions ? !!permissions.can_view_readings : true,
-  };
+  const validLevels = ['viewer', 'editor', 'admin'];
+  const level = validLevels.includes(permission_level) ? permission_level : 'viewer';
 
   try {
     // Check if user already exists by email
@@ -124,12 +117,12 @@ router.post('/:id/members', requirePermission('can_manage_members'), async (req,
       // Existing user — just add them to the org
       const user = existing.rows[0];
       await query(
-        `INSERT INTO memberships (user_id, org_id, role, can_manage_members, can_manage_devices, can_approve_pairing, can_view_readings)
-         VALUES ($1, $2, $3, $4, $5, $6, $7) ON CONFLICT DO NOTHING`,
-        [user.id, orgId, 'member', perms.can_manage_members, perms.can_manage_devices, perms.can_approve_pairing, perms.can_view_readings]
+        `INSERT INTO memberships (user_id, org_id, role, permission_level)
+         VALUES ($1, $2, $3, $4) ON CONFLICT DO NOTHING`,
+        [user.id, orgId, 'member', level]
       );
       await audit({ req, action: 'member.add', targetType: 'user', targetId: user.id, details: { orgId, email: emailStr, existing: true } });
-      return res.status(200).json({ id: user.id, email: user.email, username: user.username, org_role: 'member', permissions: perms, note: 'Existing user added to organization' });
+      return res.status(200).json({ id: user.id, email: user.email, username: user.username, org_role: 'member', permission_level: level, note: 'Existing user added to organization' });
     }
 
     // New user — password required
@@ -160,15 +153,15 @@ router.post('/:id/members', requirePermission('can_manage_members'), async (req,
     }
     const user = userRes.rows[0];
 
-    // Add to org with permissions
+    // Add to org with permission level
     await query(
-      `INSERT INTO memberships (user_id, org_id, role, can_manage_members, can_manage_devices, can_approve_pairing, can_view_readings)
-       VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-      [user.id, orgId, 'member', perms.can_manage_members, perms.can_manage_devices, perms.can_approve_pairing, perms.can_view_readings]
+      `INSERT INTO memberships (user_id, org_id, role, permission_level)
+       VALUES ($1, $2, $3, $4)`,
+      [user.id, orgId, 'member', level]
     );
 
     await audit({ req, action: 'member.add', targetType: 'user', targetId: user.id, details: { orgId, email: emailStr, existing: false } });
-    res.status(201).json({ ...user, org_role: 'member', permissions: perms });
+    res.status(201).json({ ...user, org_role: 'member', permission_level: level });
   } catch (err) {
     if (err.code === '23505') {
       return res.status(409).json({ error: 'User is already a member of this organization' });
@@ -179,7 +172,7 @@ router.post('/:id/members', requirePermission('can_manage_members'), async (req,
 });
 
 // DELETE /api/organizations/:id/members/:userId — remove a member from an org
-router.delete('/:id/members/:userId', requirePermission('can_manage_members'), async (req, res) => {
+router.delete('/:id/members/:userId', requirePermission('admin'), async (req, res) => {
   const orgId = parseInt(req.params.id, 10);
   const userId = parseInt(req.params.userId, 10);
   if (!Number.isInteger(orgId) || !Number.isInteger(userId)) {
@@ -205,15 +198,19 @@ router.delete('/:id/members/:userId', requirePermission('can_manage_members'), a
   }
 });
 
-// PUT /api/organizations/:id/members/:userId/permissions — update member permissions
-router.put('/:id/members/:userId/permissions', requirePermission('can_manage_members'), async (req, res) => {
+// PUT /api/organizations/:id/members/:userId/permissions — update member permission level
+router.put('/:id/members/:userId/permissions', requirePermission('admin'), async (req, res) => {
   const orgId = parseInt(req.params.id, 10);
   const userId = parseInt(req.params.userId, 10);
   if (!Number.isInteger(orgId) || !Number.isInteger(userId)) {
     return res.status(400).json({ error: 'Invalid ids' });
   }
 
-  const { can_manage_members, can_manage_devices, can_approve_pairing, can_view_readings } = req.body || {};
+  const { permission_level } = req.body || {};
+  const validLevels = ['viewer', 'editor', 'admin'];
+  if (!permission_level || !validLevels.includes(permission_level)) {
+    return res.status(400).json({ error: 'permission_level must be viewer, editor, or admin' });
+  }
 
   // Cannot modify owner permissions
   const memberCheck = await query(
@@ -223,32 +220,17 @@ router.put('/:id/members/:userId/permissions', requirePermission('can_manage_mem
   if (memberCheck.rows.length === 0) return res.status(404).json({ error: 'Member not found in this organization' });
   if (memberCheck.rows[0].role === 'owner') return res.status(400).json({ error: 'Cannot modify owner permissions' });
 
-  const updates = [];
-  const params = [];
-  let idx = 1;
-
-  if (typeof can_manage_members === 'boolean') { updates.push(`can_manage_members = $${idx++}`); params.push(can_manage_members); }
-  if (typeof can_manage_devices === 'boolean') { updates.push(`can_manage_devices = $${idx++}`); params.push(can_manage_devices); }
-  if (typeof can_approve_pairing === 'boolean') { updates.push(`can_approve_pairing = $${idx++}`); params.push(can_approve_pairing); }
-  if (typeof can_view_readings === 'boolean') { updates.push(`can_view_readings = $${idx++}`); params.push(can_view_readings); }
-
-  if (updates.length === 0) {
-    return res.status(400).json({ error: 'Provide at least one permission to update' });
-  }
-
-  params.push(userId, orgId);
-
   try {
     const result = await query(
-      `UPDATE memberships SET ${updates.join(', ')}
-       WHERE user_id = $${idx++} AND org_id = $${idx}
-       RETURNING user_id, org_id, role, can_manage_members, can_manage_devices, can_approve_pairing, can_view_readings`,
-      params
+      `UPDATE memberships SET permission_level = $1
+       WHERE user_id = $2 AND org_id = $3
+       RETURNING user_id, org_id, role, permission_level`,
+      [permission_level, userId, orgId]
     );
     if (result.rows.length === 0) return res.status(404).json({ error: 'Membership not found' });
 
     clearPermissionCache(userId, orgId);
-    await audit({ req, action: 'member.permissions_update', targetType: 'user', targetId: userId, details: { orgId, permissions: result.rows[0] } });
+    await audit({ req, action: 'member.permissions_update', targetType: 'user', targetId: userId, details: { orgId, permission_level } });
     res.json(result.rows[0]);
   } catch (err) {
     console.error(err);

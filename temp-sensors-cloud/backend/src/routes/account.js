@@ -20,9 +20,7 @@ router.get('/', async (req, res) => {
 
     const memRes = await query(
       `SELECT m.org_id, o.name AS org_name, m.role AS org_role,
-              m.can_manage_members, m.can_manage_devices,
-              m.can_approve_pairing, m.can_view_readings,
-              m.joined_at
+              m.permission_level, m.joined_at
        FROM memberships m
        JOIN organizations o ON o.id = m.org_id
        WHERE m.user_id = $1

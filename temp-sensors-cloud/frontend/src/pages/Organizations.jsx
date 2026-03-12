@@ -8,11 +8,10 @@ function formatDate(isoStr) {
   return new Date(isoStr).toLocaleString()
 }
 
-const PERM_KEYS = [
-  { key: 'can_view_readings', label: 'Readings' },
-  { key: 'can_manage_devices', label: 'Devices' },
-  { key: 'can_approve_pairing', label: 'Pairing' },
-  { key: 'can_manage_members', label: 'Members' },
+const PERM_LEVELS = [
+  { value: 'viewer', label: 'Viewer', desc: 'Read-only access' },
+  { value: 'editor', label: 'Editor', desc: 'Manage devices & sensors' },
+  { value: 'admin', label: 'Admin', desc: 'Full org control' },
 ]
 
 export default function Organizations() {
@@ -34,9 +33,7 @@ export default function Organizations() {
   // Add member form
   const [showAddMember, setShowAddMember] = useState(false)
   const [memberForm, setMemberForm] = useState({
-    email: '', password: '',
-    can_view_readings: true, can_manage_devices: false,
-    can_approve_pairing: false, can_manage_members: false,
+    email: '', password: '', permission_level: 'viewer',
   })
   const [addingMember, setAddingMember] = useState(false)
   const [memberError, setMemberError] = useState(null)
@@ -45,8 +42,8 @@ export default function Organizations() {
   const [editingDeviceId, setEditingDeviceId] = useState(null)
   const [editingDeviceName, setEditingDeviceName] = useState('')
 
-  // Permission toggle loading
-  const [permSaving, setPermSaving] = useState(null) // "userId:key"
+  // Permission level saving
+  const [permSaving, setPermSaving] = useState(null) // userId
 
   const canManageMembers = isSuperadmin || user?.role === 'owner'
 
@@ -89,18 +86,9 @@ export default function Organizations() {
       await api.post(`/organizations/${orgId}/members`, {
         email: memberForm.email,
         password: memberForm.password || undefined,
-        permissions: {
-          can_view_readings: memberForm.can_view_readings,
-          can_manage_devices: memberForm.can_manage_devices,
-          can_approve_pairing: memberForm.can_approve_pairing,
-          can_manage_members: memberForm.can_manage_members,
-        },
+        permission_level: memberForm.permission_level,
       })
-      setMemberForm({
-        email: '', password: '',
-        can_view_readings: true, can_manage_devices: false,
-        can_approve_pairing: false, can_manage_members: false,
-      })
+      setMemberForm({ email: '', password: '', permission_level: 'viewer' })
       setShowAddMember(false)
       const res = await api.get(`/organizations/${orgId}/members`)
       setMembers(res.data)
@@ -121,18 +109,17 @@ export default function Organizations() {
     }
   }
 
-  async function handleTogglePermission(orgId, userId, permKey, currentValue) {
-    const saveKey = `${userId}:${permKey}`
-    setPermSaving(saveKey)
+  async function handleChangePermissionLevel(orgId, userId, newLevel) {
+    setPermSaving(userId)
     try {
       await api.put(`/organizations/${orgId}/members/${userId}/permissions`, {
-        [permKey]: !currentValue,
+        permission_level: newLevel,
       })
       setMembers((prev) => prev.map((m) =>
-        m.id === userId ? { ...m, [permKey]: !currentValue } : m
+        m.id === userId ? { ...m, permission_level: newLevel } : m
       ))
     } catch {
-      alert('Failed to update permission')
+      alert('Failed to update permission level')
     } finally {
       setPermSaving(null)
     }
@@ -246,19 +233,20 @@ export default function Organizations() {
                           />
                         </div>
 
-                        {/* Permission checkboxes */}
+                        {/* Permission level selector */}
                         <div style={{ marginBottom: 10 }}>
-                          <div style={{ fontSize: 12, fontWeight: 500, color: 'var(--text-2)', marginBottom: 6 }}>Permissions</div>
-                          <div className="perm-checkboxes">
-                            {PERM_KEYS.map(({ key, label }) => (
-                              <label key={key} className="perm-checkbox-label">
-                                <input
-                                  type="checkbox"
-                                  checked={memberForm[key]}
-                                  onChange={(e) => setMemberForm({ ...memberForm, [key]: e.target.checked })}
-                                />
-                                <span>{label}</span>
-                              </label>
+                          <div style={{ fontSize: 12, fontWeight: 500, color: 'var(--text-2)', marginBottom: 6 }}>Permission Level</div>
+                          <div className="perm-level-group">
+                            {PERM_LEVELS.map(({ value, label, desc }) => (
+                              <button
+                                key={value}
+                                type="button"
+                                className={`perm-level-btn ${memberForm.permission_level === value ? 'active' : ''}`}
+                                onClick={() => setMemberForm({ ...memberForm, permission_level: value })}
+                                title={desc}
+                              >
+                                {label}
+                              </button>
                             ))}
                           </div>
                         </div>
@@ -289,27 +277,25 @@ export default function Organizations() {
                               <span className={`role-badge ${m.org_role}`}>{m.org_role}</span>
                             </div>
 
-                            {/* Permission pills for non-owners */}
+                            {/* Permission level for non-owners */}
                             {m.org_role !== 'owner' && (
-                              <div className="perm-pills">
-                                {PERM_KEYS.map(({ key, label }) => {
-                                  const saving = permSaving === `${m.id}:${key}`
-                                  return canManageMembers ? (
+                              <div className="perm-level-group" style={{ marginTop: 4 }}>
+                                {canManageMembers ? (
+                                  PERM_LEVELS.map(({ value, label }) => (
                                     <button
-                                      key={key}
-                                      className={`perm-pill ${m[key] ? 'granted' : 'denied'}`}
-                                      onClick={() => handleTogglePermission(org.id, m.id, key, m[key])}
-                                      disabled={saving}
-                                      title={`Click to ${m[key] ? 'revoke' : 'grant'} ${label}`}
+                                      key={value}
+                                      className={`perm-level-btn ${m.permission_level === value ? 'active' : ''}`}
+                                      onClick={() => handleChangePermissionLevel(org.id, m.id, value)}
+                                      disabled={permSaving === m.id}
                                     >
-                                      {saving ? '...' : label}
+                                      {permSaving === m.id ? '...' : label}
                                     </button>
-                                  ) : (
-                                    <span key={key} className={`perm-pill ${m[key] ? 'granted' : 'denied'}`}>
-                                      {label}
-                                    </span>
-                                  )
-                                })}
+                                  ))
+                                ) : (
+                                  <span className={`perm-level-badge ${m.permission_level}`}>
+                                    {m.permission_level}
+                                  </span>
+                                )}
                               </div>
                             )}
                           </div>

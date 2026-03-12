@@ -3,3 +3,8 @@
 
 # VS Code workspace file (optional — remove this line if you want to commit it)
 *.code-workspace
+sensor/.gitignore
+sensor/.vscode/extensions.json
+sensor-ntc/.vscode/extensions.json
+sensor-ntc/.gitignore
+.gitignore

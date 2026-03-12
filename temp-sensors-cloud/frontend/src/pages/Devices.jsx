@@ -10,7 +10,7 @@ function formatDate(isoStr) {
 
 export default function Devices() {
   const { user } = useAuth()
-  const canEdit = user?.role !== 'viewer'
+  const canEdit = user?.permissionLevel !== 'viewer'
   const [devices, setDevices] = useState([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)

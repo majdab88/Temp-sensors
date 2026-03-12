@@ -6,7 +6,7 @@ import { useAuth } from '../context/AuthContext'
 
 export default function Dashboard() {
   const { user } = useAuth()
-  const canEdit = user?.role !== 'viewer'
+  const canEdit = user?.permissionLevel !== 'viewer'
   const [sensors, setSensors] = useState([])
   const [readings, setReadings] = useState({}) // keyed by sensor MAC
   const [loading, setLoading] = useState(true)

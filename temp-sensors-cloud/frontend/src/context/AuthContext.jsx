@@ -25,7 +25,7 @@ export function AuthProvider({ children }) {
     if (!token) return null
     const decoded = decodeJwt(token)
     if (!decoded) return null
-    return { id: decoded.sub, username: decoded.username, email: decoded.email || null, role: decoded.role, orgId: decoded.orgId }
+    return { id: decoded.sub, username: decoded.username, email: decoded.email || null, role: decoded.role, orgId: decoded.orgId, permissionLevel: decoded.permissionLevel || null }
   }, [token])
 
   const login = useCallback((accessToken, refreshToken) => {

@@ -45,7 +45,7 @@ export default function Organizations() {
   // Permission level saving
   const [permSaving, setPermSaving] = useState(null) // userId
 
-  const canManageMembers = isSuperadmin || user?.role === 'owner'
+  const canManageMembers = isSuperadmin || user?.role === 'owner' || user?.permissionLevel === 'admin'
 
   const fetchOrgs = useCallback(() => {
     setLoading(true)

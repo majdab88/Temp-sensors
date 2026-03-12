@@ -113,6 +113,7 @@ export default function Layout() {
   const [pendingCount, setPendingCount] = useState(0)
 
   const isSuperadmin = user?.role === 'superadmin'
+  const isViewer = user?.role === 'viewer'
 
   useEffect(() => {
     socket.on('pairingRequest', () => setPendingCount((n) => n + 1))
@@ -144,10 +145,14 @@ export default function Layout() {
     navLinks.push(
       { to: '/', end: true,  icon: <IconDashboard />, label: 'Dashboard' },
       { to: '/history',      icon: <IconHistory />,   label: 'History'   },
-      { to: '/pairing',      icon: <IconPairing />,   label: 'Pairing', onClick: handlePairingClick, badge: pendingCount },
-      { to: '/devices',      icon: <IconDevices />,   label: 'Devices'   },
-      { to: '/setup',        icon: <IconSetup />,     label: 'Setup'     },
     )
+    if (!isViewer) {
+      navLinks.push(
+        { to: '/pairing', icon: <IconPairing />, label: 'Pairing', onClick: handlePairingClick, badge: pendingCount },
+        { to: '/devices', icon: <IconDevices />, label: 'Devices' },
+        { to: '/setup',   icon: <IconSetup />,   label: 'Setup'   },
+      )
+    }
   }
 
   // Admin-only nav links

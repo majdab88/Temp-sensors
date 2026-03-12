@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react'
 import api from '../services/api'
 import socket from '../services/socket'
+import { useAuth } from '../context/AuthContext'
 
 function formatDate(isoStr) {
   if (!isoStr) return ''
@@ -8,6 +9,8 @@ function formatDate(isoStr) {
 }
 
 export default function Devices() {
+  const { user } = useAuth()
+  const canEdit = user?.role !== 'viewer'
   const [devices, setDevices] = useState([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
@@ -77,7 +80,7 @@ export default function Devices() {
             return (
               <div key={device.id} className="device-card">
                 <div className="device-card-info">
-                  {editingId === device.id ? (
+                  {editingId === device.id && canEdit ? (
                     <form
                       onSubmit={(e) => { e.preventDefault(); handleRename(device.id) }}
                       style={{ display: 'flex', gap: 6, alignItems: 'center', marginBottom: 4 }}
@@ -96,14 +99,16 @@ export default function Devices() {
                   ) : (
                     <div className="device-name">
                       {device.name || 'Unnamed Hub'}
-                      <button
-                        className="btn btn-ghost btn-sm"
-                        onClick={() => { setEditingId(device.id); setEditingName(device.name || '') }}
-                        style={{ fontSize: 12, padding: '1px 6px', marginLeft: 6, opacity: 0.6 }}
-                        title="Rename device"
-                      >
-                        &#9998;
-                      </button>
+                      {canEdit && (
+                        <button
+                          className="btn btn-ghost btn-sm"
+                          onClick={() => { setEditingId(device.id); setEditingName(device.name || '') }}
+                          style={{ fontSize: 12, padding: '1px 6px', marginLeft: 6, opacity: 0.6 }}
+                          title="Rename device"
+                        >
+                          &#9998;
+                        </button>
+                      )}
                     </div>
                   )}
                   <div className="device-mac">{device.mac}</div>

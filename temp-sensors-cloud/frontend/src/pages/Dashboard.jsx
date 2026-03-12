@@ -2,8 +2,11 @@ import React, { useEffect, useState, useCallback } from 'react'
 import SensorCard from '../components/SensorCard'
 import api from '../services/api'
 import socket from '../services/socket'
+import { useAuth } from '../context/AuthContext'
 
 export default function Dashboard() {
+  const { user } = useAuth()
+  const canEdit = user?.role !== 'viewer'
   const [sensors, setSensors] = useState([])
   const [readings, setReadings] = useState({}) // keyed by sensor MAC
   const [loading, setLoading] = useState(true)
@@ -106,6 +109,7 @@ export default function Dashboard() {
               reading={readings[sensor.mac] || null}
               onRename={handleRename}
               onDelete={handleDelete}
+              canEdit={canEdit}
             />
           ))}
         </div>

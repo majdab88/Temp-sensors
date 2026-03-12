@@ -32,7 +32,7 @@ function fmt(val, decimals = 1) {
   return Number(val).toFixed(decimals)
 }
 
-export default function SensorCard({ sensor, reading, onRename, onDelete }) {
+export default function SensorCard({ sensor, reading, onRename, onDelete, canEdit = true }) {
   const navigate = useNavigate()
   const [editing, setEditing] = useState(false)
   const [draft, setDraft] = useState('')
@@ -108,8 +108,8 @@ export default function SensorCard({ sensor, reading, onRename, onDelete }) {
           ) : (
             <div className="sensor-name-row">
               <div className="sensor-name">{sensor.name || sensor.mac}</div>
-              <button className="sensor-rename-btn" onClick={startEdit} title="Rename sensor">✎</button>
-              <button className="sensor-delete-btn" onClick={handleDelete} disabled={deleting} title="Remove sensor">✕</button>
+              {canEdit && <button className="sensor-rename-btn" onClick={startEdit} title="Rename sensor">✎</button>}
+              {canEdit && <button className="sensor-delete-btn" onClick={handleDelete} disabled={deleting} title="Remove sensor">✕</button>}
             </div>
           )}
           {!editing && <div className="sensor-mac">{sensor.mac}</div>}

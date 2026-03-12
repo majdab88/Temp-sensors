@@ -162,7 +162,7 @@ export default function Layout() {
       { to: '/users',         icon: <IconUsers />, label: 'Users' },
       { to: '/audit-log',     icon: <IconAudit />, label: 'Audit Log' },
     )
-  } else if (user?.role === 'owner') {
+  } else if (user?.role === 'owner' || user?.permissionLevel === 'admin') {
     navLinks.push(
       { to: '/organizations', icon: <IconOrg />, label: 'My Org' },
       { to: '/audit-log',     icon: <IconAudit />, label: 'Audit Log' },

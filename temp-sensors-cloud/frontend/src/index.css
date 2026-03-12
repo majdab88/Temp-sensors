@@ -1226,3 +1226,162 @@ tbody tr:hover td { background: #f8fafc; }
   margin-bottom: 4px;
   color: var(--text-1);
 }
+
+/* ============================================================
+   Account page
+   ============================================================ */
+.account-details {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.account-row {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  padding: 4px 0;
+}
+
+.account-label {
+  width: 80px;
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-3);
+  flex-shrink: 0;
+}
+
+.account-value {
+  font-size: 14px;
+  color: var(--text-1);
+}
+
+.alert-ok {
+  background: #dcfce7;
+  border: 1px solid #bbf7d0;
+  color: #166534;
+}
+
+/* ============================================================
+   Permission pills & badges
+   ============================================================ */
+.perm-pills {
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+  margin-top: 4px;
+}
+
+.perm-pill {
+  display: inline-block;
+  padding: 2px 7px;
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  border: none;
+  cursor: default;
+  transition: background 0.15s, color 0.15s;
+}
+
+button.perm-pill {
+  cursor: pointer;
+}
+
+button.perm-pill:hover {
+  opacity: 0.85;
+}
+
+.perm-pill.granted {
+  background: #dcfce7;
+  color: #166534;
+}
+
+.perm-pill.denied {
+  background: #f1f5f9;
+  color: #94a3b8;
+}
+
+.role-badge {
+  margin-left: 8px;
+  font-size: 11px;
+  padding: 2px 6px;
+  border-radius: 4px;
+  text-transform: capitalize;
+}
+
+.role-badge.owner {
+  background: #dbeafe;
+  color: #1e40af;
+}
+
+.role-badge.member {
+  background: #f1f5f9;
+  color: #64748b;
+}
+
+/* Permission checkboxes in invite form */
+.perm-checkboxes {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.perm-checkbox-label {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+  color: var(--text-2);
+  cursor: pointer;
+}
+
+.perm-checkbox-label input[type="checkbox"] {
+  width: 14px;
+  height: 14px;
+  accent-color: var(--accent);
+}
+
+/* Member row in org panel */
+.member-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--border, #e2e8f0);
+  gap: 12px;
+}
+
+.member-info {
+  flex: 1;
+  min-width: 0;
+}
+
+/* Membership row in account page */
+.membership-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--border);
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.membership-row:last-child {
+  border-bottom: none;
+}
+
+/* ============================================================
+   Audit log
+   ============================================================ */
+.audit-action-badge {
+  display: inline-block;
+  padding: 2px 8px 2px 10px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-1);
+  white-space: nowrap;
+}

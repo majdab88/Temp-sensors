@@ -3,7 +3,9 @@
 const express = require('express');
 const { query } = require('../db');
 const { requireAuth, isSuperadminUnscoped } = require('../middleware/auth');
+const { requirePermission } = require('../middleware/permissions');
 const { publishPairingResponse } = require('../mqtt');
+const { audit } = require('../audit');
 
 const router = express.Router();
 router.use(requireAuth);
@@ -56,10 +58,10 @@ router.get('/requests', async (req, res) => {
 });
 
 // POST /api/pairing/requests/:id/approve
-router.post('/requests/:id/approve', (req, res) => resolveRequest(req, res, true));
+router.post('/requests/:id/approve', requirePermission('can_approve_pairing'), (req, res) => resolveRequest(req, res, true));
 
 // POST /api/pairing/requests/:id/reject
-router.post('/requests/:id/reject', (req, res) => resolveRequest(req, res, false));
+router.post('/requests/:id/reject', requirePermission('can_approve_pairing'), (req, res) => resolveRequest(req, res, false));
 
 async function resolveRequest(req, res, approved) {
   const id = parseInt(req.params.id, 10);
@@ -115,6 +117,7 @@ async function resolveRequest(req, res, approved) {
       publishPairingResponse(devRes.rows[0].mac, row.slave_mac, approved);
     }
 
+    await audit({ req, action: approved ? 'pairing.approve' : 'pairing.reject', targetType: 'pairing_request', targetId: id, details: { slave_mac: row.slave_mac } });
     res.json(row);
   } catch (err) {
     console.error(err);

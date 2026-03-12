@@ -27,11 +27,15 @@ CREATE INDEX ON organizations (owner_id);
 
 -- Memberships — links members (and owners) to organizations
 CREATE TABLE memberships (
-  id        SERIAL PRIMARY KEY,
-  user_id   INT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-  org_id    INT NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
-  role      VARCHAR(10) DEFAULT 'member' CHECK (role IN ('owner', 'member')),
-  joined_at TIMESTAMPTZ DEFAULT NOW(),
+  id                   SERIAL PRIMARY KEY,
+  user_id              INT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  org_id               INT NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+  role                 VARCHAR(10) DEFAULT 'member' CHECK (role IN ('owner', 'member')),
+  can_manage_members   BOOLEAN DEFAULT FALSE,
+  can_manage_devices   BOOLEAN DEFAULT FALSE,
+  can_approve_pairing  BOOLEAN DEFAULT FALSE,
+  can_view_readings    BOOLEAN DEFAULT TRUE,
+  joined_at            TIMESTAMPTZ DEFAULT NOW(),
   UNIQUE (user_id, org_id)
 );
 
@@ -75,6 +79,25 @@ CREATE TABLE readings (
 CREATE INDEX ON readings (sensor_id, recorded_at DESC);
 -- To enable time-series partitioning (optional, requires TimescaleDB extension):
 -- SELECT create_hypertable('readings', 'recorded_at');
+
+-- Audit log — tracks user actions for accountability
+CREATE TABLE audit_log (
+  id          BIGSERIAL PRIMARY KEY,
+  user_id     INT REFERENCES users(id) ON DELETE SET NULL,
+  username    VARCHAR(64),
+  org_id      INT REFERENCES organizations(id) ON DELETE SET NULL,
+  action      VARCHAR(64) NOT NULL,
+  target_type VARCHAR(32),
+  target_id   VARCHAR(64),
+  details     JSONB,
+  ip          VARCHAR(45),
+  created_at  TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX ON audit_log (org_id);
+CREATE INDEX ON audit_log (user_id);
+CREATE INDEX ON audit_log (created_at DESC);
+CREATE INDEX ON audit_log (action);
 
 -- Pending/resolved pairing requests
 CREATE TABLE pairing_requests (

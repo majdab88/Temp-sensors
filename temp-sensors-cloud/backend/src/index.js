@@ -14,6 +14,8 @@ const pairingRoutes   = require('./routes/pairing');
 const provisionRoutes = require('./routes/provision');
 const userRoutes      = require('./routes/users');
 const orgRoutes       = require('./routes/organizations');
+const accountRoutes   = require('./routes/account');
+const auditRoutes     = require('./routes/audit-log');
 
 const app    = express();
 const server = http.createServer(app);
@@ -40,6 +42,8 @@ app.use('/api/pairing',              pairingRoutes);
 app.use('/api/provision',            provisionRoutes);
 app.use('/api/users',                userRoutes);
 app.use('/api/organizations',        orgRoutes);
+app.use('/api/account',              accountRoutes);
+app.use('/api/audit-log',            auditRoutes);
 
 // ── 404 fallback ──────────────────────────────────────────────────────────────
 app.use((_req, res) => res.status(404).json({ error: 'Not found' }));

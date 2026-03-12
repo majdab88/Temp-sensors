@@ -4,6 +4,8 @@ const express = require('express');
 const crypto  = require('crypto');
 const { query } = require('../db');
 const { requireAuth, requireSuperadmin, isSuperadminUnscoped } = require('../middleware/auth');
+const { requirePermission } = require('../middleware/permissions');
+const { audit } = require('../audit');
 
 const router = express.Router();
 router.use(requireAuth);
@@ -66,6 +68,7 @@ router.post('/register', async (req, res) => {
        RETURNING id, mac, name, api_key, org_id, registered_at`,
       [normMac, name || null, apiKey, orgId]
     );
+    await audit({ req, action: 'device.register', targetType: 'device', targetId: result.rows[0].id, details: { mac: normMac } });
     res.status(201).json(result.rows[0]);
   } catch (err) {
     console.error(err);
@@ -74,7 +77,7 @@ router.post('/register', async (req, res) => {
 });
 
 // PUT /api/devices/:id — rename a device
-router.put('/:id', async (req, res) => {
+router.put('/:id', requirePermission('can_manage_devices'), async (req, res) => {
   const id = parseInt(req.params.id, 10);
   if (!Number.isInteger(id) || id <= 0) {
     return res.status(400).json({ error: 'Invalid device id' });
@@ -99,6 +102,7 @@ router.put('/:id', async (req, res) => {
       [name.trim().slice(0, 64), id]
     );
     if (result.rows.length === 0) return res.status(404).json({ error: 'Device not found' });
+    await audit({ req, action: 'device.rename', targetType: 'device', targetId: id, details: { name: name.trim() } });
     res.json(result.rows[0]);
   } catch (err) {
     console.error(err);
@@ -120,6 +124,7 @@ router.put('/:id/assign', requireSuperadmin, async (req, res) => {
       [org_id || null, id]
     );
     if (result.rows.length === 0) return res.status(404).json({ error: 'Device not found' });
+    await audit({ req, action: 'device.assign', targetType: 'device', targetId: id, details: { org_id: org_id || null } });
     res.json(result.rows[0]);
   } catch (err) {
     console.error(err);

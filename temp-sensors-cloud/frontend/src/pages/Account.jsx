@@ -176,12 +176,9 @@ export default function Account() {
                 {m.org_role === 'owner' ? (
                   <span className="perm-pill granted">All permissions</span>
                 ) : (
-                  <>
-                    <span className={`perm-pill ${m.can_view_readings ? 'granted' : 'denied'}`}>Readings</span>
-                    <span className={`perm-pill ${m.can_manage_devices ? 'granted' : 'denied'}`}>Devices</span>
-                    <span className={`perm-pill ${m.can_approve_pairing ? 'granted' : 'denied'}`}>Pairing</span>
-                    <span className={`perm-pill ${m.can_manage_members ? 'granted' : 'denied'}`}>Members</span>
-                  </>
+                  <span className={`perm-level-badge ${m.permission_level}`}>
+                    {m.permission_level}
+                  </span>
                 )}
               </div>
             </div>

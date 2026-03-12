@@ -84,11 +84,11 @@ router.post('/', async (req, res) => {
         [name, user.id]
       );
       const org = orgRes.rows[0];
-      // Add owner as a member of their own org (all permissions granted)
+      // Add owner as a member of their own org (admin-level access)
       await query(
-        `INSERT INTO memberships (user_id, org_id, role, can_manage_members, can_manage_devices, can_approve_pairing, can_view_readings)
-         VALUES ($1, $2, $3, TRUE, TRUE, TRUE, TRUE)`,
-        [user.id, org.id, 'owner']
+        `INSERT INTO memberships (user_id, org_id, role, permission_level)
+         VALUES ($1, $2, $3, $4)`,
+        [user.id, org.id, 'owner', 'admin']
       );
       user.organization = org;
     }

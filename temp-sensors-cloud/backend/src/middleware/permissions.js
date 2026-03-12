@@ -3,20 +3,25 @@
 const { query } = require('../db');
 
 /**
- * Cache of user permissions per org — avoids repeated DB queries within a
- * single request lifecycle. Keyed by `${userId}:${orgId}`.
+ * Permission levels (tiered, each includes all lower levels):
+ *   viewer  — read-only: view devices, sensors, readings
+ *   editor  — viewer + rename/delete devices & sensors, approve/reject pairing
+ *   admin   — editor + invite/remove members, full org control
+ *
+ * Owners always have admin-level access. Superadmins bypass all checks.
  */
+const LEVELS = { viewer: 1, editor: 2, admin: 3 };
+
 const _cache = new Map();
-const CACHE_TTL = 60_000; // 1 minute
+const CACHE_TTL = 60_000;
 
 function cacheKey(userId, orgId) {
   return `${userId}:${orgId}`;
 }
 
 /**
- * Fetch membership permissions for a user in an org.
- * Returns { role, can_manage_members, can_manage_devices, can_approve_pairing, can_view_readings }
- * or null if the user is not a member.
+ * Fetch membership for a user in an org.
+ * Returns { role, permission_level } or null.
  */
 async function getMemberPermissions(userId, orgId) {
   const key = cacheKey(userId, orgId);
@@ -24,16 +29,13 @@ async function getMemberPermissions(userId, orgId) {
   if (cached && Date.now() - cached.ts < CACHE_TTL) return cached.value;
 
   const result = await query(
-    `SELECT role, can_manage_members, can_manage_devices,
-            can_approve_pairing, can_view_readings
-     FROM memberships WHERE user_id = $1 AND org_id = $2`,
+    'SELECT role, permission_level FROM memberships WHERE user_id = $1 AND org_id = $2',
     [userId, orgId]
   );
 
   const value = result.rows.length > 0 ? result.rows[0] : null;
   _cache.set(key, { value, ts: Date.now() });
 
-  // Prevent unbounded growth
   if (_cache.size > 5000) {
     const oldest = _cache.keys().next().value;
     _cache.delete(oldest);
@@ -43,17 +45,15 @@ async function getMemberPermissions(userId, orgId) {
 }
 
 /**
- * Middleware factory — requires the caller to have a specific permission
- * on the org identified by req.orgId (or req.params.id for org routes).
+ * Middleware factory — requires the caller to have at least `minLevel`
+ * permission on the org identified by req.orgId (or req.params.id).
  *
- * Superadmins always pass. Owners always pass (backward compatible).
- *
- * @param {string} permission - one of: can_manage_members, can_manage_devices,
- *                              can_approve_pairing, can_view_readings
+ * @param {'viewer'|'editor'|'admin'} minLevel
  */
-function requirePermission(permission) {
+function requirePermission(minLevel) {
+  const required = LEVELS[minLevel] || 1;
+
   return async (req, res, next) => {
-    // Superadmin bypasses all permission checks
     if (req.user.role === 'superadmin') return next();
 
     const orgId = req.orgId || parseInt(req.params.id, 10) || null;
@@ -66,22 +66,20 @@ function requirePermission(permission) {
       return res.status(403).json({ error: 'Not a member of this organization' });
     }
 
-    // Owners always have all permissions
+    // Owners always have full access
     if (perms.role === 'owner') return next();
 
-    if (!perms[permission]) {
-      return res.status(403).json({ error: `Permission denied: ${permission} required` });
+    const userLevel = LEVELS[perms.permission_level] || 1;
+    if (userLevel < required) {
+      return res.status(403).json({ error: `Permission denied: ${minLevel} access required` });
     }
 
     next();
   };
 }
 
-/**
- * Clear cached permissions for a user/org pair (e.g. after updating permissions).
- */
 function clearPermissionCache(userId, orgId) {
   _cache.delete(cacheKey(userId, orgId));
 }
 
-module.exports = { requirePermission, getMemberPermissions, clearPermissionCache };
+module.exports = { requirePermission, getMemberPermissions, clearPermissionCache, LEVELS };

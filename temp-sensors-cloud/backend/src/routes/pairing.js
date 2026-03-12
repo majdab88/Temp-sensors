@@ -58,10 +58,10 @@ router.get('/requests', async (req, res) => {
 });
 
 // POST /api/pairing/requests/:id/approve
-router.post('/requests/:id/approve', requirePermission('can_approve_pairing'), (req, res) => resolveRequest(req, res, true));
+router.post('/requests/:id/approve', requirePermission('editor'), (req, res) => resolveRequest(req, res, true));
 
 // POST /api/pairing/requests/:id/reject
-router.post('/requests/:id/reject', requirePermission('can_approve_pairing'), (req, res) => resolveRequest(req, res, false));
+router.post('/requests/:id/reject', requirePermission('editor'), (req, res) => resolveRequest(req, res, false));
 
 async function resolveRequest(req, res, approved) {
   const id = parseInt(req.params.id, 10);

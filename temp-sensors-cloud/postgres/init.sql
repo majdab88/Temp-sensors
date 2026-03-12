@@ -26,16 +26,14 @@ CREATE TABLE organizations (
 CREATE INDEX ON organizations (owner_id);
 
 -- Memberships — links members (and owners) to organizations
+-- permission_level: viewer (read-only), editor (+ manage devices/sensors), admin (+ manage members)
 CREATE TABLE memberships (
-  id                   SERIAL PRIMARY KEY,
-  user_id              INT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-  org_id               INT NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
-  role                 VARCHAR(10) DEFAULT 'member' CHECK (role IN ('owner', 'member')),
-  can_manage_members   BOOLEAN DEFAULT FALSE,
-  can_manage_devices   BOOLEAN DEFAULT FALSE,
-  can_approve_pairing  BOOLEAN DEFAULT FALSE,
-  can_view_readings    BOOLEAN DEFAULT TRUE,
-  joined_at            TIMESTAMPTZ DEFAULT NOW(),
+  id               SERIAL PRIMARY KEY,
+  user_id          INT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  org_id           INT NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+  role             VARCHAR(10) DEFAULT 'member' CHECK (role IN ('owner', 'member')),
+  permission_level VARCHAR(10) DEFAULT 'viewer' CHECK (permission_level IN ('viewer', 'editor', 'admin')),
+  joined_at        TIMESTAMPTZ DEFAULT NOW(),
   UNIQUE (user_id, org_id)
 );
 

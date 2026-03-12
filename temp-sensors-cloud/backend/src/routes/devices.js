@@ -77,7 +77,7 @@ router.post('/register', async (req, res) => {
 });
 
 // PUT /api/devices/:id — rename a device
-router.put('/:id', requirePermission('can_manage_devices'), async (req, res) => {
+router.put('/:id', requirePermission('editor'), async (req, res) => {
   const id = parseInt(req.params.id, 10);
   if (!Number.isInteger(id) || id <= 0) {
     return res.status(400).json({ error: 'Invalid device id' });

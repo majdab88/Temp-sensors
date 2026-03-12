@@ -8,6 +8,13 @@ function formatDate(isoStr) {
   return new Date(isoStr).toLocaleString()
 }
 
+const PERM_KEYS = [
+  { key: 'can_view_readings', label: 'Readings' },
+  { key: 'can_manage_devices', label: 'Devices' },
+  { key: 'can_approve_pairing', label: 'Pairing' },
+  { key: 'can_manage_members', label: 'Members' },
+]
+
 export default function Organizations() {
   const { user, startImpersonating } = useAuth()
   const navigate = useNavigate()
@@ -26,13 +33,22 @@ export default function Organizations() {
 
   // Add member form
   const [showAddMember, setShowAddMember] = useState(false)
-  const [memberForm, setMemberForm] = useState({ email: '', password: '' })
+  const [memberForm, setMemberForm] = useState({
+    email: '', password: '',
+    can_view_readings: true, can_manage_devices: false,
+    can_approve_pairing: false, can_manage_members: false,
+  })
   const [addingMember, setAddingMember] = useState(false)
   const [memberError, setMemberError] = useState(null)
 
   // Device rename
   const [editingDeviceId, setEditingDeviceId] = useState(null)
   const [editingDeviceName, setEditingDeviceName] = useState('')
+
+  // Permission toggle loading
+  const [permSaving, setPermSaving] = useState(null) // "userId:key"
+
+  const canManageMembers = isSuperadmin || user?.role === 'owner'
 
   const fetchOrgs = useCallback(() => {
     setLoading(true)
@@ -73,10 +89,19 @@ export default function Organizations() {
       await api.post(`/organizations/${orgId}/members`, {
         email: memberForm.email,
         password: memberForm.password || undefined,
+        permissions: {
+          can_view_readings: memberForm.can_view_readings,
+          can_manage_devices: memberForm.can_manage_devices,
+          can_approve_pairing: memberForm.can_approve_pairing,
+          can_manage_members: memberForm.can_manage_members,
+        },
       })
-      setMemberForm({ email: '', password: '' })
+      setMemberForm({
+        email: '', password: '',
+        can_view_readings: true, can_manage_devices: false,
+        can_approve_pairing: false, can_manage_members: false,
+      })
       setShowAddMember(false)
-      // Refresh members
       const res = await api.get(`/organizations/${orgId}/members`)
       setMembers(res.data)
     } catch (err) {
@@ -93,6 +118,23 @@ export default function Organizations() {
       setMembers((prev) => prev.filter((m) => m.id !== userId))
     } catch {
       alert('Failed to remove member')
+    }
+  }
+
+  async function handleTogglePermission(orgId, userId, permKey, currentValue) {
+    const saveKey = `${userId}:${permKey}`
+    setPermSaving(saveKey)
+    try {
+      await api.put(`/organizations/${orgId}/members/${userId}/permissions`, {
+        [permKey]: !currentValue,
+      })
+      setMembers((prev) => prev.map((m) =>
+        m.id === userId ? { ...m, [permKey]: !currentValue } : m
+      ))
+    } catch {
+      alert('Failed to update permission')
+    } finally {
+      setPermSaving(null)
     }
   }
 
@@ -172,7 +214,7 @@ export default function Organizations() {
                   {/* --- Members Section --- */}
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
                     <h4 style={{ margin: 0, fontSize: 14, fontWeight: 600 }}>Members</h4>
-                    {(isSuperadmin || user?.role === 'owner') && (
+                    {canManageMembers && (
                       <button
                         className="btn btn-ghost btn-sm"
                         onClick={() => setShowAddMember(!showAddMember)}
@@ -186,7 +228,7 @@ export default function Organizations() {
                     <div style={{ marginBottom: 14, padding: 12, background: 'var(--bg-2, #f8fafc)', borderRadius: 8 }}>
                       {memberError && <div className="alert alert-error" style={{ marginBottom: 8 }}>{memberError}</div>}
                       <form onSubmit={(e) => handleAddMember(e, org.id)}>
-                        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 10 }}>
                           <input
                             type="email"
                             value={memberForm.email}
@@ -202,12 +244,32 @@ export default function Organizations() {
                             placeholder="Password (new users only)"
                             style={{ flex: 1, minWidth: 120 }}
                           />
-                          <button type="submit" className="btn btn-primary btn-sm" disabled={addingMember}>
-                            {addingMember ? 'Adding...' : 'Add'}
-                          </button>
                         </div>
-                        <div style={{ fontSize: 11, color: 'var(--text-3)', marginTop: 6 }}>
-                          If the email already has an account, they'll be added directly (no password needed).
+
+                        {/* Permission checkboxes */}
+                        <div style={{ marginBottom: 10 }}>
+                          <div style={{ fontSize: 12, fontWeight: 500, color: 'var(--text-2)', marginBottom: 6 }}>Permissions</div>
+                          <div className="perm-checkboxes">
+                            {PERM_KEYS.map(({ key, label }) => (
+                              <label key={key} className="perm-checkbox-label">
+                                <input
+                                  type="checkbox"
+                                  checked={memberForm[key]}
+                                  onChange={(e) => setMemberForm({ ...memberForm, [key]: e.target.checked })}
+                                />
+                                <span>{label}</span>
+                              </label>
+                            ))}
+                          </div>
+                        </div>
+
+                        <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                          <button type="submit" className="btn btn-primary btn-sm" disabled={addingMember}>
+                            {addingMember ? 'Adding...' : 'Add Member'}
+                          </button>
+                          <span style={{ fontSize: 11, color: 'var(--text-3)' }}>
+                            Existing users are added directly (no password needed).
+                          </span>
                         </div>
                       </form>
                     </div>
@@ -220,26 +282,43 @@ export default function Organizations() {
                   ) : (
                     <div>
                       {members.map((m) => (
-                        <div key={m.id} style={{
-                          display: 'flex', justifyContent: 'space-between', alignItems: 'center',
-                          padding: '8px 0', borderBottom: '1px solid var(--border, #e2e8f0)',
-                        }}>
-                          <div>
-                            <span style={{ fontWeight: 500 }}>{m.email || m.username}</span>
-                            <span style={{
-                              marginLeft: 8, fontSize: 11, padding: '2px 6px',
-                              borderRadius: 4, background: m.org_role === 'owner' ? '#dbeafe' : '#f1f5f9',
-                              color: m.org_role === 'owner' ? '#1e40af' : '#64748b',
-                              textTransform: 'capitalize',
-                            }}>
-                              {m.org_role}
-                            </span>
+                        <div key={m.id} className="member-row">
+                          <div className="member-info">
+                            <div>
+                              <span style={{ fontWeight: 500 }}>{m.email || m.username}</span>
+                              <span className={`role-badge ${m.org_role}`}>{m.org_role}</span>
+                            </div>
+
+                            {/* Permission pills for non-owners */}
+                            {m.org_role !== 'owner' && (
+                              <div className="perm-pills">
+                                {PERM_KEYS.map(({ key, label }) => {
+                                  const saving = permSaving === `${m.id}:${key}`
+                                  return canManageMembers ? (
+                                    <button
+                                      key={key}
+                                      className={`perm-pill ${m[key] ? 'granted' : 'denied'}`}
+                                      onClick={() => handleTogglePermission(org.id, m.id, key, m[key])}
+                                      disabled={saving}
+                                      title={`Click to ${m[key] ? 'revoke' : 'grant'} ${label}`}
+                                    >
+                                      {saving ? '...' : label}
+                                    </button>
+                                  ) : (
+                                    <span key={key} className={`perm-pill ${m[key] ? 'granted' : 'denied'}`}>
+                                      {label}
+                                    </span>
+                                  )
+                                })}
+                              </div>
+                            )}
                           </div>
-                          {m.org_role !== 'owner' && (isSuperadmin || user?.role === 'owner') && (
+
+                          {m.org_role !== 'owner' && canManageMembers && (
                             <button
                               className="btn btn-danger btn-sm"
                               onClick={() => handleRemoveMember(org.id, m.id, m.email || m.username)}
-                              style={{ fontSize: 11, padding: '2px 8px' }}
+                              style={{ fontSize: 11, padding: '2px 8px', flexShrink: 0 }}
                             >
                               Remove
                             </button>

@@ -10,6 +10,8 @@ import Devices from './pages/Devices'
 import Provision from './pages/Provision'
 import Users from './pages/Users'
 import Organizations from './pages/Organizations'
+import Account from './pages/Account'
+import AuditLog from './pages/AuditLog'
 
 function ProtectedRoute({ children }) {
   const { isAuthenticated } = useAuth()
@@ -61,6 +63,8 @@ export default function App() {
             <Route path="devices" element={<OrgScopedRoute><Devices /></OrgScopedRoute>} />
             <Route path="setup" element={<OrgScopedRoute><Provision /></OrgScopedRoute>} />
             <Route path="organizations" element={<Organizations />} />
+            <Route path="account" element={<Account />} />
+            <Route path="audit-log" element={<AuditLog />} />
             <Route path="users" element={<SuperadminRoute><Users /></SuperadminRoute>} />
           </Route>
           <Route path="*" element={<Navigate to="/" replace />} />

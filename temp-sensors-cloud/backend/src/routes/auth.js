@@ -51,17 +51,21 @@ router.post('/login', loginLimiter, async (req, res) => {
 
     // For owners/members, find their org(s)
     let orgId = null;
+    let permissionLevel = null;
     if (user.role !== 'superadmin') {
       const orgRes = await query(
-        'SELECT org_id FROM memberships WHERE user_id = $1 LIMIT 1',
+        'SELECT org_id, permission_level FROM memberships WHERE user_id = $1 LIMIT 1',
         [user.id]
       );
-      if (orgRes.rows.length > 0) orgId = orgRes.rows[0].org_id;
+      if (orgRes.rows.length > 0) {
+        orgId = orgRes.rows[0].org_id;
+        permissionLevel = orgRes.rows[0].permission_level;
+      }
     }
 
     const payload = {
       sub: user.id, username: user.username, email: user.email || null,
-      role: user.role, orgId,
+      role: user.role, orgId, permissionLevel,
     };
 
     const accessToken = jwt.sign(payload, process.env.JWT_SECRET, { expiresIn: '1h' });
@@ -84,7 +88,7 @@ router.post('/refresh', (req, res) => {
   try {
     const decoded = jwt.verify(refreshToken, process.env.JWT_REFRESH_SECRET);
     const accessToken = jwt.sign(
-      { sub: decoded.sub, username: decoded.username, email: decoded.email || null, role: decoded.role, orgId: decoded.orgId },
+      { sub: decoded.sub, username: decoded.username, email: decoded.email || null, role: decoded.role, orgId: decoded.orgId, permissionLevel: decoded.permissionLevel },
       process.env.JWT_SECRET,
       { expiresIn: '1h' }
     );

@@ -113,7 +113,7 @@ export default function Layout() {
   const [pendingCount, setPendingCount] = useState(0)
 
   const isSuperadmin = user?.role === 'superadmin'
-  const isViewer = user?.role === 'viewer'
+  const isViewer = user?.permissionLevel === 'viewer'
 
   useEffect(() => {
     socket.on('pairingRequest', () => setPendingCount((n) => n + 1))

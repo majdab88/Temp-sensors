@@ -3,7 +3,9 @@
 const express = require('express');
 const { query } = require('../db');
 const { requireAuth, isSuperadminUnscoped } = require('../middleware/auth');
+const { requirePermission } = require('../middleware/permissions');
 const { publishSensorRemove, pushSyncToHub } = require('../mqtt');
+const { audit } = require('../audit');
 
 const router = express.Router();
 router.use(requireAuth);
@@ -42,7 +44,7 @@ router.get('/', async (req, res) => {
 });
 
 // PUT /api/sensors/:id — rename a sensor (with ownership check)
-router.put('/:id', async (req, res) => {
+router.put('/:id', requirePermission('can_manage_devices'), async (req, res) => {
   const id = parseInt(req.params.id, 10);
   if (!Number.isInteger(id) || id <= 0) {
     return res.status(400).json({ error: 'Invalid sensor id' });
@@ -67,6 +69,7 @@ router.put('/:id', async (req, res) => {
       [name.trim().slice(0, 64), id]
     );
     if (result.rows.length === 0) return res.status(404).json({ error: 'Sensor not found' });
+    await audit({ req, action: 'sensor.rename', targetType: 'sensor', targetId: id, details: { name: name.trim() } });
     res.json(result.rows[0]);
   } catch (err) {
     console.error(err);
@@ -75,7 +78,7 @@ router.put('/:id', async (req, res) => {
 });
 
 // DELETE /api/sensors/:id — remove a sensor and all its readings, notify hub via MQTT
-router.delete('/:id', async (req, res) => {
+router.delete('/:id', requirePermission('can_manage_devices'), async (req, res) => {
   const id = parseInt(req.params.id, 10);
   if (!Number.isInteger(id) || id <= 0) {
     return res.status(400).json({ error: 'Invalid sensor id' });
@@ -106,6 +109,7 @@ router.delete('/:id', async (req, res) => {
     publishSensorRemove(hub_mac, sensor_mac);
     await pushSyncToHub(hub_mac);
 
+    await audit({ req, action: 'sensor.delete', targetType: 'sensor', targetId: id, details: { mac: sensor_mac, hub_mac } });
     res.status(204).end();
   } catch (err) {
     console.error(err);

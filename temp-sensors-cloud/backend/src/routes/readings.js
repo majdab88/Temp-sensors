@@ -3,6 +3,7 @@
 const express = require('express');
 const { query } = require('../db');
 const { requireAuth, isSuperadminUnscoped } = require('../middleware/auth');
+const { requirePermission } = require('../middleware/permissions');
 
 // mergeParams: true makes req.params.id (from the parent route) available here
 const router = express.Router({ mergeParams: true });
@@ -21,7 +22,7 @@ async function checkSensorAccess(req, sensorId) {
 
 // GET /api/sensors/:id/readings
 // Query params: from, to (ISO timestamps), limit (default 500, max 5000)
-router.get('/', async (req, res) => {
+router.get('/', requirePermission('can_view_readings'), async (req, res) => {
   const sensorId = parseInt(req.params.id, 10);
   if (!Number.isInteger(sensorId) || sensorId <= 0) {
     return res.status(400).json({ error: 'Invalid sensor id' });
@@ -65,7 +66,7 @@ router.get('/', async (req, res) => {
 });
 
 // GET /api/sensors/:id/readings/latest
-router.get('/latest', async (req, res) => {
+router.get('/latest', requirePermission('can_view_readings'), async (req, res) => {
   const sensorId = parseInt(req.params.id, 10);
   if (!Number.isInteger(sensorId) || sensorId <= 0) {
     return res.status(400).json({ error: 'Invalid sensor id' });

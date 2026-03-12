@@ -4,6 +4,8 @@ const express = require('express');
 const bcrypt  = require('bcryptjs');
 const { query } = require('../db');
 const { requireAuth, requireSuperadmin, requireOwner, isSuperadminUnscoped } = require('../middleware/auth');
+const { requirePermission, clearPermissionCache } = require('../middleware/permissions');
+const { audit } = require('../audit');
 
 const router = express.Router();
 router.use(requireAuth);
@@ -71,7 +73,10 @@ router.get('/:id/members', async (req, res) => {
 
   try {
     const result = await query(
-      `SELECT u.id, u.username, u.email, u.role AS user_role, m.role AS org_role, m.joined_at
+      `SELECT u.id, u.username, u.email, u.role AS user_role, m.role AS org_role,
+              m.can_manage_members, m.can_manage_devices,
+              m.can_approve_pairing, m.can_view_readings,
+              m.joined_at
        FROM memberships m
        JOIN users u ON u.id = m.user_id
        WHERE m.org_id = $1
@@ -88,13 +93,13 @@ router.get('/:id/members', async (req, res) => {
 // POST /api/organizations/:id/members — invite a member to an org by email
 // Owner (or superadmin) creates a new member user and adds them to the org.
 // If a user with that email already exists, they are added to the org directly.
-router.post('/:id/members', requireOwner, async (req, res) => {
+router.post('/:id/members', requirePermission('can_manage_members'), async (req, res) => {
   const orgId = parseInt(req.params.id, 10);
   if (!Number.isInteger(orgId) || orgId <= 0) {
     return res.status(400).json({ error: 'Invalid org id' });
   }
 
-  const { email, password } = req.body || {};
+  const { email, password, permissions } = req.body || {};
   if (!email) {
     return res.status(400).json({ error: 'email is required' });
   }
@@ -103,14 +108,13 @@ router.post('/:id/members', requireOwner, async (req, res) => {
     return res.status(400).json({ error: 'A valid email address is required' });
   }
 
-  // Access check: owner must own this org (or be superadmin)
-  if (req.user.role !== 'superadmin') {
-    const check = await query(
-      "SELECT 1 FROM memberships WHERE user_id = $1 AND org_id = $2 AND role = 'owner'",
-      [req.user.sub, orgId]
-    );
-    if (check.rows.length === 0) return res.status(403).json({ error: 'Not the owner of this organization' });
-  }
+  // Build permission values from request (defaults: view_readings only)
+  const perms = {
+    can_manage_members:  !!(permissions && permissions.can_manage_members),
+    can_manage_devices:  !!(permissions && permissions.can_manage_devices),
+    can_approve_pairing: !!(permissions && permissions.can_approve_pairing),
+    can_view_readings:   permissions ? !!permissions.can_view_readings : true,
+  };
 
   try {
     // Check if user already exists by email
@@ -120,10 +124,12 @@ router.post('/:id/members', requireOwner, async (req, res) => {
       // Existing user — just add them to the org
       const user = existing.rows[0];
       await query(
-        'INSERT INTO memberships (user_id, org_id, role) VALUES ($1, $2, $3) ON CONFLICT DO NOTHING',
-        [user.id, orgId, 'member']
+        `INSERT INTO memberships (user_id, org_id, role, can_manage_members, can_manage_devices, can_approve_pairing, can_view_readings)
+         VALUES ($1, $2, $3, $4, $5, $6, $7) ON CONFLICT DO NOTHING`,
+        [user.id, orgId, 'member', perms.can_manage_members, perms.can_manage_devices, perms.can_approve_pairing, perms.can_view_readings]
       );
-      return res.status(200).json({ id: user.id, email: user.email, username: user.username, org_role: 'member', note: 'Existing user added to organization' });
+      await audit({ req, action: 'member.add', targetType: 'user', targetId: user.id, details: { orgId, email: emailStr, existing: true } });
+      return res.status(200).json({ id: user.id, email: user.email, username: user.username, org_role: 'member', permissions: perms, note: 'Existing user added to organization' });
     }
 
     // New user — password required
@@ -154,13 +160,15 @@ router.post('/:id/members', requireOwner, async (req, res) => {
     }
     const user = userRes.rows[0];
 
-    // Add to org
+    // Add to org with permissions
     await query(
-      'INSERT INTO memberships (user_id, org_id, role) VALUES ($1, $2, $3)',
-      [user.id, orgId, 'member']
+      `INSERT INTO memberships (user_id, org_id, role, can_manage_members, can_manage_devices, can_approve_pairing, can_view_readings)
+       VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+      [user.id, orgId, 'member', perms.can_manage_members, perms.can_manage_devices, perms.can_approve_pairing, perms.can_view_readings]
     );
 
-    res.status(201).json({ ...user, org_role: 'member' });
+    await audit({ req, action: 'member.add', targetType: 'user', targetId: user.id, details: { orgId, email: emailStr, existing: false } });
+    res.status(201).json({ ...user, org_role: 'member', permissions: perms });
   } catch (err) {
     if (err.code === '23505') {
       return res.status(409).json({ error: 'User is already a member of this organization' });
@@ -171,20 +179,11 @@ router.post('/:id/members', requireOwner, async (req, res) => {
 });
 
 // DELETE /api/organizations/:id/members/:userId — remove a member from an org
-router.delete('/:id/members/:userId', requireOwner, async (req, res) => {
+router.delete('/:id/members/:userId', requirePermission('can_manage_members'), async (req, res) => {
   const orgId = parseInt(req.params.id, 10);
   const userId = parseInt(req.params.userId, 10);
   if (!Number.isInteger(orgId) || !Number.isInteger(userId)) {
     return res.status(400).json({ error: 'Invalid ids' });
-  }
-
-  // Access check: owner must own this org (or be superadmin)
-  if (req.user.role !== 'superadmin') {
-    const check = await query(
-      "SELECT 1 FROM memberships WHERE user_id = $1 AND org_id = $2 AND role = 'owner'",
-      [req.user.sub, orgId]
-    );
-    if (check.rows.length === 0) return res.status(403).json({ error: 'Not the owner of this organization' });
   }
 
   // Cannot remove the owner
@@ -197,7 +196,60 @@ router.delete('/:id/members/:userId', requireOwner, async (req, res) => {
 
   try {
     await query('DELETE FROM memberships WHERE user_id = $1 AND org_id = $2', [userId, orgId]);
+    clearPermissionCache(userId, orgId);
+    await audit({ req, action: 'member.remove', targetType: 'user', targetId: userId, details: { orgId } });
     res.status(204).end();
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Database error' });
+  }
+});
+
+// PUT /api/organizations/:id/members/:userId/permissions — update member permissions
+router.put('/:id/members/:userId/permissions', requirePermission('can_manage_members'), async (req, res) => {
+  const orgId = parseInt(req.params.id, 10);
+  const userId = parseInt(req.params.userId, 10);
+  if (!Number.isInteger(orgId) || !Number.isInteger(userId)) {
+    return res.status(400).json({ error: 'Invalid ids' });
+  }
+
+  const { can_manage_members, can_manage_devices, can_approve_pairing, can_view_readings } = req.body || {};
+
+  // Cannot modify owner permissions
+  const memberCheck = await query(
+    'SELECT role FROM memberships WHERE user_id = $1 AND org_id = $2',
+    [userId, orgId]
+  );
+  if (memberCheck.rows.length === 0) return res.status(404).json({ error: 'Member not found in this organization' });
+  if (memberCheck.rows[0].role === 'owner') return res.status(400).json({ error: 'Cannot modify owner permissions' });
+
+  const updates = [];
+  const params = [];
+  let idx = 1;
+
+  if (typeof can_manage_members === 'boolean') { updates.push(`can_manage_members = $${idx++}`); params.push(can_manage_members); }
+  if (typeof can_manage_devices === 'boolean') { updates.push(`can_manage_devices = $${idx++}`); params.push(can_manage_devices); }
+  if (typeof can_approve_pairing === 'boolean') { updates.push(`can_approve_pairing = $${idx++}`); params.push(can_approve_pairing); }
+  if (typeof can_view_readings === 'boolean') { updates.push(`can_view_readings = $${idx++}`); params.push(can_view_readings); }
+
+  if (updates.length === 0) {
+    return res.status(400).json({ error: 'Provide at least one permission to update' });
+  }
+
+  params.push(userId, orgId);
+
+  try {
+    const result = await query(
+      `UPDATE memberships SET ${updates.join(', ')}
+       WHERE user_id = $${idx++} AND org_id = $${idx}
+       RETURNING user_id, org_id, role, can_manage_members, can_manage_devices, can_approve_pairing, can_view_readings`,
+      params
+    );
+    if (result.rows.length === 0) return res.status(404).json({ error: 'Membership not found' });
+
+    clearPermissionCache(userId, orgId);
+    await audit({ req, action: 'member.permissions_update', targetType: 'user', targetId: userId, details: { orgId, permissions: result.rows[0] } });
+    res.json(result.rows[0]);
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'Database error' });
@@ -285,6 +337,7 @@ router.put('/:id', requireOwner, async (req, res) => {
       [name.trim().slice(0, 128), orgId]
     );
     if (result.rows.length === 0) return res.status(404).json({ error: 'Organization not found' });
+    await audit({ req, action: 'org.rename', targetType: 'org', targetId: orgId, details: { name: name.trim() } });
     res.json(result.rows[0]);
   } catch (err) {
     console.error(err);

@@ -5,6 +5,7 @@ const bcrypt  = require('bcryptjs');
 const jwt     = require('jsonwebtoken');
 const rateLimit = require('express-rate-limit');
 const { query } = require('../db');
+const { audit } = require('../audit');
 
 const router = express.Router();
 
@@ -66,6 +67,7 @@ router.post('/login', loginLimiter, async (req, res) => {
     const accessToken = jwt.sign(payload, process.env.JWT_SECRET, { expiresIn: '1h' });
     const refreshToken = jwt.sign(payload, process.env.JWT_REFRESH_SECRET, { expiresIn: '7d' });
 
+    await audit({ req: { ...req, user: payload, orgId }, action: 'auth.login', targetType: 'user', targetId: user.id });
     res.json({ accessToken, refreshToken });
   } catch (err) {
     console.error('Login error:', err.message);

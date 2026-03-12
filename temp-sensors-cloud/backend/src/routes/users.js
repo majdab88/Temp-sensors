@@ -4,6 +4,7 @@ const express = require('express');
 const bcrypt  = require('bcryptjs');
 const { query } = require('../db');
 const { requireAuth, requireSuperadmin } = require('../middleware/auth');
+const { audit } = require('../audit');
 
 const router = express.Router();
 router.use(requireAuth);
@@ -83,14 +84,16 @@ router.post('/', async (req, res) => {
         [name, user.id]
       );
       const org = orgRes.rows[0];
-      // Add owner as a member of their own org
+      // Add owner as a member of their own org (all permissions granted)
       await query(
-        'INSERT INTO memberships (user_id, org_id, role) VALUES ($1, $2, $3)',
+        `INSERT INTO memberships (user_id, org_id, role, can_manage_members, can_manage_devices, can_approve_pairing, can_view_readings)
+         VALUES ($1, $2, $3, TRUE, TRUE, TRUE, TRUE)`,
         [user.id, org.id, 'owner']
       );
       user.organization = org;
     }
 
+    await audit({ req, action: 'user.create', targetType: 'user', targetId: user.id, details: { email: emailStr, role: userRole } });
     res.status(201).json(user);
   } catch (err) {
     if (err.code === '23505') {
@@ -149,6 +152,7 @@ router.put('/:id', async (req, res) => {
     if (result.rows.length === 0) {
       return res.status(404).json({ error: 'User not found or cannot modify superadmin' });
     }
+    await audit({ req, action: 'user.update', targetType: 'user', targetId: id, details: { fields: Object.keys(req.body) } });
     res.json(result.rows[0]);
   } catch (err) {
     if (err.code === '23505') {
@@ -174,6 +178,7 @@ router.delete('/:id', async (req, res) => {
     if (result.rows.length === 0) {
       return res.status(404).json({ error: 'User not found or cannot delete superadmin' });
     }
+    await audit({ req, action: 'user.delete', targetType: 'user', targetId: id });
     res.status(204).end();
   } catch (err) {
     console.error(err);

@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react'
+import React from 'react'
 import { NavLink, Outlet, useNavigate } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
 import socket from '../services/socket'
@@ -16,15 +16,6 @@ function IconHistory({ size = 22 }) {
   return (
     <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
       <polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/>
-    </svg>
-  )
-}
-
-function IconPairing({ size = 22 }) {
-  return (
-    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-      <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/>
-      <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/>
     </svg>
   )
 }
@@ -110,24 +101,13 @@ function IconAudit({ size = 22 }) {
 export default function Layout() {
   const { user, logout, impersonation, stopImpersonating } = useAuth()
   const navigate = useNavigate()
-  const [pendingCount, setPendingCount] = useState(0)
-
   const isSuperadmin = user?.role === 'superadmin'
   const isViewer = user?.permissionLevel === 'viewer'
-
-  useEffect(() => {
-    socket.on('pairingRequest', () => setPendingCount((n) => n + 1))
-    return () => { socket.off('pairingRequest') }
-  }, [])
 
   function handleLogout() {
     socket.disconnect()
     logout()
     navigate('/login')
-  }
-
-  function handlePairingClick() {
-    setPendingCount(0)
   }
 
   function handleStopImpersonating() {
@@ -148,7 +128,6 @@ export default function Layout() {
     )
     if (!isViewer) {
       navLinks.push(
-        { to: '/pairing', icon: <IconPairing />, label: 'Pairing', onClick: handlePairingClick, badge: pendingCount },
         { to: '/devices', icon: <IconDevices />, label: 'Devices' },
         { to: '/setup',   icon: <IconSetup />,   label: 'Setup'   },
       )

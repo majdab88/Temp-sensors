@@ -5,7 +5,6 @@ import Layout from './components/Layout'
 import Login from './pages/Login'
 import Dashboard from './pages/Dashboard'
 import History from './pages/History'
-import Pairing from './pages/Pairing'
 import Devices from './pages/Devices'
 import Provision from './pages/Provision'
 import Users from './pages/Users'
@@ -59,7 +58,6 @@ export default function App() {
           >
             <Route index element={<IndexRedirect />} />
             <Route path="history" element={<OrgScopedRoute><History /></OrgScopedRoute>} />
-            <Route path="pairing" element={<OrgScopedRoute><Pairing /></OrgScopedRoute>} />
             <Route path="devices" element={<OrgScopedRoute><Devices /></OrgScopedRoute>} />
             <Route path="setup" element={<OrgScopedRoute><Provision /></OrgScopedRoute>} />
             <Route path="organizations" element={<Organizations />} />

@@ -74,10 +74,17 @@ export default function Dashboard() {
       }))
     }
 
+    // Re-join rooms on reconnect so cached hub status is replayed
+    function onConnect() {
+      hubsJoined.forEach((mac) => socket.emit('join', mac))
+    }
+
     socket.on('sensorData', onSensorData)
+    socket.on('connect', onConnect)
 
     return () => {
       socket.off('sensorData', onSensorData)
+      socket.off('connect', onConnect)
       hubsJoined.forEach((mac) => socket.emit('leave', mac))
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps

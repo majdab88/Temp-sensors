@@ -29,12 +29,17 @@ export default function Devices() {
   const [pairingEnabling, setPairingEnabling] = useState(false)
   const [processingRequest, setProcessingRequest] = useState(null)
   const countdownRef = useRef(null)
+  const deviceMacsRef = useRef([])
 
   useEffect(() => {
+    if (!socket.connected) socket.connect()
+
     api.get('/devices')
       .then((res) => {
         setDevices(res.data)
-        res.data.forEach((d) => socket.emit('join', d.mac))
+        const macs = res.data.map((d) => d.mac)
+        deviceMacsRef.current = macs
+        macs.forEach((mac) => socket.emit('join', mac))
       })
       .catch(() => setError('Failed to load devices'))
       .finally(() => setLoading(false))
@@ -46,9 +51,16 @@ export default function Devices() {
       }))
     }
 
+    // Re-join rooms on reconnect so hub status is replayed from cache
+    function onConnect() {
+      deviceMacsRef.current.forEach((mac) => socket.emit('join', mac))
+    }
+
     socket.on('hubStatus', onHubStatus)
+    socket.on('connect', onConnect)
     return () => {
       socket.off('hubStatus', onHubStatus)
+      socket.off('connect', onConnect)
     }
   }, [])
 

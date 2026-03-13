@@ -139,6 +139,7 @@ export default function Devices() {
     try {
       await api.post(`/pairing/requests/${id}/approve`)
       setPairingRequests((prev) => prev.filter((r) => r.id !== id))
+      handleDisablePairing()
     } catch {
       alert('Failed to approve pairing request')
     } finally {

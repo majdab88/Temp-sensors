@@ -31,6 +31,7 @@ function initMqtt(io) {
       'sensors/+/data',
       'sensors/+/status',
       'sensors/+/pairing/request',
+      'sensors/+/pairing/status',   // hub acks pairing mode enable/disable
       'sensors/+/sync/request',
       'sensors/+/sensor/deleted',   // hub notifies cloud after a local-dashboard delete
     ], (err) => {
@@ -72,6 +73,8 @@ async function handleMessage(topic, payload) {
     handleHubStatus(hubMac, data);
   } else if (parts[2] === 'pairing' && parts[3] === 'request') {
     await handlePairingRequest(hubMac, data);
+  } else if (parts[2] === 'pairing' && parts[3] === 'status') {
+    handlePairingModeStatus(hubMac, data);
   } else if (parts[2] === 'sync' && parts[3] === 'request') {
     await handleSyncRequest(hubMac);
   } else if (parts[2] === 'sensor' && parts[3] === 'deleted') {
@@ -221,6 +224,29 @@ async function handleSyncRequest(hubMac) {
 }
 
 /**
+ * Forward hub's pairing mode status to connected dashboard clients.
+ */
+function handlePairingModeStatus(hubMac, data) {
+  const mac = hubMac.toUpperCase();
+  _io.to(`hub:${mac}`).emit('pairingModeStatus', {
+    hub_mac: mac,
+    pairing_mode: !!data.pairing_mode,
+  });
+}
+
+/**
+ * Tell a hub to enable or disable pairing mode.
+ * Called by the pairing route handler.
+ */
+function publishPairingEnable(hubMac, enable) {
+  if (!client || !client.connected) {
+    throw new Error('MQTT client not connected');
+  }
+  const payload = JSON.stringify({ enable });
+  client.publish(`sensors/${hubMac}/pairing/enable`, payload);
+}
+
+/**
  * Publish a pairing approve/reject decision back to the hub.
  * Called by the pairing route handler.
  */
@@ -247,4 +273,4 @@ function publishSensorRemove(hubMac, sensorMac) {
   console.log(`[MQTT] Sent sensor/remove for ${sensorMac} to hub ${hubMac}`);
 }
 
-module.exports = { initMqtt, publishPairingResponse, publishSensorRemove, getHubStatus, pushSyncToHub: handleSyncRequest };
+module.exports = { initMqtt, publishPairingResponse, publishPairingEnable, publishSensorRemove, getHubStatus, pushSyncToHub: handleSyncRequest };

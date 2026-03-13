@@ -4,7 +4,7 @@ const express = require('express');
 const { query } = require('../db');
 const { requireAuth, isSuperadminUnscoped } = require('../middleware/auth');
 const { requirePermission } = require('../middleware/permissions');
-const { publishPairingResponse } = require('../mqtt');
+const { publishPairingResponse, publishPairingEnable } = require('../mqtt');
 const { audit } = require('../audit');
 
 const router = express.Router();
@@ -124,5 +124,38 @@ async function resolveRequest(req, res, approved) {
     res.status(500).json({ error: 'Database error' });
   }
 }
+
+// POST /api/pairing/enable — tell a hub to enter or exit pairing mode
+router.post('/enable', requirePermission('editor'), async (req, res) => {
+  const { hub_mac, enable } = req.body || {};
+  if (!hub_mac || typeof enable !== 'boolean') {
+    return res.status(400).json({ error: 'hub_mac (string) and enable (boolean) are required' });
+  }
+
+  const mac = String(hub_mac).toUpperCase();
+
+  // Verify device exists and belongs to user's org
+  const params = [mac];
+  const conditions = ['d.mac = $1'];
+  if (!isSuperadminUnscoped(req) && req.orgId) {
+    conditions.push(`d.org_id = $${params.length + 1}`);
+    params.push(req.orgId);
+  }
+
+  try {
+    const devRes = await query(
+      `SELECT id FROM devices d WHERE ${conditions.join(' AND ')}`, params
+    );
+    if (devRes.rows.length === 0) {
+      return res.status(404).json({ error: 'Device not found' });
+    }
+
+    publishPairingEnable(mac, enable);
+    await audit({ req, action: enable ? 'pairing.enable' : 'pairing.disable', targetType: 'device', targetId: devRes.rows[0].id, details: { hub_mac: mac } });
+    res.json({ ok: true, hub_mac: mac, pairing_mode: enable });
+  } catch (err) {
+    res.status(502).json({ error: 'Failed to send command to hub: ' + err.message });
+  }
+});
 
 module.exports = router;

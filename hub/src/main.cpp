@@ -158,6 +158,8 @@ char topicSensorRemove[72];  // Cloud → Hub: remove a specific sensor
 char topicSensorRename[72];  // Cloud → Hub: rename a specific sensor
 char topicSensorRenamed[72]; // Hub → Cloud: local rename notification
 char topicSensorDeleted[72]; // Hub → Cloud: local delete notification
+char topicPairEnable[80];   // Cloud → Hub: enable/disable pairing mode
+char topicPairStatus[80];   // Hub → Cloud: pairing mode state ack
 
 bool cloudConfigured = false;  // true when MQTT credentials exist in NVS
 
@@ -176,6 +178,12 @@ struct {
   bool          approved;
   bool          resolved;
 } pendingPairing = {};
+
+// Pairing mode: hub only accepts MSG_PAIRING when this is active.
+// Activated by cloud MQTT command; auto-expires after timeout.
+bool          pairingModeActive  = false;
+unsigned long pairingModeStarted = 0;
+#define PAIRING_MODE_TIMEOUT_MS 120000UL  // 2 minutes
 
 unsigned long      lastMqttReconnect    = 0;
 const unsigned long MQTT_RECONNECT_MS   = 5000;
@@ -785,12 +793,32 @@ void buildTopics() {
   snprintf(topicSensorRename, sizeof(topicSensorRename), "sensors/%s/sensor/rename",    hubMacStr);
   snprintf(topicSensorRenamed,sizeof(topicSensorRenamed),"sensors/%s/sensor/renamed",   hubMacStr);
   snprintf(topicSensorDeleted,sizeof(topicSensorDeleted),"sensors/%s/sensor/deleted",   hubMacStr);
+  snprintf(topicPairEnable,  sizeof(topicPairEnable),  "sensors/%s/pairing/enable",   hubMacStr);
+  snprintf(topicPairStatus,  sizeof(topicPairStatus),  "sensors/%s/pairing/status",   hubMacStr);
   Serial.printf("[MQTT] Hub MAC: %s\n", hubMacStr);
 }
 
 // Called by PubSubClient when a subscribed message arrives.
 void mqttCallback(char* topic, byte* payload, unsigned int length) {
   String json = String((char*)payload, length);
+
+  // ── Pairing mode enable/disable from cloud ─────────────────────────────────
+  if (strcmp(topic, topicPairEnable) == 0) {
+    bool enable = json.indexOf("\"enable\":true") != -1;
+    if (enable) {
+      pairingModeActive  = true;
+      pairingModeStarted = millis();
+      Serial.println("[Pairing] Pairing mode ENABLED by cloud (2 min timeout)");
+    } else {
+      pairingModeActive = false;
+      pendingPairing.active = false;
+      Serial.println("[Pairing] Pairing mode DISABLED by cloud");
+    }
+    char ack[48];
+    snprintf(ack, sizeof(ack), "{\"pairing_mode\":%s}", pairingModeActive ? "true" : "false");
+    mqttClient.publish(topicPairStatus, ack);
+    return;
+  }
 
   // ── Pairing response (existing) ───────────────────────────────────────────
   if (strcmp(topic, topicPairResp) == 0) {
@@ -1138,6 +1166,7 @@ bool connectCloud() {
   mqttClient.subscribe(topicSync);
   mqttClient.subscribe(topicSensorRemove);
   mqttClient.subscribe(topicSensorRename);
+  mqttClient.subscribe(topicPairEnable);
 
   // Publish retained online status so the dashboard sees us immediately
   String status = "{\"online\":true,\"ip\":\"" + WiFi.localIP().toString() + "\"}";
@@ -1593,6 +1622,11 @@ void OnDataRecv(const esp_now_recv_info_t* esp_now_info,
                   esp_now_info->src_addr[2], esp_now_info->src_addr[3],
                   esp_now_info->src_addr[4], esp_now_info->src_addr[5]);
 
+    if (!pairingModeActive) {
+      Serial.println("[Pairing] Pairing mode OFF — ignoring request");
+      return;
+    }
+
     if (cloudConfigured && mqttClient.connected() && !pendingPairing.active) {
       // Cloud connected: publish request and wait for dashboard approval in loop()
       memcpy(pendingPairing.mac, esp_now_info->src_addr, 6);
@@ -1625,8 +1659,8 @@ void OnDataRecv(const esp_now_recv_info_t* esp_now_info,
         Serial.println("[Pairing] Already handling another sensor pairing — ignoring");
       }
     } else {
-      // Cloud not configured or MQTT disconnected — auto-accept immediately (fallback)
-      Serial.println("[Pairing] Cloud offline — auto-accepting");
+      // Cloud offline but pairing mode active — auto-accept since user explicitly enabled it
+      Serial.println("[Pairing] Cloud offline but pairing mode active — auto-accepting");
       completePairing(esp_now_info->src_addr);
     }
   }
@@ -1861,6 +1895,15 @@ void loop() {
       Serial.println("[Pairing] Cloud timeout — auto-accepting");
       completePairing(pendingPairing.mac);  // fallback: auto-accept
       pendingPairing.active = false;
+    }
+  }
+
+  // Auto-expire pairing mode
+  if (pairingModeActive && millis() - pairingModeStarted > PAIRING_MODE_TIMEOUT_MS) {
+    pairingModeActive = false;
+    Serial.println("[Pairing] Pairing mode expired");
+    if (mqttClient.connected()) {
+      mqttClient.publish(topicPairStatus, "{\"pairing_mode\":false}");
     }
   }
 

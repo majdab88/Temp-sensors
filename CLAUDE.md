@@ -39,6 +39,7 @@ Temp-sensors/
 ├── Temp32_hub.ino           # Original Arduino IDE source (kept for reference)
 ├── Temp32_sensor.ino        # Original Arduino IDE source (kept for reference)
 ├── CLOUD_MIGRATION_PLAN.md  # Plan to migrate to custom cloud + BLE provisioning
+├── LORAWAN_MIGRATION_PLAN.md # Optional/future: migrate ESP-NOW to LoRaWAN + ChirpStack
 ├── README.md                # Project title placeholder
 └── CLAUDE.md                # This file
 ```
@@ -59,6 +60,11 @@ Temp-sensors/
 > React Native mobile app. The mobile app will replace WiFiManager with
 > **BLE provisioning** (NimBLE-Arduino) so end users never need to type an IP
 > address. The firmware below reflects the **current implemented state**.
+>
+> **Optional future migration:** `LORAWAN_MIGRATION_PLAN.md` documents a potential
+> migration from ESP-NOW to LoRaWAN + ChirpStack for longer range. The hub becomes
+> a single-channel LoRa gateway (ESP32-C6 + SX1262), sensors use RadioLib LoRaWAN,
+> and ChirpStack handles device management. Sensors remain tied to their hub by MAC ID.
 
 ### Hub (`Temp32_hub.ino`)
 - Connects to WiFi via **WiFiManager** (captive portal AP on first boot). *(Planned: replaced by BLE provisioning — see CLOUD_MIGRATION_PLAN.md)*

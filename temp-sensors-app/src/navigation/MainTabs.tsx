@@ -1,13 +1,13 @@
 import React, { useEffect, useState } from 'react';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { Ionicons } from '@expo/vector-icons';
-import { View, Text, StyleSheet } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import DashboardScreen from '../screens/DashboardScreen';
 import DevicesScreen from '../screens/DevicesScreen';
 import PairingScreen from '../screens/PairingScreen';
 import AccountScreen from '../screens/AccountScreen';
 import { getPairingRequests } from '../services/api';
-import { TouchableOpacity } from 'react-native';
 import { useAuth } from '../context/AuthContext';
 import { canEdit } from '../utils/permissions';
 
@@ -31,6 +31,7 @@ function PairingBadge({ count }: { count: number }) {
 
 export default function MainTabs() {
   const { user, impersonatedOrg, stopImpersonating } = useAuth();
+  const insets = useSafeAreaInsets();
   const editor = canEdit(user);
   const [pendingCount, setPendingCount] = useState(0);
 
@@ -52,7 +53,7 @@ export default function MainTabs() {
   return (
     <View style={{ flex: 1 }}>
       {impersonatedOrg && (
-        <View style={styles.banner}>
+        <View style={[styles.banner, { paddingTop: insets.top + 8 }]}>
           <Text style={styles.bannerText} numberOfLines={1}>
             Viewing as: <Text style={styles.bannerOrg}>{impersonatedOrg.name}</Text>
           </Text>

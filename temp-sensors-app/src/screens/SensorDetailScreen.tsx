@@ -161,6 +161,39 @@ export default function SensorDetailScreen({ route, navigation }: Props) {
         <>
           <ReadingChart readings={readings} field="temp" />
           {hasHumData && <ReadingChart readings={readings} field="hum" />}
+
+          {/* Readings data table */}
+          {readings.length > 0 && (
+            <View style={styles.tableSection}>
+              <Text style={styles.tableTitle}>Readings ({readings.length})</Text>
+              <View style={styles.tableHeader}>
+                <Text style={[styles.tableHeaderCell, { flex: 2 }]}>Time</Text>
+                <Text style={styles.tableHeaderCell}>Temp</Text>
+                <Text style={styles.tableHeaderCell}>Hum</Text>
+                <Text style={styles.tableHeaderCell}>RSSI</Text>
+                <Text style={styles.tableHeaderCell}>Bat</Text>
+              </View>
+              {[...readings].reverse().slice(0, 100).map((r, i) => (
+                <View key={r.id ?? i} style={[styles.tableRow, i % 2 === 0 && styles.tableRowAlt]}>
+                  <Text style={[styles.tableCell, { flex: 2 }]}>
+                    {new Date(r.recorded_at).toLocaleString([], { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
+                  </Text>
+                  <Text style={styles.tableCell}>
+                    {r.temp === -999 ? 'ERR' : r.temp?.toFixed(2) ?? '—'}
+                  </Text>
+                  <Text style={styles.tableCell}>
+                    {r.hum === -999 ? 'N/A' : r.hum?.toFixed(1) ?? '—'}
+                  </Text>
+                  <Text style={styles.tableCell}>
+                    {r.rssi ?? '—'}
+                  </Text>
+                  <Text style={styles.tableCell}>
+                    {r.battery != null && r.battery !== 255 ? `${r.battery}%` : '—'}
+                  </Text>
+                </View>
+              ))}
+            </View>
+          )}
         </>
       )}
     </ScrollView>
@@ -206,4 +239,24 @@ const styles = StyleSheet.create({
   rangeBtnActive: { backgroundColor: '#0284c7' },
   rangeBtnText: { color: '#64748b', fontWeight: '600' },
   rangeBtnTextActive: { color: '#fff' },
+  tableSection: {
+    marginTop: 24,
+    backgroundColor: '#1e293b',
+    borderRadius: 12,
+    padding: 12,
+    borderWidth: 1,
+    borderColor: '#334155',
+  },
+  tableTitle: { color: '#94a3b8', fontSize: 13, fontWeight: '700', marginBottom: 8 },
+  tableHeader: {
+    flexDirection: 'row',
+    borderBottomWidth: 1,
+    borderBottomColor: '#334155',
+    paddingBottom: 6,
+    marginBottom: 4,
+  },
+  tableHeaderCell: { flex: 1, color: '#64748b', fontSize: 11, fontWeight: '700' },
+  tableRow: { flexDirection: 'row', paddingVertical: 5 },
+  tableRowAlt: { backgroundColor: '#0f172a', borderRadius: 4 },
+  tableCell: { flex: 1, color: '#cbd5e1', fontSize: 12 },
 });

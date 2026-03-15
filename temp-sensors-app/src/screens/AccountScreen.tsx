@@ -12,29 +12,43 @@ import { updateAccount, changePassword } from '../services/api';
 
 type Nav = NativeStackNavigationProp<RootStackParamList>;
 
+const PERM_COLORS: Record<string, string> = {
+  viewer: '#475569', editor: '#0284c7', admin: '#7c3aed',
+};
+
 export default function AccountScreen() {
   const { user, logout } = useAuth();
   const navigation = useNavigation<Nav>();
   const [username, setUsername] = useState(user?.username ?? '');
+  const [email, setEmail] = useState(user?.email ?? '');
   const [currentPassword, setCurrentPassword] = useState('');
   const [newPassword, setNewPassword] = useState('');
   const [saving, setSaving] = useState(false);
 
   const saveChanges = async () => {
     const usernameChanged = username.trim() && username.trim() !== user?.username;
+    const emailChanged = email.trim() && email.trim() !== user?.email;
     const passwordChange = newPassword.length > 0;
 
-    if (!usernameChanged && !passwordChange) return;
+    if (!usernameChanged && !emailChanged && !passwordChange) return;
 
     if (passwordChange && !currentPassword) {
       Alert.alert('Error', 'Enter your current password to set a new one.');
       return;
     }
 
+    if (passwordChange && newPassword.length < 6) {
+      Alert.alert('Error', 'New password must be at least 6 characters.');
+      return;
+    }
+
     setSaving(true);
     try {
-      if (usernameChanged) {
-        await updateAccount({ username: username.trim() });
+      if (usernameChanged || emailChanged) {
+        const updates: { username?: string; email?: string } = {};
+        if (usernameChanged) updates.username = username.trim();
+        if (emailChanged) updates.email = email.trim();
+        await updateAccount(updates);
       }
       if (passwordChange) {
         await changePassword(currentPassword, newPassword);
@@ -62,21 +76,22 @@ export default function AccountScreen() {
       <View style={styles.section}>
         <Text style={styles.sectionTitle}>Profile</Text>
 
-        {user?.email && (
-          <View style={styles.field}>
-            <Text style={styles.label}>Email</Text>
-            <Text style={styles.value}>{user.email}</Text>
-          </View>
-        )}
+        <View style={styles.field}>
+          <Text style={styles.label}>Email</Text>
+          <TextInput
+            style={styles.input}
+            value={email}
+            onChangeText={setEmail}
+            placeholder="Email"
+            placeholderTextColor="#64748b"
+            autoCapitalize="none"
+            keyboardType="email-address"
+          />
+        </View>
 
         <View style={styles.field}>
           <Text style={styles.label}>Role</Text>
           <Text style={styles.value}>{user?.role}</Text>
-          {user?.memberships?.[0] && (
-            <Text style={styles.subValue}>
-              {user.memberships[0].org_name} · {user.memberships[0].permission_level}
-            </Text>
-          )}
         </View>
 
         <View style={styles.field}>
@@ -91,6 +106,24 @@ export default function AccountScreen() {
           />
         </View>
       </View>
+
+      {/* Memberships */}
+      {user?.memberships && user.memberships.length > 0 && (
+        <View style={styles.section}>
+          <Text style={styles.sectionTitle}>Memberships</Text>
+          {user.memberships.map((m) => (
+            <View key={m.org_id} style={styles.membershipRow}>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.membershipOrg}>{m.org_name}</Text>
+                <Text style={styles.membershipRole}>{m.org_role}</Text>
+              </View>
+              <View style={[styles.permBadge, { backgroundColor: PERM_COLORS[m.permission_level] ?? '#475569' }]}>
+                <Text style={styles.permBadgeText}>{m.permission_level}</Text>
+              </View>
+            </View>
+          ))}
+        </View>
+      )}
 
       {/* Password change */}
       <View style={styles.section}>
@@ -173,7 +206,6 @@ const styles = StyleSheet.create({
   field: { marginBottom: 12 },
   label: { color: '#64748b', fontSize: 12, marginBottom: 4 },
   value: { color: '#f1f5f9', fontSize: 15 },
-  subValue: { color: '#64748b', fontSize: 12, marginTop: 2 },
   input: {
     backgroundColor: '#0f172a',
     borderRadius: 8,
@@ -184,6 +216,17 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: '#334155',
   },
+  membershipRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 8,
+    borderBottomWidth: 1,
+    borderBottomColor: '#0f172a',
+  },
+  membershipOrg: { color: '#f1f5f9', fontSize: 14, fontWeight: '600' },
+  membershipRole: { color: '#64748b', fontSize: 12, marginTop: 1 },
+  permBadge: { borderRadius: 6, paddingHorizontal: 8, paddingVertical: 3 },
+  permBadgeText: { color: '#f1f5f9', fontSize: 11, fontWeight: '700', textTransform: 'capitalize' },
   saveBtn: {
     backgroundColor: '#0284c7',
     borderRadius: 10,

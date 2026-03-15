@@ -10,6 +10,7 @@ import { RootStackParamList } from '../navigation/AppNavigator';
 import DeviceRow from '../components/DeviceRow';
 import { getDevices } from '../services/api';
 import { Device } from '../types';
+import { getSocket } from '../services/socket';
 
 type Nav = NativeStackNavigationProp<RootStackParamList>;
 
@@ -32,10 +33,33 @@ export default function DevicesScreen() {
     fetchDevices().finally(() => setLoading(false));
   }, [fetchDevices]);
 
+  // Real-time hub status via Socket.IO
+  useEffect(() => {
+    const socket = getSocket();
+    if (!socket) return;
+
+    const handleHubStatus = (data: { mac: string; online: boolean; ip?: string }) => {
+      setDevices((prev) =>
+        prev.map((d) =>
+          d.mac === data.mac
+            ? { ...d, online: data.online, ...(data.ip !== undefined ? { ip: data.ip } : {}) }
+            : d
+        )
+      );
+    };
+
+    socket.on('hubStatus', handleHubStatus);
+    return () => { socket.off('hubStatus', handleHubStatus); };
+  }, []);
+
   const onRefresh = async () => {
     setRefreshing(true);
     await fetchDevices();
     setRefreshing(false);
+  };
+
+  const handleRenamed = (id: number, newName: string) => {
+    setDevices((prev) => prev.map((d) => d.id === id ? { ...d, name: newName } : d));
   };
 
   if (loading) {
@@ -51,7 +75,7 @@ export default function DevicesScreen() {
       <FlatList
         data={devices}
         keyExtractor={(item) => item.mac}
-        renderItem={({ item }) => <DeviceRow device={item} />}
+        renderItem={({ item }) => <DeviceRow device={item} onRenamed={handleRenamed} />}
         contentContainerStyle={styles.list}
         refreshControl={
           <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor="#38bdf8" />

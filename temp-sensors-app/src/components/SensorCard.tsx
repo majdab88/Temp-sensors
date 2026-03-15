@@ -17,8 +17,28 @@ function timeAgo(timestamp: number): string {
   return `${Math.floor(seconds / 86400)}d ago`;
 }
 
+type SensorStatus = 'online' | 'stale' | 'offline';
+
+function getSensorStatus(sensor: Sensor): SensorStatus {
+  if (sensor.lastUpdate !== undefined) {
+    const ageSec = Math.floor(Date.now() / 1000 - sensor.lastUpdate);
+    if (ageSec < 900) return 'online';    // < 15 min
+    if (ageSec < 3600) return 'stale';    // 15–60 min
+    return 'offline';
+  }
+  return sensor.active ? 'online' : 'offline';
+}
+
+const STATUS_CONFIG: Record<SensorStatus, { label: string; bg: string }> = {
+  online:  { label: 'ACTIVE',  bg: '#14532d' },
+  stale:   { label: 'STALE',   bg: '#78350f' },
+  offline: { label: 'OFFLINE', bg: '#450a0a' },
+};
+
 export default function SensorCard({ sensor, onPress }: Props) {
-  const offline = !sensor.active;
+  const status = getSensorStatus(sensor);
+  const isOffline = status === 'offline';
+  const cfg = STATUS_CONFIG[status];
   const tempStr = sensor.temp === undefined ? '--'
     : sensor.temp === -999 ? 'ERR'
     : `${sensor.temp.toFixed(1)}°C`;
@@ -30,16 +50,16 @@ export default function SensorCard({ sensor, onPress }: Props) {
 
   return (
     <TouchableOpacity
-      style={[styles.card, offline && styles.cardOffline]}
+      style={[styles.card, isOffline && styles.cardOffline]}
       onPress={onPress}
       activeOpacity={0.8}
     >
       <View style={styles.header}>
-        <Text style={[styles.name, offline && styles.textDim]} numberOfLines={1}>
+        <Text style={[styles.name, isOffline && styles.textDim]} numberOfLines={1}>
           {sensor.name}
         </Text>
-        <View style={[styles.badge, offline ? styles.badgeOffline : styles.badgeOnline]}>
-          <Text style={styles.badgeText}>{offline ? 'OFFLINE' : 'ACTIVE'}</Text>
+        <View style={[styles.badge, { backgroundColor: cfg.bg }]}>
+          <Text style={styles.badgeText}>{cfg.label}</Text>
         </View>
       </View>
 
@@ -104,8 +124,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 8,
     paddingVertical: 2,
   },
-  badgeOnline: { backgroundColor: '#14532d' },
-  badgeOffline: { backgroundColor: '#450a0a' },
+  // badge colors now set inline via STATUS_CONFIG
   badgeText: { color: '#f1f5f9', fontSize: 11, fontWeight: '700' },
   mac: { color: '#475569', fontSize: 11, marginBottom: 12 },
   grid: {

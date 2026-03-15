@@ -6,6 +6,9 @@ interface Props {
 }
 
 export default function BatteryBar({ level }: Props) {
+  if (level === undefined || level === null) {
+    return <Text style={styles.error}>--</Text>;
+  }
   if (level === 255) {
     return <Text style={styles.error}>N/A</Text>;
   }

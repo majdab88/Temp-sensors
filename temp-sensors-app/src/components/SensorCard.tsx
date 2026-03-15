@@ -19,8 +19,14 @@ function timeAgo(timestamp: number): string {
 
 export default function SensorCard({ sensor, onPress }: Props) {
   const offline = !sensor.active;
-  const tempStr = sensor.temp === -999 ? 'ERR' : `${sensor.temp.toFixed(1)}°C`;
-  const humStr = sensor.hum === -999 ? 'N/A' : `${sensor.hum.toFixed(1)}%`;
+  const tempStr = sensor.temp === undefined ? '--'
+    : sensor.temp === -999 ? 'ERR'
+    : `${sensor.temp.toFixed(1)}°C`;
+  const humStr = sensor.hum === undefined ? '--'
+    : sensor.hum === -999 ? 'N/A'
+    : `${sensor.hum.toFixed(1)}%`;
+  const rssiStr = sensor.rssi !== undefined ? `${sensor.rssi} dBm` : '--';
+  const lastUpdateStr = sensor.lastUpdate !== undefined ? `Updated ${timeAgo(sensor.lastUpdate)}` : 'No data yet';
 
   return (
     <TouchableOpacity
@@ -52,7 +58,7 @@ export default function SensorCard({ sensor, onPress }: Props) {
         </View>
         <View style={styles.cell}>
           <Ionicons name="wifi-outline" size={16} color="#4ade80" />
-          <Text style={styles.cellValue}>{sensor.rssi} dBm</Text>
+          <Text style={styles.cellValue}>{rssiStr}</Text>
           <Text style={styles.cellLabel}>Signal</Text>
         </View>
       </View>
@@ -62,7 +68,7 @@ export default function SensorCard({ sensor, onPress }: Props) {
         <BatteryBar level={sensor.battery} />
       </View>
 
-      <Text style={styles.lastUpdate}>Updated {timeAgo(sensor.lastUpdate)}</Text>
+      <Text style={styles.lastUpdate}>{lastUpdateStr}</Text>
     </TouchableOpacity>
   );
 }

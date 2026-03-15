@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import {
   View, Text, FlatList, TouchableOpacity, StyleSheet,
   TextInput, ActivityIndicator, Alert, ScrollView,
+  PermissionsAndroid, Platform,
 } from 'react-native';
 import { Device as BLEDevice } from 'react-native-ble-plx';
 import { Ionicons } from '@expo/vector-icons';
@@ -50,7 +51,28 @@ export default function AddDeviceScreen() {
     };
   }, [connectedHub]);
 
-  const startScan = () => {
+  const requestBlePermissions = async (): Promise<boolean> => {
+    if (Platform.OS !== 'android') return true;
+    if (Platform.Version >= 31) {
+      const results = await PermissionsAndroid.requestMultiple([
+        PermissionsAndroid.PERMISSIONS.BLUETOOTH_SCAN,
+        PermissionsAndroid.PERMISSIONS.BLUETOOTH_CONNECT,
+        PermissionsAndroid.PERMISSIONS.ACCESS_FINE_LOCATION,
+      ]);
+      return Object.values(results).every((r) => r === PermissionsAndroid.RESULTS.GRANTED);
+    }
+    const result = await PermissionsAndroid.request(
+      PermissionsAndroid.PERMISSIONS.ACCESS_FINE_LOCATION
+    );
+    return result === PermissionsAndroid.RESULTS.GRANTED;
+  };
+
+  const startScan = async () => {
+    const granted = await requestBlePermissions();
+    if (!granted) {
+      Alert.alert('Permission Required', 'Bluetooth and location permissions are needed to scan for hub devices.');
+      return;
+    }
     setHubs([]);
     setScanning(true);
     stopScanRef.current = scanForHubs(

@@ -21,7 +21,7 @@ export default function ReadingChart({ readings, field }: Props) {
   const data = readings
     .filter((r) => r[field] !== -999)
     .map((r) => ({
-      x: new Date(r.recordedAt),
+      x: new Date((r as any).recorded_at ?? r.recordedAt),
       y: r[field],
     }));
 

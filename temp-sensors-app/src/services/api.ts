@@ -2,8 +2,7 @@ import axios from 'axios';
 import * as SecureStore from 'expo-secure-store';
 import { TimeRange } from '../types';
 
-// Set your cloud server URL here (or load from env)
-const BASE_URL = process.env.EXPO_PUBLIC_API_URL ?? 'https://your-cloud-server.example.com';
+const BASE_URL = 'https://majdtemp32.duckdns.org';
 
 const api = axios.create({
   baseURL: `${BASE_URL}/api`,

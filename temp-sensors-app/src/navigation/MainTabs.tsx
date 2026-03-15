@@ -7,6 +7,7 @@ import DevicesScreen from '../screens/DevicesScreen';
 import PairingScreen from '../screens/PairingScreen';
 import AccountScreen from '../screens/AccountScreen';
 import { getPairingRequests } from '../services/api';
+import { TouchableOpacity } from 'react-native';
 import { useAuth } from '../context/AuthContext';
 import { canEdit } from '../utils/permissions';
 
@@ -29,7 +30,7 @@ function PairingBadge({ count }: { count: number }) {
 }
 
 export default function MainTabs() {
-  const { user } = useAuth();
+  const { user, impersonatedOrg, stopImpersonating } = useAuth();
   const editor = canEdit(user);
   const [pendingCount, setPendingCount] = useState(0);
 
@@ -49,6 +50,18 @@ export default function MainTabs() {
   }, [editor]);
 
   return (
+    <View style={{ flex: 1 }}>
+      {impersonatedOrg && (
+        <View style={styles.banner}>
+          <Text style={styles.bannerText} numberOfLines={1}>
+            Viewing as: <Text style={styles.bannerOrg}>{impersonatedOrg.name}</Text>
+          </Text>
+          <TouchableOpacity onPress={stopImpersonating} style={styles.bannerStop}>
+            <Ionicons name="close-circle" size={18} color="#fbbf24" />
+            <Text style={styles.bannerStopText}>Exit</Text>
+          </TouchableOpacity>
+        </View>
+      )}
     <Tab.Navigator
       screenOptions={{
         tabBarStyle: { backgroundColor: '#1e293b', borderTopColor: '#334155' },
@@ -101,10 +114,25 @@ export default function MainTabs() {
         }}
       />
     </Tab.Navigator>
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
+  banner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: '#78350f',
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderBottomWidth: 1,
+    borderBottomColor: '#92400e',
+  },
+  bannerText: { color: '#fde68a', fontSize: 13, flex: 1 },
+  bannerOrg: { fontWeight: '700' },
+  bannerStop: { flexDirection: 'row', alignItems: 'center', gap: 4, marginLeft: 10 },
+  bannerStopText: { color: '#fbbf24', fontSize: 13, fontWeight: '700' },
   badge: {
     position: 'absolute',
     top: -4,

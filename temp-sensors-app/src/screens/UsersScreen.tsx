@@ -9,8 +9,8 @@ import { User } from '../types';
 
 const ROLE_COLORS: Record<string, string> = {
   superadmin: '#7c3aed',
-  admin: '#0284c7',
-  user: '#334155',
+  owner: '#0284c7',
+  member: '#334155',
 };
 
 export default function UsersScreen() {
@@ -38,7 +38,7 @@ export default function UsersScreen() {
   };
 
   const confirmDelete = (user: User) => {
-    Alert.alert('Remove User', `Remove "${user.name}" (${user.email})?`, [
+    Alert.alert('Remove User', `Remove "${user.username}" (${user.email ?? user.username})?`, [
       { text: 'Cancel', style: 'cancel' },
       {
         text: 'Remove',
@@ -72,8 +72,8 @@ export default function UsersScreen() {
           <View style={styles.row}>
             <Ionicons name="person-circle-outline" size={32} color="#64748b" />
             <View style={{ flex: 1, marginLeft: 12 }}>
-              <Text style={styles.name}>{item.name}</Text>
-              <Text style={styles.email}>{item.email}</Text>
+              <Text style={styles.name}>{item.username}</Text>
+              <Text style={styles.email}>{item.email ?? ''}</Text>
             </View>
             <View style={[styles.roleBadge, { backgroundColor: ROLE_COLORS[item.role] ?? '#334155' }]}>
               <Text style={styles.roleText}>{item.role}</Text>

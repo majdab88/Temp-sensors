@@ -1,15 +1,23 @@
 import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react';
 import * as SecureStore from 'expo-secure-store';
 import { User } from '../types';
-import { login as apiLogin, getAccount } from '../services/api';
+import { login as apiLogin, getAccount, setImpersonatedOrg } from '../services/api';
 import { connectSocket, disconnectSocket } from '../services/socket';
+
+interface ImpersonatedOrg {
+  id: number;
+  name: string;
+}
 
 interface AuthContextValue {
   user: User | null;
   token: string | null;
   loading: boolean;
+  impersonatedOrg: ImpersonatedOrg | null;
   login: (email: string, password: string) => Promise<void>;
   logout: () => Promise<void>;
+  impersonateOrg: (id: number, name: string) => void;
+  stopImpersonating: () => void;
 }
 
 const AuthContext = createContext<AuthContextValue | null>(null);
@@ -18,6 +26,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [token, setToken] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const [impersonatedOrg, setImpersonatedOrgState] = useState<ImpersonatedOrg | null>(null);
 
   // Restore session on app start
   useEffect(() => {
@@ -51,14 +60,26 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const logout = async () => {
     disconnectSocket();
+    setImpersonatedOrg(null);
+    setImpersonatedOrgState(null);
     await SecureStore.deleteItemAsync('jwt_token');
     await SecureStore.deleteItemAsync('jwt_refresh');
     setToken(null);
     setUser(null);
   };
 
+  const impersonateOrg = (id: number, name: string) => {
+    setImpersonatedOrg(id);
+    setImpersonatedOrgState({ id, name });
+  };
+
+  const stopImpersonating = () => {
+    setImpersonatedOrg(null);
+    setImpersonatedOrgState(null);
+  };
+
   return (
-    <AuthContext.Provider value={{ user, token, loading, login, logout }}>
+    <AuthContext.Provider value={{ user, token, loading, impersonatedOrg, login, logout, impersonateOrg, stopImpersonating }}>
       {children}
     </AuthContext.Provider>
   );

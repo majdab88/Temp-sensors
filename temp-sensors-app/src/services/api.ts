@@ -9,11 +9,20 @@ const api = axios.create({
   timeout: 10000,
 });
 
-// Attach JWT to every request
+// Superadmin impersonation — set by AuthContext
+let _impersonatedOrgId: number | null = null;
+export function setImpersonatedOrg(orgId: number | null) {
+  _impersonatedOrgId = orgId;
+}
+
+// Attach JWT + optional X-Org-Id header to every request
 api.interceptors.request.use(async (config) => {
   const token = await SecureStore.getItemAsync('jwt_token');
   if (token) {
     config.headers.Authorization = `Bearer ${token}`;
+  }
+  if (_impersonatedOrgId !== null) {
+    config.headers['X-Org-Id'] = String(_impersonatedOrgId);
   }
   return config;
 });

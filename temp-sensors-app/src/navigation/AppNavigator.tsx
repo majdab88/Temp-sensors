@@ -5,6 +5,7 @@ import { ActivityIndicator, View } from 'react-native';
 import { useAuth } from '../context/AuthContext';
 import LoginScreen from '../screens/LoginScreen';
 import MainTabs from './MainTabs';
+import SuperadminTabs from './SuperadminTabs';
 import SensorDetailScreen from '../screens/SensorDetailScreen';
 import AddDeviceScreen from '../screens/AddDeviceScreen';
 import AuditLogScreen from '../screens/AuditLogScreen';
@@ -14,6 +15,7 @@ import UsersScreen from '../screens/UsersScreen';
 export type RootStackParamList = {
   Login: undefined;
   Main: undefined;
+  Superadmin: undefined;
   SensorDetail: { sensorId: number; sensorName: string };
   AddDevice: undefined;
   AuditLog: undefined;
@@ -24,7 +26,7 @@ export type RootStackParamList = {
 const Stack = createNativeStackNavigator<RootStackParamList>();
 
 export default function AppNavigator() {
-  const { user, loading } = useAuth();
+  const { user, loading, impersonatedOrg } = useAuth();
 
   if (loading) {
     return (
@@ -33,6 +35,11 @@ export default function AppNavigator() {
       </View>
     );
   }
+
+  const isSuperadmin = user?.role === 'superadmin';
+  // Superadmin with no impersonation → superadmin view
+  // Superadmin impersonating OR regular user → org view
+  const showSuperadminView = isSuperadmin && !impersonatedOrg;
 
   return (
     <NavigationContainer>
@@ -44,7 +51,11 @@ export default function AppNavigator() {
           contentStyle: { backgroundColor: '#0f172a' },
         }}
       >
-        {user ? (
+        {!user ? (
+          <Stack.Screen name="Login" component={LoginScreen} options={{ headerShown: false }} />
+        ) : showSuperadminView ? (
+          <Stack.Screen name="Superadmin" component={SuperadminTabs} options={{ headerShown: false }} />
+        ) : (
           <>
             <Stack.Screen name="Main" component={MainTabs} options={{ headerShown: false }} />
             <Stack.Screen name="SensorDetail" component={SensorDetailScreen} options={{ title: 'Sensor Detail' }} />
@@ -53,8 +64,6 @@ export default function AppNavigator() {
             <Stack.Screen name="Organizations" component={OrganizationsScreen} options={{ title: 'Organizations' }} />
             <Stack.Screen name="Users" component={UsersScreen} options={{ title: 'Users' }} />
           </>
-        ) : (
-          <Stack.Screen name="Login" component={LoginScreen} options={{ headerShown: false }} />
         )}
       </Stack.Navigator>
     </NavigationContainer>

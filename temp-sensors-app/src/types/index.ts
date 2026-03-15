@@ -61,7 +61,11 @@ export interface User {
 export interface Organization {
   id: number;
   name: string;
-  createdAt: string;
+  owner_email?: string;
+  owner_username?: string;
+  device_count?: number | string;
+  member_count?: number | string;
+  created_at?: string;
 }
 
 export interface AuditEntry {

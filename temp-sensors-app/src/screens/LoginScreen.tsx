@@ -22,7 +22,8 @@ export default function LoginScreen() {
     try {
       await login(email.trim(), password);
     } catch (err: any) {
-      const msg = err?.response?.data?.error ?? 'Login failed. Check credentials.';
+      const msg = err?.response?.data?.error
+        ?? (err?.message ? `Network error: ${err.message}` : 'Login failed. Check credentials.');
       Alert.alert('Login Failed', msg);
     } finally {
       setLoading(false);

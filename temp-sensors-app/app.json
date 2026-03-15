@@ -1,0 +1,49 @@
+{
+  "expo": {
+    "name": "Temp Sensors",
+    "slug": "temp-sensors-app",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "automatic",
+    "splash": {
+      "image": "./assets/splash.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#1a1a2e"
+    },
+    "android": {
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#1a1a2e"
+      },
+      "permissions": [
+        "android.permission.BLUETOOTH",
+        "android.permission.BLUETOOTH_ADMIN",
+        "android.permission.BLUETOOTH_CONNECT",
+        "android.permission.BLUETOOTH_SCAN",
+        "android.permission.ACCESS_FINE_LOCATION",
+        "android.permission.ACCESS_COARSE_LOCATION"
+      ],
+      "package": "com.tempsensors.app"
+    },
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.tempsensors.app",
+      "infoPlist": {
+        "NSBluetoothAlwaysUsageDescription": "Required to provision hub devices via BLE",
+        "NSBluetoothPeripheralUsageDescription": "Required to provision hub devices via BLE",
+        "NSLocationWhenInUseUsageDescription": "Required for BLE scanning"
+      }
+    },
+    "plugins": [
+      [
+        "react-native-ble-plx",
+        {
+          "isBackgroundEnabled": false,
+          "modes": ["peripheral", "central"],
+          "bluetoothAlwaysPermission": "Allow $(PRODUCT_NAME) to connect to Bluetooth devices"
+        }
+      ]
+    ]
+  }
+}

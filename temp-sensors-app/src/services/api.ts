@@ -20,7 +20,7 @@ api.interceptors.request.use(async (config) => {
 
 // Auth
 export const login = (email: string, password: string) =>
-  api.post<{ token: string; user: import('../types').User }>('/auth/login', { email, password });
+  api.post<{ accessToken: string; refreshToken: string }>('/auth/login', { email, password });
 
 // Sensors
 export const getSensors = () =>

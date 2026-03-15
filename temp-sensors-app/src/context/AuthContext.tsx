@@ -32,6 +32,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         }
       } catch {
         await SecureStore.deleteItemAsync('jwt_token');
+        await SecureStore.deleteItemAsync('jwt_refresh');
       } finally {
         setLoading(false);
       }
@@ -40,15 +41,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const login = async (email: string, password: string) => {
     const { data } = await apiLogin(email, password);
-    await SecureStore.setItemAsync('jwt_token', data.token);
-    setToken(data.token);
-    setUser(data.user);
-    connectSocket(data.token);
+    await SecureStore.setItemAsync('jwt_token', data.accessToken);
+    await SecureStore.setItemAsync('jwt_refresh', data.refreshToken);
+    setToken(data.accessToken);
+    const { data: userData } = await getAccount();
+    setUser(userData);
+    connectSocket(data.accessToken);
   };
 
   const logout = async () => {
     disconnectSocket();
     await SecureStore.deleteItemAsync('jwt_token');
+    await SecureStore.deleteItemAsync('jwt_refresh');
     setToken(null);
     setUser(null);
   };

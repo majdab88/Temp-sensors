@@ -34,12 +34,12 @@ export default function PairingCard({ request, onResolved }: Props) {
     <View style={styles.card}>
       <View style={styles.header}>
         <Ionicons name="link-outline" size={18} color="#94a3b8" />
-        <Text style={styles.mac}>{request.slaveMac}</Text>
+        <Text style={styles.mac}>{request.slave_mac}</Text>
       </View>
       <Text style={styles.meta}>
-        Hub: {request.deviceName ?? `#${request.deviceId}`}
+        Hub: {request.hub_name ?? request.hub_mac ?? 'Unknown'}
       </Text>
-      <Text style={styles.meta}>Requested: {formatDate(request.requestedAt)}</Text>
+      <Text style={styles.meta}>Requested: {formatDate(request.requested_at)}</Text>
 
       <View style={styles.actions}>
         <TouchableOpacity

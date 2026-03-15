@@ -17,38 +17,45 @@ export interface Device {
   name: string;
   online: boolean;
   ip?: string;
-  apiKey?: string;
-  registeredAt: string;
+  api_key?: string;
+  registered_at: string;
 }
 
 export interface Reading {
   id: number;
-  sensorId: number;
   temp: number;
   hum: number;
   battery: number;
   rssi: number;
-  recordedAt: string; // ISO timestamp
+  recorded_at: string;
 }
 
 export interface PairingRequest {
   id: number;
-  slaveMac: string;
-  deviceId: number;
-  deviceName?: string;
+  slave_mac: string;
   status: 'pending' | 'approved' | 'rejected';
-  requestedAt: string;
-  resolvedAt?: string;
-  resolvedBy?: string;
+  requested_at: string;
+  resolved_at?: string;
+  resolved_by?: string;
+  hub_mac?: string;
+  hub_name?: string;
+}
+
+export interface Membership {
+  org_id: number;
+  org_name: string;
+  org_role: string;
+  permission_level: 'viewer' | 'editor' | 'admin';
+  joined_at: string;
 }
 
 export interface User {
   id: number;
-  name: string;
-  email: string;
-  role: 'user' | 'admin' | 'superadmin';
-  orgId?: number;
-  createdAt: string;
+  username: string;
+  email: string | null;
+  role: 'owner' | 'member' | 'superadmin';
+  created_at: string;
+  memberships?: Membership[];
 }
 
 export interface Organization {

@@ -9,6 +9,8 @@ import { RootStackParamList } from '../navigation/AppNavigator';
 import ReadingChart from '../components/ReadingChart';
 import { getSensorReadings, renameSensor, deleteSensor } from '../services/api';
 import { Reading, TimeRange } from '../types';
+import { useAuth } from '../context/AuthContext';
+import { canEdit } from '../utils/permissions';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'SensorDetail'>;
 
@@ -16,6 +18,8 @@ const TIME_RANGES: TimeRange[] = ['24h', '7d', '30d'];
 
 export default function SensorDetailScreen({ route, navigation }: Props) {
   const { sensorId, sensorName: initialName } = route.params;
+  const { user } = useAuth();
+  const editor = canEdit(user);
   const [readings, setReadings] = useState<Reading[]>([]);
   const [range, setRange] = useState<TimeRange>('24h');
   const [loading, setLoading] = useState(true);
@@ -124,12 +128,16 @@ export default function SensorDetailScreen({ route, navigation }: Props) {
         ) : (
           <>
             <Text style={styles.sensorName}>{name}</Text>
-            <TouchableOpacity onPress={() => { setEditing(true); setNameInput(name); }} style={styles.iconBtn}>
-              <Ionicons name="pencil-outline" size={20} color="#64748b" />
-            </TouchableOpacity>
-            <TouchableOpacity onPress={confirmDelete} style={styles.iconBtn}>
-              <Ionicons name="trash-outline" size={20} color="#ef4444" />
-            </TouchableOpacity>
+            {editor && (
+              <TouchableOpacity onPress={() => { setEditing(true); setNameInput(name); }} style={styles.iconBtn}>
+                <Ionicons name="pencil-outline" size={20} color="#64748b" />
+              </TouchableOpacity>
+            )}
+            {editor && (
+              <TouchableOpacity onPress={confirmDelete} style={styles.iconBtn}>
+                <Ionicons name="trash-outline" size={20} color="#ef4444" />
+              </TouchableOpacity>
+            )}
           </>
         )}
       </View>

@@ -7,6 +7,8 @@ import DevicesScreen from '../screens/DevicesScreen';
 import PairingScreen from '../screens/PairingScreen';
 import AccountScreen from '../screens/AccountScreen';
 import { getPairingRequests } from '../services/api';
+import { useAuth } from '../context/AuthContext';
+import { canEdit } from '../utils/permissions';
 
 export type MainTabParamList = {
   Dashboard: undefined;
@@ -27,9 +29,12 @@ function PairingBadge({ count }: { count: number }) {
 }
 
 export default function MainTabs() {
+  const { user } = useAuth();
+  const editor = canEdit(user);
   const [pendingCount, setPendingCount] = useState(0);
 
   useEffect(() => {
+    if (!editor) return;
     const fetchPending = async () => {
       try {
         const { data } = await getPairingRequests('pending');
@@ -41,7 +46,7 @@ export default function MainTabs() {
     fetchPending();
     const interval = setInterval(fetchPending, 30000);
     return () => clearInterval(interval);
-  }, []);
+  }, [editor]);
 
   return (
     <Tab.Navigator
@@ -62,27 +67,31 @@ export default function MainTabs() {
           tabBarIcon: ({ color, size }) => <Ionicons name="thermometer-outline" color={color} size={size} />,
         }}
       />
-      <Tab.Screen
-        name="Devices"
-        component={DevicesScreen}
-        options={{
-          title: 'Hubs',
-          tabBarIcon: ({ color, size }) => <Ionicons name="hardware-chip-outline" color={color} size={size} />,
-        }}
-      />
-      <Tab.Screen
-        name="Pairing"
-        component={PairingScreen}
-        options={{
-          title: 'Pairing',
-          tabBarIcon: ({ color, size }) => (
-            <View>
-              <Ionicons name="link-outline" color={color} size={size} />
-              <PairingBadge count={pendingCount} />
-            </View>
-          ),
-        }}
-      />
+      {editor && (
+        <Tab.Screen
+          name="Devices"
+          component={DevicesScreen}
+          options={{
+            title: 'Hubs',
+            tabBarIcon: ({ color, size }) => <Ionicons name="hardware-chip-outline" color={color} size={size} />,
+          }}
+        />
+      )}
+      {editor && (
+        <Tab.Screen
+          name="Pairing"
+          component={PairingScreen}
+          options={{
+            title: 'Pairing',
+            tabBarIcon: ({ color, size }) => (
+              <View>
+                <Ionicons name="link-outline" color={color} size={size} />
+                <PairingBadge count={pendingCount} />
+              </View>
+            ),
+          }}
+        />
+      )}
       <Tab.Screen
         name="Account"
         component={AccountScreen}

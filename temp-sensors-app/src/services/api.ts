@@ -62,12 +62,18 @@ export const approvePairing = (id: number) =>
 export const rejectPairing = (id: number) =>
   api.post(`/pairing/requests/${id}/reject`);
 
+export const enablePairing = (hub_mac: string, enable: boolean) =>
+  api.post('/pairing/enable', { hub_mac, enable });
+
 // Account
 export const getAccount = () =>
   api.get<import('../types').User>('/account');
 
-export const updateAccount = (data: { name?: string; password?: string }) =>
+export const updateAccount = (data: { username?: string; email?: string }) =>
   api.put('/account', data);
+
+export const changePassword = (currentPassword: string, newPassword: string) =>
+  api.put('/account/password', { currentPassword, newPassword });
 
 // Users (superadmin)
 export const getUsers = () =>

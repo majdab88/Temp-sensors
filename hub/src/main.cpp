@@ -542,7 +542,13 @@ void startBleProvisioning() {
             // Bad MQTT credentials — erase them so the user can re-provision
             Preferences cPrefs; cPrefs.begin("cloud", false); cPrefs.clear(); cPrefs.end();
             cloudConfigured = false;
-            notifyStatus("failed", "Cloud connection failed — check MQTT credentials");
+            // Include PubSubClient state for diagnostics:
+            //  -4=timeout  -3=connection lost  -2=connect failed (TCP/TLS)
+            //   4=bad credentials  5=unauthorized
+            char failMsg[80];
+            snprintf(failMsg, sizeof(failMsg),
+                     "Cloud connection failed (rc %d) — check MQTT credentials", lastMqttState);
+            notifyStatus("failed", failMsg);
             NimBLEDevice::startAdvertising();
             // Stay in the provisioning loop; app shows "failed" and user
             // can resend PROV_CLOUD (which will set cloudProvReceived = true)
@@ -589,7 +595,10 @@ void startBleProvisioning() {
         if (!connectCloud()) {
           Preferences cPrefs; cPrefs.begin("cloud", false); cPrefs.clear(); cPrefs.end();
           cloudConfigured = false;
-          notifyStatus("failed", "Cloud connection failed — check MQTT credentials");
+          char failMsg[80];
+          snprintf(failMsg, sizeof(failMsg),
+                   "Cloud connection failed (rc %d) — check MQTT credentials", lastMqttState);
+          notifyStatus("failed", failMsg);
           NimBLEDevice::startAdvertising();
         } else {
           mqttClient.disconnect();
@@ -1130,7 +1139,10 @@ void applySyncFromCloud(const String& json) {
 }
 
 // Connect to the MQTT broker over TLS and set up LWT + subscriptions.
-// Returns true on success.
+// Returns true on success.  lastMqttState is set to the PubSubClient rc so
+// callers (especially BLE provisioning) can report a meaningful error.
+int lastMqttState = 0;
+
 bool connectCloud() {
   if (!cloudConfigured) return false;
 
@@ -1142,9 +1154,10 @@ bool connectCloud() {
   mqttClient.setCallback(mqttCallback);
   mqttClient.setBufferSize(1024);  // sync payloads can reach ~500 bytes
   mqttClient.setKeepAlive(30);
-  // Limit how long connect() blocks waiting for CONNACK. The default is 15 s,
-  // which ties up the WiFi radio and prevents ESP-NOW ACKs from being sent.
-  mqttClient.setSocketTimeout(3);
+  // Socket timeout: 10 s for the initial connection (TLS handshake on ESP32 can
+  // take several seconds).  maintainCloud() tightens this to 3 s after the first
+  // successful connect so that reconnect attempts don't block ESP-NOW.
+  mqttClient.setSocketTimeout(10);
 
   // Client ID includes last 3 MAC octets so it is unique per device
   uint8_t mac[6]; WiFi.macAddress(mac);
@@ -1156,9 +1169,11 @@ bool connectCloud() {
 
   Serial.printf("[MQTT] Connecting to %s:%d as \"%s\"...\n", mqttHost, mqttPort, mqttUser);
   if (!mqttClient.connect(clientId, mqttUser, mqttPass, topicStatus, 0, true, lwt)) {
-    Serial.printf("[MQTT] Connection failed (state %d)\n", mqttClient.state());
+    lastMqttState = mqttClient.state();
+    Serial.printf("[MQTT] Connection failed (state %d)\n", lastMqttState);
     return false;
   }
+  lastMqttState = 0;
 
   Serial.println("[MQTT] Connected!");
   mqttClient.subscribe(topicPairResp);
@@ -1223,7 +1238,13 @@ void maintainCloud() {
   if (millis() - lastMqttReconnect < MQTT_RECONNECT_MS) return;
   lastMqttReconnect = millis();
   Serial.println("[MQTT] Reconnecting...");
-  if (connectCloud()) { publishSyncRequest(); flushOfflineBuffer(); }
+  if (connectCloud()) {
+    // Tighten socket timeout for normal operation so reconnect attempts
+    // don't block the loop() and starve ESP-NOW ACKs.
+    mqttClient.setSocketTimeout(3);
+    publishSyncRequest();
+    flushOfflineBuffer();
+  }
 }
 
 // Complete an ESP-NOW pairing handshake (used by both auto-accept and cloud-approve paths).

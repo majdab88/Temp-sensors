@@ -94,10 +94,13 @@ export default function AddDeviceScreen() {
     }, 10000);
   };
 
+  const [connecting, setConnecting] = useState(false);
+
   const selectHub = async (device: BLEDevice) => {
     stopScanRef.current?.();
     setScanning(false);
     setSelectedHub(device);
+    setConnecting(true);
     try {
       const connected = await connectToHub(device);
       setConnectedHub(connected);
@@ -107,6 +110,8 @@ export default function AddDeviceScreen() {
     } catch (err: any) {
       Alert.alert('Connection Failed', err.message ?? 'Could not connect to hub.');
       setSelectedHub(null);
+    } finally {
+      setConnecting(false);
     }
   };
 
@@ -197,6 +202,12 @@ export default function AddDeviceScreen() {
         />
         {scanning && hubs.length === 0 && (
           <Text style={styles.scanning}>Scanning for TempHub devices…</Text>
+        )}
+        {connecting && (
+          <View style={{ alignItems: 'center', marginTop: 20 }}>
+            <ActivityIndicator size="large" color="#38bdf8" />
+            <Text style={styles.scanning}>Connecting to hub…</Text>
+          </View>
         )}
       </View>
     );

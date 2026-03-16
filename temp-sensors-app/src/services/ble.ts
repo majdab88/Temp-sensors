@@ -72,18 +72,29 @@ export async function connectToHub(device: Device, retries = 3): Promise<Device>
       // Cancel any stale connection from a previous attempt
       try { await mgr.cancelDeviceConnection(device.id); } catch { /* ignore */ }
 
-      // Small delay between scan-stop and connect (Android needs this)
-      if (attempt > 0) await new Promise((r) => setTimeout(r, 1000));
-      else await new Promise((r) => setTimeout(r, 300));
+      // Increasing delay between retries (500ms, 1.5s, 2.5s)
+      await new Promise((r) => setTimeout(r, 500 + attempt * 1000));
 
       const connected = await mgr.connectToDevice(device.id, {
-        autoConnect: false,
-        timeout: 10000,
+        autoConnect: Platform.OS === 'android',
+        timeout: 15000,
       });
+
+      // Android: negotiate MTU before service discovery — the hub expects 517
+      // and Android defaults to 23, which can cause disconnects during discovery.
+      if (Platform.OS === 'android') {
+        await connected.requestMTU(517);
+      }
+
+      // Short stabilization delay before service discovery
+      await new Promise((r) => setTimeout(r, 500));
+
       await connected.discoverAllServicesAndCharacteristics();
       return connected;
     } catch (err: any) {
       lastErr = err;
+      // Wait before next retry
+      await new Promise((r) => setTimeout(r, 1000));
     }
   }
   throw lastErr ?? new Error('Failed to connect to hub.');

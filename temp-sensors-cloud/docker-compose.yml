@@ -30,13 +30,19 @@ services:
     image: eclipse-mosquitto:2
     container_name: mosquitto
     restart: unless-stopped
+    entrypoint: /mosquitto/config/entrypoint.sh
+    environment:
+      MQTT_BACKEND_USER: ${MQTT_BACKEND_USER}
+      MQTT_BACKEND_PASS: ${MQTT_BACKEND_PASS}
+      MQTT_HUB_USER: ${MQTT_HUB_USER}
+      MQTT_HUB_PASS: ${MQTT_HUB_PASS}
     ports:
       - "8883:8883"   # MQTT/TLS — exposed to internet for ESP32 hub connections
       # Port 1883 (plaintext) is intentionally NOT mapped to the host.
       # The backend reaches it via the internal Docker network only.
     volumes:
       - ./mosquitto/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
-      - ./mosquitto/passwd:/mosquitto/config/passwd:ro
+      - ./mosquitto/entrypoint.sh:/mosquitto/config/entrypoint.sh:ro
       - ./mosquitto/acl:/mosquitto/config/acl:ro
       - ./certs:/etc/letsencrypt:ro            # Let's Encrypt certs (read-only)
       - mosquitto_data:/mosquitto/data

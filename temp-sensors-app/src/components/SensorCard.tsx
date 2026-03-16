@@ -20,7 +20,7 @@ function timeAgo(timestamp: number): string {
 type SensorStatus = 'online' | 'stale' | 'offline';
 
 function getSensorStatus(sensor: Sensor): SensorStatus {
-  if (sensor.lastUpdate !== undefined) {
+  if (sensor.lastUpdate != null) {
     const ageSec = Math.floor(Date.now() / 1000 - sensor.lastUpdate);
     if (ageSec < 900) return 'online';    // < 15 min
     if (ageSec < 3600) return 'stale';    // 15–60 min
@@ -39,14 +39,14 @@ export default function SensorCard({ sensor, onPress }: Props) {
   const status = getSensorStatus(sensor);
   const isOffline = status === 'offline';
   const cfg = STATUS_CONFIG[status];
-  const tempStr = sensor.temp === undefined ? '--'
+  const tempStr = (sensor.temp == null || sensor.temp === undefined) ? '--'
     : sensor.temp === -999 ? 'ERR'
     : `${sensor.temp.toFixed(1)}°C`;
-  const humStr = sensor.hum === undefined ? '--'
+  const humStr = (sensor.hum == null || sensor.hum === undefined) ? '--'
     : sensor.hum === -999 ? 'N/A'
     : `${sensor.hum.toFixed(1)}%`;
-  const rssiStr = sensor.rssi !== undefined ? `${sensor.rssi} dBm` : '--';
-  const lastUpdateStr = sensor.lastUpdate !== undefined ? `Updated ${timeAgo(sensor.lastUpdate)}` : 'No data yet';
+  const rssiStr = sensor.rssi != null ? `${sensor.rssi} dBm` : '--';
+  const lastUpdateStr = sensor.lastUpdate != null ? `Updated ${timeAgo(sensor.lastUpdate)}` : 'No data yet';
 
   return (
     <TouchableOpacity

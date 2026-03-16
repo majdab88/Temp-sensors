@@ -63,11 +63,30 @@ function decode(b64: string): unknown {
 }
 
 /** Connect to hub and return the connected Device (with services/chars discovered). */
-export async function connectToHub(device: Device): Promise<Device> {
+export async function connectToHub(device: Device, retries = 3): Promise<Device> {
   const mgr = getManager();
-  const connected = await mgr.connectToDevice(device.id, { autoConnect: false });
-  await connected.discoverAllServicesAndCharacteristics();
-  return connected;
+  let lastErr: Error | null = null;
+
+  for (let attempt = 0; attempt < retries; attempt++) {
+    try {
+      // Cancel any stale connection from a previous attempt
+      try { await mgr.cancelDeviceConnection(device.id); } catch { /* ignore */ }
+
+      // Small delay between scan-stop and connect (Android needs this)
+      if (attempt > 0) await new Promise((r) => setTimeout(r, 1000));
+      else await new Promise((r) => setTimeout(r, 300));
+
+      const connected = await mgr.connectToDevice(device.id, {
+        autoConnect: false,
+        timeout: 10000,
+      });
+      await connected.discoverAllServicesAndCharacteristics();
+      return connected;
+    } catch (err: any) {
+      lastErr = err;
+    }
+  }
+  throw lastErr ?? new Error('Failed to connect to hub.');
 }
 
 /** Read hub MAC address from PROV_INFO characteristic. */

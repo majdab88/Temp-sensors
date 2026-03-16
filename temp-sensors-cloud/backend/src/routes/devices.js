@@ -6,6 +6,7 @@ const { query } = require('../db');
 const { requireAuth, requireSuperadmin, isSuperadminUnscoped } = require('../middleware/auth');
 const { requirePermission } = require('../middleware/permissions');
 const { audit } = require('../audit');
+const { getHubStatus } = require('../mqtt');
 
 const router = express.Router();
 router.use(requireAuth);
@@ -34,7 +35,12 @@ router.get('/', async (req, res) => {
     } else {
       result = { rows: [] };
     }
-    res.json(result.rows);
+    // Enrich each device with cached online status from MQTT
+    const rows = result.rows.map((d) => {
+      const status = getHubStatus(d.mac);
+      return { ...d, online: !!(status && status.online), ip: status?.ip ?? null };
+    });
+    res.json(rows);
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'Database error' });

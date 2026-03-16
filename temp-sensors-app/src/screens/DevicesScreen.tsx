@@ -33,15 +33,21 @@ export default function DevicesScreen() {
     fetchDevices().finally(() => setLoading(false));
   }, [fetchDevices]);
 
-  // Real-time hub status via Socket.IO
+  // Real-time hub status via Socket.IO — join each hub's room
   useEffect(() => {
     const socket = getSocket();
-    if (!socket) return;
+    if (!socket || devices.length === 0) return;
 
-    const handleHubStatus = (data: { mac: string; online: boolean; ip?: string }) => {
+    // Join rooms for all known hubs
+    const macs = devices.map((d) => d.mac).filter(Boolean);
+    macs.forEach((mac) => socket.emit('join', mac));
+
+    const handleHubStatus = (data: { hub_mac?: string; mac?: string; online: boolean; ip?: string }) => {
+      const hubMac = data.hub_mac || data.mac;
+      if (!hubMac) return;
       setDevices((prev) =>
         prev.map((d) =>
-          d.mac === data.mac
+          d.mac === hubMac
             ? { ...d, online: data.online, ...(data.ip !== undefined ? { ip: data.ip } : {}) }
             : d
         )
@@ -49,8 +55,11 @@ export default function DevicesScreen() {
     };
 
     socket.on('hubStatus', handleHubStatus);
-    return () => { socket.off('hubStatus', handleHubStatus); };
-  }, []);
+    return () => {
+      socket.off('hubStatus', handleHubStatus);
+      macs.forEach((mac) => socket.emit('leave', mac));
+    };
+  }, [devices.length]);
 
   const onRefresh = async () => {
     setRefreshing(true);

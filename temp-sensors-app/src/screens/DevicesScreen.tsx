@@ -10,6 +10,7 @@ import { RootStackParamList } from '../navigation/AppNavigator';
 import DeviceRow from '../components/DeviceRow';
 import { getDevices } from '../services/api';
 import { Device } from '../types';
+import { getSocket } from '../services/socket';
 
 type Nav = NativeStackNavigationProp<RootStackParamList>;
 
@@ -32,10 +33,42 @@ export default function DevicesScreen() {
     fetchDevices().finally(() => setLoading(false));
   }, [fetchDevices]);
 
+  // Real-time hub status via Socket.IO — join each hub's room
+  useEffect(() => {
+    const socket = getSocket();
+    if (!socket || devices.length === 0) return;
+
+    // Join rooms for all known hubs
+    const macs = devices.map((d) => d.mac).filter(Boolean);
+    macs.forEach((mac) => socket.emit('join', mac));
+
+    const handleHubStatus = (data: { hub_mac?: string; mac?: string; online: boolean; ip?: string }) => {
+      const hubMac = data.hub_mac || data.mac;
+      if (!hubMac) return;
+      setDevices((prev) =>
+        prev.map((d) =>
+          d.mac === hubMac
+            ? { ...d, online: data.online, ...(data.ip !== undefined ? { ip: data.ip } : {}) }
+            : d
+        )
+      );
+    };
+
+    socket.on('hubStatus', handleHubStatus);
+    return () => {
+      socket.off('hubStatus', handleHubStatus);
+      macs.forEach((mac) => socket.emit('leave', mac));
+    };
+  }, [devices.length]);
+
   const onRefresh = async () => {
     setRefreshing(true);
     await fetchDevices();
     setRefreshing(false);
+  };
+
+  const handleRenamed = (id: number, newName: string) => {
+    setDevices((prev) => prev.map((d) => d.id === id ? { ...d, name: newName } : d));
   };
 
   if (loading) {
@@ -51,7 +84,7 @@ export default function DevicesScreen() {
       <FlatList
         data={devices}
         keyExtractor={(item) => item.mac}
-        renderItem={({ item }) => <DeviceRow device={item} />}
+        renderItem={({ item }) => <DeviceRow device={item} onRenamed={handleRenamed} />}
         contentContainerStyle={styles.list}
         refreshControl={
           <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor="#38bdf8" />

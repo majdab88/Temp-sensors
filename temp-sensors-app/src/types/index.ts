@@ -18,6 +18,7 @@ export interface Device {
   online: boolean;
   ip?: string;
   api_key?: string;
+  apiKey?: string;
   registered_at: string;
 }
 
@@ -75,6 +76,31 @@ export interface AuditEntry {
   target?: string;
   detail?: string;
   createdAt: string;
+}
+
+export interface OrgMember {
+  id: number;
+  email: string;
+  username: string;
+  org_role: string;
+  permission_level: 'viewer' | 'editor' | 'admin';
+  joined_at: string;
+}
+
+export interface OrgDeviceSensor {
+  id: number;
+  name: string;
+  mac: string;
+  active: boolean;
+  paired_at: string;
+}
+
+export interface OrgDevice {
+  id: number;
+  mac: string;
+  name: string;
+  registered_at: string;
+  sensors: OrgDeviceSensor[];
 }
 
 export type TimeRange = '24h' | '7d' | '30d';

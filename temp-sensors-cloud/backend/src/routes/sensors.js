@@ -14,21 +14,38 @@ router.use(requireAuth);
 router.get('/', async (req, res) => {
   try {
     let result;
+    // Join the latest reading for each sensor so the app gets current
+    // temp, hum, rssi, battery, and lastUpdate on initial load.
+    const latestReadingJoin = `
+      LEFT JOIN LATERAL (
+        SELECT r.temp, r.hum, r.rssi, r.battery, r.recorded_at
+        FROM readings r
+        WHERE r.sensor_id = s.id
+        ORDER BY r.recorded_at DESC
+        LIMIT 1
+      ) lr ON TRUE`;
+
     if (isSuperadminUnscoped(req)) {
       result = await query(
         `SELECT s.id, s.device_id, s.mac, s.name, s.paired_at, s.active,
-                d.mac AS hub_mac, d.name AS hub_name, d.org_id
+                d.mac AS hub_mac, d.name AS hub_name, d.org_id,
+                lr.temp, lr.hum, lr.rssi, lr.battery,
+                EXTRACT(EPOCH FROM lr.recorded_at)::bigint AS "lastUpdate"
          FROM sensors s
          JOIN devices d ON d.id = s.device_id
+         ${latestReadingJoin}
          WHERE s.active = TRUE
          ORDER BY s.paired_at DESC`
       );
     } else if (req.orgId) {
       result = await query(
         `SELECT s.id, s.device_id, s.mac, s.name, s.paired_at, s.active,
-                d.mac AS hub_mac, d.name AS hub_name
+                d.mac AS hub_mac, d.name AS hub_name,
+                lr.temp, lr.hum, lr.rssi, lr.battery,
+                EXTRACT(EPOCH FROM lr.recorded_at)::bigint AS "lastUpdate"
          FROM sensors s
          JOIN devices d ON d.id = s.device_id
+         ${latestReadingJoin}
          WHERE s.active = TRUE AND d.org_id = $1
          ORDER BY s.paired_at DESC`,
         [req.orgId]

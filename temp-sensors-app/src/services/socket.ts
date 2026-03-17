@@ -31,3 +31,8 @@ export function getSocket(): Socket | null {
 // Typed event subscriptions used in DashboardScreen
 export type SensorUpdateHandler = (sensor: Partial<Sensor> & { mac: string }) => void;
 export type SensorOfflineHandler = (mac: string) => void;
+
+// Hub & pairing events used in DevicesScreen / PairingScreen
+export type HubStatusHandler = (data: { mac: string; online: boolean; ip?: string }) => void;
+export type PairingRequestHandler = (request: import('../types').PairingRequest) => void;
+export type PairingModeStatusHandler = (data: { hub_mac: string; enabled: boolean }) => void;

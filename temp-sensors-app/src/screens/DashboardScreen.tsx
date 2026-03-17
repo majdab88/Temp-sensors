@@ -27,36 +27,89 @@ export default function DashboardScreen({ navigation }: any) {
     }
   }, []);
 
+  // Track which hub rooms we've joined so we can leave on cleanup
+  const joinedRoomsRef = React.useRef<string[]>([]);
+
   useEffect(() => {
     (async () => {
       await fetchSensors();
       setLoading(false);
     })();
+  }, [fetchSensors]);
 
-    // Subscribe to Socket.IO live updates
+  // Join Socket.IO rooms for each hub and subscribe to live events
+  useEffect(() => {
     const socket = token ? connectSocket(token) : getSocket();
     if (!socket) return;
 
-    const handleUpdate = (updated: Partial<Sensor> & { mac: string }) => {
+    // Derive unique hub MACs from the loaded sensors and join their rooms
+    const hubMacs = [...new Set(
+      sensors.map((s) => (s as any).hub_mac).filter(Boolean) as string[]
+    )];
+    const prevRooms = joinedRoomsRef.current;
+
+    // Join any new rooms
+    hubMacs.forEach((mac) => {
+      if (!prevRooms.includes(mac)) {
+        socket.emit('join', mac);
+      }
+    });
+    // Leave rooms no longer needed
+    prevRooms.forEach((mac) => {
+      if (!hubMacs.includes(mac)) {
+        socket.emit('leave', mac);
+      }
+    });
+    joinedRoomsRef.current = hubMacs;
+
+    // Backend emits 'sensorData' with { sensor_mac, temp, hum, battery, rssi, ts }
+    const handleSensorData = (data: {
+      sensor_mac: string;
+      temp: number | null;
+      hum: number | null;
+      battery: number | null;
+      rssi: number | null;
+      ts: number;
+    }) => {
       setSensors((prev) =>
-        prev.map((s) => (s.mac === updated.mac ? { ...s, ...updated } : s))
+        prev.map((s) =>
+          s.mac === data.sensor_mac
+            ? {
+                ...s,
+                temp: data.temp ?? s.temp,
+                hum: data.hum ?? s.hum,
+                rssi: data.rssi ?? s.rssi,
+                battery: data.battery ?? s.battery,
+                lastUpdate: Math.floor(data.ts / 1000), // ts is ms, lastUpdate is seconds
+                active: true,
+              }
+            : s
+        )
       );
     };
 
-    const handleOffline = (mac: string) => {
-      setSensors((prev) =>
-        prev.map((s) => (s.mac === mac ? { ...s, active: false } : s))
-      );
+    const handleHubStatus = (data: { hub_mac: string; online: boolean }) => {
+      if (!data.online) {
+        // Mark all sensors belonging to this hub as inactive
+        setSensors((prev) =>
+          prev.map((s) =>
+            (s as any).hub_mac === data.hub_mac ? { ...s, active: false } : s
+          )
+        );
+      }
     };
 
-    socket.on('sensor_update', handleUpdate);
-    socket.on('sensor_offline', handleOffline);
+    socket.on('sensorData', handleSensorData);
+    socket.on('hubStatus', handleHubStatus);
 
     return () => {
-      socket.off('sensor_update', handleUpdate);
-      socket.off('sensor_offline', handleOffline);
+      socket.off('sensorData', handleSensorData);
+      socket.off('hubStatus', handleHubStatus);
+      // Leave all rooms on unmount
+      joinedRoomsRef.current.forEach((mac) => socket.emit('leave', mac));
+      joinedRoomsRef.current = [];
     };
-  }, [token, fetchSensors]);
+  }, [token, sensors.length]); // re-run when sensor count changes (new hub MACs)
 
   const onRefresh = async () => {
     setRefreshing(true);

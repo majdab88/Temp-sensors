@@ -104,8 +104,29 @@ export const createOrganization = (name: string) =>
 export const deleteOrganization = (id: number) =>
   api.delete(`/organizations/${id}`);
 
+// Devices — rename
+export const renameDevice = (id: number, name: string) =>
+  api.put(`/devices/${id}`, { name });
+
+// Organization members
+export const getOrgMembers = (orgId: number) =>
+  api.get<import('../types').OrgMember[]>(`/organizations/${orgId}/members`);
+
+export const inviteMember = (orgId: number, data: { email: string; password?: string; permission_level: string }) =>
+  api.post(`/organizations/${orgId}/members`, data);
+
+export const removeMember = (orgId: number, userId: number) =>
+  api.delete(`/organizations/${orgId}/members/${userId}`);
+
+export const updateMemberPermissions = (orgId: number, userId: number, permission_level: string) =>
+  api.put(`/organizations/${orgId}/members/${userId}/permissions`, { permission_level });
+
+// Organization devices
+export const getOrgDevices = (orgId: number) =>
+  api.get<import('../types').OrgDevice[]>(`/organizations/${orgId}/devices`);
+
 // Audit log
-export const getAuditLog = (page = 1, limit = 50) =>
-  api.get<import('../types').AuditEntry[]>('/audit-log', { params: { page, limit } });
+export const getAuditLog = (page = 1, limit = 50, action?: string) =>
+  api.get<import('../types').AuditEntry[]>('/audit-log', { params: { page, limit, ...(action ? { action } : {}) } });
 
 export default api;

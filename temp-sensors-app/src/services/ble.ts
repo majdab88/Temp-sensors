@@ -63,11 +63,41 @@ function decode(b64: string): unknown {
 }
 
 /** Connect to hub and return the connected Device (with services/chars discovered). */
-export async function connectToHub(device: Device): Promise<Device> {
+export async function connectToHub(device: Device, retries = 3): Promise<Device> {
   const mgr = getManager();
-  const connected = await mgr.connectToDevice(device.id, { autoConnect: false });
-  await connected.discoverAllServicesAndCharacteristics();
-  return connected;
+  let lastErr: Error | null = null;
+
+  for (let attempt = 0; attempt < retries; attempt++) {
+    try {
+      // Cancel any stale connection from a previous attempt
+      try { await mgr.cancelDeviceConnection(device.id); } catch { /* ignore */ }
+
+      // Increasing delay between retries (500ms, 1.5s, 2.5s)
+      await new Promise((r) => setTimeout(r, 500 + attempt * 1000));
+
+      const connected = await mgr.connectToDevice(device.id, {
+        autoConnect: Platform.OS === 'android',
+        timeout: 15000,
+      });
+
+      // Android: negotiate MTU before service discovery — the hub expects 517
+      // and Android defaults to 23, which can cause disconnects during discovery.
+      if (Platform.OS === 'android') {
+        await connected.requestMTU(517);
+      }
+
+      // Short stabilization delay before service discovery
+      await new Promise((r) => setTimeout(r, 500));
+
+      await connected.discoverAllServicesAndCharacteristics();
+      return connected;
+    } catch (err: any) {
+      lastErr = err;
+      // Wait before next retry
+      await new Promise((r) => setTimeout(r, 1000));
+    }
+  }
+  throw lastErr ?? new Error('Failed to connect to hub.');
 }
 
 /** Read hub MAC address from PROV_INFO characteristic. */

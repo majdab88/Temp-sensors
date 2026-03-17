@@ -162,6 +162,7 @@ char topicPairEnable[80];   // Cloud → Hub: enable/disable pairing mode
 char topicPairStatus[80];   // Hub → Cloud: pairing mode state ack
 
 bool cloudConfigured = false;  // true when MQTT credentials exist in NVS
+int  lastMqttState   = 0;     // PubSubClient state after last connectCloud() attempt
 
 // After a pairing completes, suppress applySyncFromCloud removals for this long.
 // The cloud needs a moment to persist the new sensor before it sends an
@@ -1141,8 +1142,6 @@ void applySyncFromCloud(const String& json) {
 // Connect to the MQTT broker over TLS and set up LWT + subscriptions.
 // Returns true on success.  lastMqttState is set to the PubSubClient rc so
 // callers (especially BLE provisioning) can report a meaningful error.
-int lastMqttState = 0;
-
 bool connectCloud() {
   if (!cloudConfigured) return false;
 

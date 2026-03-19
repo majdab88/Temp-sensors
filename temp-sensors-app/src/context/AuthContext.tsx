@@ -35,9 +35,28 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         const storedToken = await SecureStore.getItemAsync('jwt_token');
         if (storedToken) {
           setToken(storedToken);
-          const { data } = await getAccount();
-          setUser(data);
-          connectSocket(storedToken);
+          try {
+            const { data } = await getAccount();
+            setUser(data);
+            connectSocket(storedToken);
+          } catch (err: any) {
+            // Access token expired — the response interceptor in api.ts will have
+            // already attempted a refresh and stored a new jwt_token if successful.
+            // Try once more with whatever token is now in SecureStore.
+            if (err.response?.status === 401) {
+              const refreshedToken = await SecureStore.getItemAsync('jwt_token');
+              if (refreshedToken && refreshedToken !== storedToken) {
+                setToken(refreshedToken);
+                const { data } = await getAccount();
+                setUser(data);
+                connectSocket(refreshedToken);
+              } else {
+                throw err; // refresh also failed → clear tokens below
+              }
+            } else {
+              throw err;
+            }
+          }
         }
       } catch {
         await SecureStore.deleteItemAsync('jwt_token');

@@ -30,5 +30,9 @@ else
   echo "mosquitto-entrypoint: WARNING — MQTT_HUB_USER/PASS not set"
 fi
 
+# Ensure the mosquitto user can read the generated passwd file
+chown mosquitto:mosquitto "$PASSWD_FILE" 2>/dev/null
+chmod 0600 "$PASSWD_FILE" 2>/dev/null
+
 # Hand off to the real Mosquitto process
 exec /usr/sbin/mosquitto -c /mosquitto/config/mosquitto.conf

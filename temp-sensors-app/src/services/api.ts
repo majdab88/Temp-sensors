@@ -27,6 +27,59 @@ api.interceptors.request.use(async (config) => {
   return config;
 });
 
+// Auto-refresh access token on 401
+let _isRefreshing = false;
+let _refreshQueue: Array<(token: string | null) => void> = [];
+
+api.interceptors.response.use(
+  (response) => response,
+  async (error) => {
+    const original = error.config;
+    if (error.response?.status !== 401 || original._retry) {
+      return Promise.reject(error);
+    }
+    original._retry = true;
+
+    if (_isRefreshing) {
+      // Queue this request until refresh completes
+      return new Promise((resolve, reject) => {
+        _refreshQueue.push((newToken) => {
+          if (newToken) {
+            original.headers.Authorization = `Bearer ${newToken}`;
+            resolve(api(original));
+          } else {
+            reject(error);
+          }
+        });
+      });
+    }
+
+    _isRefreshing = true;
+    try {
+      const refreshToken = await SecureStore.getItemAsync('jwt_refresh');
+      if (!refreshToken) throw new Error('No refresh token');
+
+      const { data } = await axios.post(`${BASE_URL}/api/auth/refresh`, { refreshToken });
+      const newToken: string = data.accessToken;
+      await SecureStore.setItemAsync('jwt_token', newToken);
+
+      _refreshQueue.forEach((cb) => cb(newToken));
+      _refreshQueue = [];
+
+      original.headers.Authorization = `Bearer ${newToken}`;
+      return api(original);
+    } catch {
+      _refreshQueue.forEach((cb) => cb(null));
+      _refreshQueue = [];
+      await SecureStore.deleteItemAsync('jwt_token');
+      await SecureStore.deleteItemAsync('jwt_refresh');
+      return Promise.reject(error);
+    } finally {
+      _isRefreshing = false;
+    }
+  }
+);
+
 // Auth
 export const login = (email: string, password: string) =>
   api.post<{ accessToken: string; refreshToken: string }>('/auth/login', { email, password });

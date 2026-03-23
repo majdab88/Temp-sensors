@@ -16,6 +16,7 @@ export interface WiFiNetwork {
   ssid: string;
   rssi: number;
   auth: string; // 'open' | 'wpa2' | etc.
+  enc?: number; // raw encryption type from hub
 }
 
 export interface ProvStatus {
@@ -42,7 +43,7 @@ export function scanForHubs(
 ): () => void {
   const mgr = getManager();
   mgr.startDeviceScan(
-    [GATT.SERVICE],
+    null,
     { allowDuplicates: false },
     (error, device) => {
       if (error) { onError(error); return; }
@@ -76,14 +77,13 @@ export async function connectToHub(device: Device, retries = 3): Promise<Device>
       await new Promise((r) => setTimeout(r, 500 + attempt * 1000));
 
       const connected = await mgr.connectToDevice(device.id, {
-        autoConnect: Platform.OS === 'android',
+        autoConnect: false,
         timeout: 15000,
       });
 
-      // Android: negotiate MTU before service discovery — the hub expects 517
-      // and Android defaults to 23, which can cause disconnects during discovery.
+      // Android: negotiate MTU before service discovery
       if (Platform.OS === 'android') {
-        await connected.requestMTU(517);
+        try { await connected.requestMTU(256); } catch { /* ignore — MTU negotiation is best-effort */ }
       }
 
       // Short stabilization delay before service discovery
@@ -107,17 +107,47 @@ export async function readHubMac(device: Device): Promise<string> {
   return info.mac;
 }
 
-/** Trigger a WiFi network scan and wait for results via PROV_NETWORKS characteristic. */
+/** Trigger a WiFi network scan and wait for results via PROV_NETWORKS notification. */
 export async function scanWifiNetworks(device: Device): Promise<WiFiNetwork[]> {
-  // Write empty object to trigger scan
-  await device.writeCharacteristicWithResponseForService(
-    GATT.SERVICE, GATT.PROV_NETWORKS, encode({ scan: true })
-  );
-  // Poll for result (hub fills the char after scanning)
-  await new Promise((r) => setTimeout(r, 3000));
-  const char = await device.readCharacteristicForService(GATT.SERVICE, GATT.PROV_NETWORKS);
-  const networks = decode(char.value ?? '[]') as WiFiNetwork[];
-  return networks;
+  return new Promise(async (resolve, reject) => {
+    const timeout = setTimeout(() => {
+      sub.remove();
+      reject(new Error('WiFi scan timed out.'));
+    }, 15000);
+
+    // Subscribe to notifications BEFORE triggering scan
+    const sub = device.monitorCharacteristicForService(
+      GATT.SERVICE,
+      GATT.PROV_NETWORKS,
+      (error, char) => {
+        if (error) { clearTimeout(timeout); sub.remove(); reject(error); return; }
+        if (!char?.value) return;
+        clearTimeout(timeout);
+        sub.remove();
+        const payload = decode(char.value) as any;
+        // Hub sends {networks:[{ssid,rssi,enc}]} — normalize to WiFiNetwork[]
+        const raw: any[] = Array.isArray(payload) ? payload : (payload?.networks ?? []);
+        const networks: WiFiNetwork[] = raw.map((n) => ({
+          ssid: n.ssid ?? '',
+          rssi: n.rssi ?? 0,
+          enc: n.enc,
+          auth: n.enc === 0 ? 'open' : 'wpa2',
+        }));
+        resolve(networks);
+      }
+    );
+
+    // Trigger scan
+    try {
+      await device.writeCharacteristicWithResponseForService(
+        GATT.SERVICE, GATT.PROV_NETWORKS, encode({ scan: true })
+      );
+    } catch (err) {
+      clearTimeout(timeout);
+      sub.remove();
+      reject(err);
+    }
+  });
 }
 
 /** Write WiFi credentials to hub. */

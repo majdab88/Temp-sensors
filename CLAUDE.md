@@ -127,6 +127,31 @@ NTC PCB circuit: `3.3V → 10 kΩ (series) → GPIO1/D1 (ADC) → NTC probe → 
 - `hum` is always sent as `-999`; the hub should display "N/A" for these nodes.
 - NTC parameters (`NTC_NOMINAL`, `NTC_BCOEFF`, `SERIES_RESISTOR`) must match your probe's datasheet.
 
+#### Power Supply (battery-powered build)
+
+Feed the regulated output into the XIAO's `3V3` pin (not `5V`) to bypass the onboard LDO.
+
+```
+BAT+ ──┬── HT7333-A VIN ── VOUT ──┬── XIAO 3V3 pin
+       │   (3.3 V LDO, SOT-89)    │
+      C1 (1 µF X7R)             C2 (10 µF X7R)
+       │                          │
+BAT– ──┴──────────────────────────┴── XIAO GND
+
+Battery divider (taps BAT+ before regulator):
+BAT+ ── R1 (120 kΩ, 1%) ──┬── R2 (120 kΩ, 1%) ── GPIO21/D3 (enable)
+                           └── GPIO2/D2 (ADC)
+```
+
+| Item | Value |
+|------|-------|
+| Battery | LS14500 / ER14505 (AA, 3.6 V, ~2.4 Ah primary lithium) |
+| Regulator | HT7333-A, SOT-89, Iq ≈ 4 µA, Vdrop ≈ 170 mV @ 50 mA |
+| C1 | 1 µF ceramic X7R (HT7333 input) |
+| C2 | 10 µF ceramic X7R (HT7333 output, TX spike buffer) |
+| Divider | 2× 120 kΩ 1 %; midpoint → GPIO2/D2; GPIO21/D3 = GND switch (Hi-Z during sleep) |
+| Expected sleep current | < 25 µA (HT7333 Iq + ESP32-C6 deep sleep) |
+
 ---
 
 ## Key Configuration Constants
@@ -154,7 +179,7 @@ NTC PCB circuit: `3.3V → 10 kΩ (series) → GPIO1/D1 (ADC) → NTC probe → 
 | Constant | Value | Notes |
 |----------|-------|-------|
 | `NTC_NOMINAL` | 10000 Ω | NTC resistance at reference temp — check datasheet |
-| `NTC_BCOEFF` | 3950 K | Beta coefficient — check datasheet |
+| `NTC_BCOEFF` | 3435 K | Beta coefficient — Eliwell/Carel/Dixell standard NTC 10K; check your probe's datasheet |
 | `NTC_T0_CELSIUS` | 25 °C | Reference temperature for `NTC_NOMINAL` |
 | `SERIES_RESISTOR` | 10000 Ω | Fixed series resistor — use ≥1 % tolerance |
 | `NTC_SAMPLES` | 20 | ADC readings averaged per measurement |

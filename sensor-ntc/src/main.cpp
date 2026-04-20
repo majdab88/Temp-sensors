@@ -71,18 +71,18 @@ static const uint8_t LMK_KEY[16] = {
 };
 
 // --- BATTERY LOOKUP TABLE ---
-// {voltage, percentage} for 3.7V Li-ion / 18650 measured at rest
+// {voltage, percentage} for LS14500 / ER14505 primary lithium (AA, 3.6 V nominal)
+// Flat discharge: most of the cell's life sits between 3.52 V and 3.60 V.
+// EOL knee falls sharply below ~3.0 V; treat ≤2.4 V as empty to stay safe.
 struct BatteryPoint {
   float voltage;
   int   percentage;
 };
 const BatteryPoint batteryTable[] = {
-  { 4.20, 100 }, { 4.15,  95 }, { 4.10,  90 }, { 4.05,  85 },
-  { 4.00,  80 }, { 3.95,  75 }, { 3.90,  70 }, { 3.85,  65 },
-  { 3.80,  60 }, { 3.75,  55 }, { 3.70,  50 }, { 3.65,  45 },
-  { 3.60,  40 }, { 3.55,  35 }, { 3.50,  30 }, { 3.45,  25 },
-  { 3.40,  20 }, { 3.30,  15 }, { 3.20,  10 }, { 3.10,   5 },
-  { 3.00,   0 }
+  { 3.65, 100 }, { 3.60,  90 }, { 3.58,  80 }, { 3.56,  70 },
+  { 3.54,  60 }, { 3.52,  50 }, { 3.50,  40 }, { 3.45,  30 },
+  { 3.35,  20 }, { 3.20,  10 }, { 3.00,   5 }, { 2.70,   2 },
+  { 2.40,   0 }
 };
 const int TABLE_SIZE = sizeof(batteryTable) / sizeof(batteryTable[0]);
 

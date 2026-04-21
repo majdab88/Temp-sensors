@@ -1,0 +1,267 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1400 960" font-family="Helvetica, Arial, sans-serif" font-size="13">
+  <style>
+    .wire  { stroke: #111; stroke-width: 2; fill: none; }
+    .pwr   { stroke: #c0392b; stroke-width: 2.2; fill: none; }
+    .part  { stroke: #111; stroke-width: 1.8; fill: #fff; }
+    .pin   { fill: #444; font-size: 11px; }
+    .net   { fill: #c0392b; font-weight: bold; font-size: 12px; }
+    .title { font-size: 22px; font-weight: bold; }
+    .sub   { font-size: 12px; fill: #555; }
+    .dot   { fill: #111; }
+    .grp   { fill: none; stroke: #888; stroke-dasharray: 6 4; }
+    .grpL  { font-size: 13px; fill: #333; font-weight: bold; }
+  </style>
+
+  <defs>
+    <g id="gnd">
+      <line x1="0" y1="0" x2="0" y2="10" class="wire"/>
+      <line x1="-15" y1="10" x2="15" y2="10" class="wire"/>
+      <line x1="-10" y1="18" x2="10" y2="18" class="wire"/>
+      <line x1="-5" y1="26" x2="5" y2="26" class="wire"/>
+    </g>
+    <circle id="j" cx="0" cy="0" r="3.5" class="dot"/>
+    <!-- Vertical resistor 16x45 -->
+    <g id="resV">
+      <rect x="-8" y="0" width="16" height="45" class="part"/>
+    </g>
+    <!-- Horizontal non-polarised cap -->
+    <g id="capH">
+      <line x1="-10" y1="-8" x2="10" y2="-8" class="wire"/>
+      <line x1="-10" y1="8" x2="10" y2="8" class="wire"/>
+    </g>
+    <!-- Battery symbol -->
+    <g id="batt">
+      <line x1="-20" y1="-14" x2="20" y2="-14" class="wire"/>
+      <line x1="-10" y1="-4" x2="10" y2="-4" class="wire"/>
+      <line x1="-20" y1="6" x2="20" y2="6" class="wire"/>
+      <line x1="-10" y1="16" x2="10" y2="16" class="wire"/>
+    </g>
+  </defs>
+
+  <!-- Frame & title -->
+  <rect x="10" y="10" width="1380" height="940" fill="none" stroke="#111" stroke-width="1.5"/>
+  <text x="30" y="42" class="title">SENSOR (NTC Probe) — XIAO ESP32-C6 + HT7333 + LS14500</text>
+  <text x="30" y="62" class="sub">Battery-powered NTC thermistor node. Regulated 3V3 feeds XIAO's 3V3 pin directly (bypasses onboard LDO).</text>
+  <line x1="10" y1="80" x2="1390" y2="80" stroke="#111" stroke-width="1"/>
+
+  <!-- =============== POWER SUPPLY GROUP =============== -->
+  <rect x="40" y="110" width="640" height="310" class="grp" rx="6"/>
+  <text x="55" y="132" class="grpL">Power supply (LS14500 3.6 V → HT7333-A 3.3 V)</text>
+
+  <!-- Battery BT1 -->
+  <use href="#batt" x="100" y="230"/>
+  <text x="140" y="215" class="pin">BT1</text>
+  <text x="140" y="232" class="pin">LS14500 / ER14505</text>
+  <text x="140" y="248" class="pin">3.6 V AA primary lithium</text>
+  <text x="75" y="205" class="net">BAT+</text>
+  <text x="75" y="270" class="net">BAT−</text>
+
+  <!-- BAT+ rail up & right -->
+  <line x1="100" y1="216" x2="100" y2="160" class="pwr"/>
+  <line x1="100" y1="160" x2="620" y2="160" class="pwr"/>
+  <text x="110" y="152" class="net">BAT+</text>
+
+  <!-- BAT- rail -->
+  <line x1="100" y1="246" x2="100" y2="380" class="wire"/>
+  <line x1="100" y1="380" x2="620" y2="380" class="wire"/>
+  <use href="#gnd" x="100" y="380"/>
+
+  <!-- Optional Schottky diode D1 on BAT+ line -->
+  <line x1="230" y1="160" x2="258" y2="160" class="wire"/>
+  <polygon points="258,150 258,170 278,160" class="part"/>
+  <line x1="278" y1="150" x2="278" y2="170" class="wire"/>
+  <text x="268" y="140" text-anchor="middle" class="pin">D1 (opt.)</text>
+  <text x="268" y="186" text-anchor="middle" class="pin">BAT54 / SS14</text>
+  <line x1="278" y1="160" x2="330" y2="160" class="pwr"/>
+
+  <!-- C1 input cap from BAT+ to GND -->
+  <line x1="330" y1="160" x2="330" y2="255" class="wire"/>
+  <use href="#capH" x="330" y="270"/>
+  <text x="345" y="268" class="pin">C1 1 µF X7R</text>
+  <line x1="330" y1="278" x2="330" y2="380" class="wire"/>
+  <use href="#j" x="330" y="380"/>
+  <use href="#j" x="330" y="160"/>
+
+  <!-- HT7333 U2 -->
+  <line x1="330" y1="160" x2="400" y2="160" class="pwr"/>
+  <line x1="400" y1="160" x2="400" y2="215" class="wire"/>
+  <rect x="360" y="215" width="110" height="80" class="part" rx="4"/>
+  <text x="415" y="240" text-anchor="middle" font-weight="bold">HT7333-A</text>
+  <text x="415" y="258" text-anchor="middle" class="sub">U2 (SOT-89)</text>
+  <text x="370" y="285" class="pin">VIN</text>
+  <text x="400" y="285" class="pin">GND</text>
+  <text x="435" y="285" class="pin">VOUT</text>
+  <!-- HT7333 pins -->
+  <line x1="375" y1="295" x2="375" y2="340" class="wire"/>
+  <line x1="415" y1="295" x2="415" y2="340" class="wire"/>
+  <line x1="455" y1="295" x2="455" y2="340" class="wire"/>
+
+  <!-- VIN pin wire -->
+  <line x1="375" y1="340" x2="375" y2="350" class="wire"/>
+  <line x1="375" y1="215" x2="375" y2="210" class="wire"/>
+  <line x1="375" y1="210" x2="400" y2="210" class="wire"/>
+  <line x1="400" y1="210" x2="400" y2="160" class="wire"/>
+  <use href="#j" x="400" y="160"/>
+
+  <!-- GND pin down to BAT- rail -->
+  <line x1="415" y1="340" x2="415" y2="380" class="wire"/>
+  <use href="#j" x="415" y="380"/>
+
+  <!-- VOUT: 3V3_REG node -->
+  <line x1="455" y1="340" x2="540" y2="340" class="wire" />
+  <line x1="540" y1="340" x2="540" y2="160" class="pwr"/>
+  <text x="548" y="170" class="net">+3V3_REG</text>
+  <line x1="540" y1="160" x2="640" y2="160" class="pwr"/>
+
+  <!-- C2 output cap -->
+  <line x1="540" y1="160" x2="500" y2="160" class="pwr"/>
+  <!-- Oh, conflict. Let me re-route: put C2 just before the rail -->
+  <use href="#capH" x="500" y="280"/>
+  <text x="515" y="278" class="pin">C2 10 µF X7R</text>
+  <line x1="500" y1="272" x2="500" y2="160" class="wire"/>
+  <use href="#j" x="500" y="160"/>
+  <line x1="500" y1="288" x2="500" y2="380" class="wire"/>
+  <use href="#j" x="500" y="380"/>
+
+  <!-- =============== BATTERY DIVIDER GROUP =============== -->
+  <rect x="710" y="110" width="280" height="330" class="grp" rx="6"/>
+  <text x="725" y="132" class="grpL">Battery voltage divider</text>
+  <text x="725" y="150" class="sub">(taps raw BAT+, before regulator)</text>
+
+  <!-- Rail in from BAT+ -->
+  <line x1="640" y1="160" x2="640" y2="200" class="pwr"/>
+  <line x1="640" y1="200" x2="820" y2="200" class="pwr"/>
+  <text x="820" y="192" class="net">BAT+</text>
+  <line x1="820" y1="200" x2="820" y2="230" class="wire"/>
+
+  <!-- R3 -->
+  <use href="#resV" x="820" y="230"/>
+  <text x="838" y="258" class="pin">R3 120 kΩ 1%</text>
+  <line x1="820" y1="275" x2="820" y2="305" class="wire"/>
+  <use href="#j" x="820" y="305"/>
+
+  <!-- ADC tap (out to XIAO D2) -->
+  <line x1="820" y1="305" x2="990" y2="305" class="wire"/>
+  <text x="870" y="298" class="pin">→ D2/GPIO2 (BAT_ADC)</text>
+
+  <!-- R4 -->
+  <line x1="820" y1="305" x2="820" y2="335" class="wire"/>
+  <use href="#resV" x="820" y="335"/>
+  <text x="838" y="363" class="pin">R4 120 kΩ 1%</text>
+  <line x1="820" y1="380" x2="820" y2="410" class="wire"/>
+
+  <!-- GND switch out (D3/GPIO21) -->
+  <line x1="820" y1="410" x2="990" y2="410" class="wire"/>
+  <text x="870" y="403" class="pin">→ D3/GPIO21 (DIV_EN, Hi-Z in sleep)</text>
+
+  <!-- =============== NTC DIVIDER GROUP =============== -->
+  <rect x="1020" y="110" width="340" height="330" class="grp" rx="6"/>
+  <text x="1035" y="132" class="grpL">NTC probe divider</text>
+
+  <!-- 3V3_REG rail in -->
+  <line x1="640" y1="160" x2="660" y2="160" class="pwr"/>
+  <use href="#j" x="640" y="160"/>
+  <line x1="1100" y1="160" x2="1100" y2="190" class="pwr"/>
+  <line x1="540" y1="160" x2="1100" y2="160" class="pwr"/>
+  <text x="1100" y="152" class="net">+3V3_REG</text>
+  <line x1="1100" y1="190" x2="1100" y2="230" class="wire"/>
+
+  <!-- R5 series resistor -->
+  <use href="#resV" x="1100" y="230"/>
+  <text x="1118" y="258" class="pin">R5 10 kΩ 1%</text>
+  <line x1="1100" y1="275" x2="1100" y2="305" class="wire"/>
+  <use href="#j" x="1100" y="305"/>
+
+  <!-- Tap out to ADC (D1/GPIO1) -->
+  <line x1="1100" y1="305" x2="1360" y2="305" class="wire"/>
+  <text x="1150" y="298" class="pin">→ D1/GPIO1 (NTC_ADC)</text>
+
+  <!-- NTC probe (J1 connector + thermistor) -->
+  <line x1="1100" y1="305" x2="1100" y2="335" class="wire"/>
+  <!-- connector J1 -->
+  <rect x="1060" y="335" width="80" height="30" class="part"/>
+  <text x="1100" y="355" text-anchor="middle" class="pin">J1 — NTC probe</text>
+  <!-- thermistor symbol drawn outside: box with arrow -->
+  <line x1="1100" y1="365" x2="1100" y2="395" class="wire"/>
+  <rect x="1092" y="395" width="16" height="30" class="part"/>
+  <line x1="1085" y1="400" x2="1115" y2="430" class="wire"/>
+  <text x="1122" y="415" class="pin">NTC 10 kΩ @ 25 °C</text>
+  <text x="1122" y="430" class="pin">B = 3435 K</text>
+
+  <line x1="1100" y1="425" x2="1100" y2="455" class="wire"/>
+
+  <!-- NTC GND switch to D4/GPIO22 -->
+  <line x1="1100" y1="455" x2="1360" y2="455" class="wire"/>
+  <text x="1150" y="448" class="pin">→ D4/GPIO22 (NTC_EN, Hi-Z in sleep)</text>
+
+  <!-- =============== XIAO MODULE =============== -->
+  <rect x="420" y="520" width="340" height="380" class="part" rx="6"/>
+  <text x="590" y="548" text-anchor="middle" font-weight="bold">XIAO ESP32-C6</text>
+  <text x="590" y="565" text-anchor="middle" class="sub">U1</text>
+
+  <!-- Pins left -->
+  <g font-size="11" fill="#444">
+    <text x="430" y="595">3V3 (pin)</text>
+    <text x="430" y="625">GND</text>
+    <text x="430" y="655">D0 / GPIO0  (RESET)</text>
+    <text x="430" y="685">D1 / GPIO1  (NTC_ADC)</text>
+    <text x="430" y="715">D2 / GPIO2  (BAT_ADC)</text>
+    <text x="430" y="745">D3 / GPIO21 (DIV_EN)</text>
+    <text x="430" y="775">D4 / GPIO22 (NTC_EN)</text>
+    <text x="430" y="805">GPIO15 (LED, on-board)</text>
+  </g>
+
+  <!-- stubs -->
+  <line x1="420" y1="590" x2="400" y2="590" class="pwr"/>
+  <line x1="420" y1="620" x2="400" y2="620" class="wire"/>
+  <line x1="420" y1="650" x2="260" y2="650" class="wire"/>
+  <line x1="420" y1="680" x2="380" y2="680" class="wire"/>
+  <line x1="420" y1="710" x2="370" y2="710" class="wire"/>
+  <line x1="420" y1="740" x2="360" y2="740" class="wire"/>
+  <line x1="420" y1="770" x2="350" y2="770" class="wire"/>
+
+  <!-- 3V3 pin up to 3V3_REG -->
+  <line x1="400" y1="590" x2="400" y2="160" class="pwr"/>
+  <use href="#j" x="400" y="160"/>
+
+  <!-- GND down to big GND bus -->
+  <line x1="400" y1="620" x2="400" y2="920" class="wire"/>
+  <use href="#gnd" x="400" y="920"/>
+
+  <!-- NTC_ADC (D1) out of left, reach up & over to node @ 1360,305 -->
+  <line x1="380" y1="680" x2="380" y2="495" class="wire"/>
+  <line x1="380" y1="495" x2="1360" y2="495" class="wire"/>
+  <line x1="1360" y1="495" x2="1360" y2="305" class="wire"/>
+
+  <!-- BAT_ADC (D2) -->
+  <line x1="370" y1="710" x2="370" y2="485" class="wire"/>
+  <line x1="370" y1="485" x2="990" y2="485" class="wire"/>
+  <line x1="990" y1="485" x2="990" y2="305" class="wire"/>
+
+  <!-- DIV_EN (D3) -->
+  <line x1="360" y1="740" x2="360" y2="475" class="wire"/>
+  <line x1="360" y1="475" x2="995" y2="475" class="wire"/>
+  <line x1="995" y1="475" x2="995" y2="410" class="wire"/>
+
+  <!-- NTC_EN (D4) -->
+  <line x1="350" y1="770" x2="350" y2="465" class="wire"/>
+  <line x1="350" y1="465" x2="1365" y2="465" class="wire"/>
+  <line x1="1365" y1="465" x2="1365" y2="455" class="wire"/>
+
+  <!-- =============== RESET SWITCH =============== -->
+  <line x1="260" y1="650" x2="260" y2="700" class="wire"/>
+  <rect x="230" y="700" width="60" height="35" class="part"/>
+  <text x="260" y="723" text-anchor="middle">SW1</text>
+  <text x="260" y="755" text-anchor="middle" class="sub">Factory reset / wake</text>
+  <text x="260" y="771" text-anchor="middle" class="sub">(D0 is LP-GPIO)</text>
+  <line x1="260" y1="735" x2="260" y2="785" class="wire"/>
+  <use href="#gnd" x="260" y="785"/>
+
+  <!-- =============== NOTES =============== -->
+  <text x="30" y="905" class="sub">NOTES:</text>
+  <text x="30" y="922" class="sub">• Expected sleep current &lt; 25 µA (HT7333 Iq ≈ 4 µA + ESP32-C6 deep-sleep; dividers are Hi-Z between wakes).</text>
+  <text x="30" y="938" class="sub">• Keep C1 (1 µF) close to HT7333 VIN and C2 (10 µF) close to VOUT — C2 supplies brief ESP-NOW TX current peaks.</text>
+
+  <!-- Legend dot for 3V3 junction on module rail -->
+</svg>

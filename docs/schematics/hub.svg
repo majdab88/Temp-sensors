@@ -1,0 +1,90 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 620" font-family="Helvetica, Arial, sans-serif" font-size="13">
+  <style>
+    .wire  { stroke: #111; stroke-width: 2; fill: none; }
+    .part  { stroke: #111; stroke-width: 1.8; fill: #fff; }
+    .text  { fill: #111; }
+    .pin   { fill: #444; font-size: 11px; }
+    .net   { fill: #c0392b; font-weight: bold; }
+    .title { font-size: 20px; font-weight: bold; }
+    .sub   { font-size: 12px; fill: #555; }
+    .dot   { fill: #111; }
+  </style>
+
+  <!-- Title block -->
+  <rect x="10" y="10" width="980" height="600" fill="none" stroke="#111" stroke-width="1.5"/>
+  <text x="30" y="40" class="title">HUB — XIAO ESP32-C6</text>
+  <text x="30" y="60" class="sub">Receives ESP-NOW sensor frames, serves dashboard, BLE provisioning, MQTT uplink.</text>
+  <line x1="10" y1="75" x2="990" y2="75" stroke="#111" stroke-width="1"/>
+
+  <!-- XIAO ESP32-C6 module -->
+  <rect x="380" y="150" width="240" height="320" class="part" rx="6"/>
+  <text x="500" y="175" text-anchor="middle" font-weight="bold">XIAO ESP32-C6</text>
+  <text x="500" y="192" text-anchor="middle" class="sub">U1</text>
+
+  <!-- Left pin labels (internal) -->
+  <text x="390" y="230" class="pin">5V</text>
+  <text x="390" y="260" class="pin">GND</text>
+  <text x="390" y="290" class="pin">3V3</text>
+  <text x="390" y="320" class="pin">D9 / GPIO9  (BOOT)</text>
+  <text x="390" y="350" class="pin">D15 / GPIO15 (LED)</text>
+
+  <!-- Right pin labels -->
+  <text x="610" y="230" text-anchor="end" class="pin">USB-C</text>
+  <text x="610" y="260" text-anchor="end" class="pin">(on-board antenna)</text>
+
+  <!-- Pin stubs -->
+  <line x1="380" y1="225" x2="365" y2="225" class="wire"/>
+  <line x1="380" y1="255" x2="365" y2="255" class="wire"/>
+  <line x1="380" y1="315" x2="220" y2="315" class="wire"/>
+
+  <!-- 5V source label (from USB-C) -->
+  <text x="355" y="220" text-anchor="end" class="net">+5V (USB)</text>
+  <text x="355" y="250" text-anchor="end" class="net">GND</text>
+
+  <!-- BOOT Switch -->
+  <line x1="220" y1="315" x2="220" y2="350" class="wire"/>
+  <rect x="195" y="350" width="50" height="35" class="part"/>
+  <text x="220" y="372" text-anchor="middle">SW1</text>
+  <text x="220" y="400" text-anchor="middle" class="sub">BOOT / WiFi reset</text>
+  <line x1="220" y1="385" x2="220" y2="420" class="wire"/>
+  <!-- Ground symbol -->
+  <line x1="205" y1="420" x2="235" y2="420" class="wire"/>
+  <line x1="210" y1="428" x2="230" y2="428" class="wire"/>
+  <line x1="215" y1="436" x2="225" y2="436" class="wire"/>
+
+  <!-- LED built-in note -->
+  <line x1="380" y1="345" x2="700" y2="345" class="wire" stroke-dasharray="4 3"/>
+  <text x="700" y="340" class="sub">Built-in on XIAO module — no external LED needed</text>
+
+  <!-- USB-C connector (power source) -->
+  <rect x="700" y="200" width="150" height="60" class="part" rx="4"/>
+  <text x="775" y="225" text-anchor="middle">USB-C</text>
+  <text x="775" y="245" text-anchor="middle" class="sub">5 V in / programming</text>
+  <line x1="700" y1="225" x2="620" y2="225" class="wire"/>
+
+  <!-- Decoupling cap -->
+  <line x1="380" y1="290" x2="320" y2="290" class="wire"/>
+  <line x1="320" y1="290" x2="320" y2="390" class="wire"/>
+  <!-- cap symbol -->
+  <line x1="305" y1="390" x2="335" y2="390" class="wire"/>
+  <line x1="305" y1="398" x2="335" y2="398" class="wire"/>
+  <text x="345" y="395" class="pin">C1</text>
+  <text x="345" y="410" class="sub">100 nF</text>
+  <line x1="320" y1="398" x2="320" y2="430" class="wire"/>
+  <line x1="305" y1="430" x2="335" y2="430" class="wire"/>
+  <line x1="310" y1="438" x2="330" y2="438" class="wire"/>
+  <line x1="315" y1="446" x2="325" y2="446" class="wire"/>
+
+  <!-- GND from XIAO -->
+  <line x1="365" y1="255" x2="320" y2="255" class="wire"/>
+  <line x1="320" y1="255" x2="320" y2="290" class="wire"/>
+  <circle cx="320" cy="290" r="3" class="dot"/>
+
+  <!-- Notes -->
+  <text x="30" y="510" class="sub">NOTES:</text>
+  <text x="30" y="530" class="sub">• Power and program via USB-C on the XIAO (no external regulator required).</text>
+  <text x="30" y="548" class="sub">• GPIO9 BOOT switch is on the XIAO module; the schematic shows an optional external duplicate.</text>
+  <text x="30" y="566" class="sub">• GPIO15 drives the XIAO's built-in LED — no external indicator needed.</text>
+  <text x="30" y="584" class="sub">• Place C1 (100 nF) close to the 3V3 pin for decoupling.</text>
+</svg>

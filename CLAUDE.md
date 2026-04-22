@@ -132,11 +132,12 @@ NTC PCB circuit: `3.3V → 10 kΩ (series) → GPIO1/D1 (ADC) → NTC probe → 
 Feed the regulated output into the XIAO's `3V3` pin (not `5V`) to bypass the onboard LDO.
 
 ```
-BAT+ ──┬── HT7333-A VIN ── VOUT ──┬── XIAO 3V3 pin
-       │   (3.3 V LDO, SOT-89)    │
-      C1 (1 µF X7R)             C2 (10 µF X7R)
-       │                          │
-BAT– ──┴──────────────────────────┴── XIAO GND
+BAT+ ──┬──┬── HT7333-A VIN ── VOUT ──┬── XIAO 3V3 pin
+       │  │  (3.3 V LDO, SOT-89)     │
+      SC1 C1 (10 µF X7R)           C2 (220 µF)
+     1 F/5.5V                        │
+       │  │                          │
+BAT– ──┴──┴──────────────────────────┴── XIAO GND
 
 Battery divider (taps BAT+ before regulator):
 BAT+ ── R1 (120 kΩ, 1%) ──┬── R2 (120 kΩ, 1%) ── GPIO21/D3 (enable)
@@ -145,12 +146,25 @@ BAT+ ── R1 (120 kΩ, 1%) ──┬── R2 (120 kΩ, 1%) ── GPIO21/D3 (
 
 | Item | Value |
 |------|-------|
-| Battery | LS14500 / ER14505 (AA, 3.6 V, ~2.4 Ah primary lithium) |
+| Battery | **Tadiran TL-4903 iXtra** (Li-SOCl₂, AA, 3.6 V, ~2.4 Ah) — cold-weather tolerant to −55 °C |
 | Regulator | HT7333-A, SOT-89, Iq ≈ 4 µA, Vdrop ≈ 170 mV @ 50 mA |
-| C1 | 1 µF ceramic X7R (HT7333 input) |
-| C2 | 10 µF ceramic X7R (HT7333 output, TX spike buffer) |
+| **SC1** | **1 F / 5.5 V EDLC supercapacitor across BAT+/BAT–** — required for Li-SOCl₂ pulse loads |
+| C1 | 10 µF ceramic X7R (HT7333 input) |
+| C2 | 220 µF electrolytic (HT7333 output, TX spike buffer) |
 | Divider | 2× 120 kΩ 1 %; midpoint → GPIO2/D2; GPIO21/D3 = GND switch (Hi-Z during sleep) |
-| Expected sleep current | < 25 µA (HT7333 Iq + ESP32-C6 deep sleep) |
+| Expected sleep current | < 35 µA (HT7333 Iq + ESP32-C6 deep sleep + ~10 µA supercap leakage) |
+
+> **⚠ Li-SOCl₂ note:** Lithium thionyl chloride cells form a LiCl passivation
+> layer at rest. Without the supercap, the first 200 mA ESP-NOW TX burst
+> collapses the battery terminal to ~2.8 V and the LDO browns out. The supercap
+> supplies the burst while the passivation breaks down (~100–300 ms), then the
+> battery takes over and trickle-recharges the supercap during deep sleep.
+> **The supercap is not optional with this chemistry.**
+>
+> Pulse-capable Li-SOCl₂ alternatives that do not need an external supercap:
+> Tadiran SL-760/PT (PulsesPlus, internal hybrid cap), Tadiran TLH-5903 (high-
+> pulse series), XENO XL-060F. Omit the Schottky reverse-polarity diode on this
+> build — its forward drop worsens the passivation voltage-sag margin.
 
 ---
 

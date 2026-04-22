@@ -71,9 +71,11 @@ static const uint8_t LMK_KEY[16] = {
 };
 
 // --- BATTERY LOOKUP TABLE ---
-// {voltage, percentage} for LS14500 / ER14505 primary lithium (AA, 3.6 V nominal)
+// {voltage, percentage} for Tadiran TL-4903 iXtra (Li-SOCl₂, AA, 3.6 V nominal)
 // Flat discharge: most of the cell's life sits between 3.52 V and 3.60 V.
 // EOL knee falls sharply below ~3.0 V; treat ≤2.4 V as empty to stay safe.
+// Note: Li-SOCl₂ requires a 1 F supercap at BAT+ to handle ESP-NOW TX bursts;
+// without it the passivation layer causes the LDO to brown out on every wake.
 struct BatteryPoint {
   float voltage;
   int   percentage;

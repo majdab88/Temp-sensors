@@ -126,6 +126,10 @@ NTC PCB circuit: `3.3V → 10 kΩ (series) → GPIO1/D1 (ADC) → NTC probe → 
 - No I2C bus — GPIO22 (D4) is repurposed as NTC GND switch; GPIO23 (D5) is unused.
 - `hum` is always sent as `-999`; the hub should display "N/A" for these nodes.
 - NTC parameters (`NTC_NOMINAL`, `NTC_BCOEFF`, `SERIES_RESISTOR`) must match your probe's datasheet.
+- **Filter caps on ADC pins** (noise rejection / anti-aliasing):
+  - `Cfn` = 100 nF X7R from GPIO1/D1 (NTC_ADC) to GND
+  - `Cfb` = 10 nF X7R from GPIO2/D2 (BAT_ADC) to GND
+  - Placed as close to the GPIO pin as possible. Existing 10 ms settling delay in firmware covers charge-up (RC ≈ 0.5 ms NTC, ≈ 0.6 ms battery).
 
 #### Power Supply (battery-powered build)
 

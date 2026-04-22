@@ -34,7 +34,11 @@
 
 // PCB circuit (for reference):
 //   3.3V ─── SERIES_RESISTOR ─── NTC_PIN (ADC) ─── NTC probe ─── NTC_ENABLE_PIN (GND switch)
+//                                  │
+//                                  └── 100 nF filter cap (Cfn) ── GND
 // NTC_ENABLE_PIN driven LOW to enable divider; INPUT (Hi-Z) during sleep to cut quiescent current.
+// Cfn low-pass filters the ADC input (RC ≈ 0.5 ms with ~5 kΩ source impedance).
+// The existing 10 ms settling delay after enabling the divider covers the filter-cap charge-up.
 
 // --- SLEEP SETTINGS ---
 #define SLEEP_TIME 900  // Seconds
@@ -197,6 +201,7 @@ void checkFactoryReset() {
 
 // --- READ NTC PROBE ---
 // Circuit: 3.3V → SERIES_RESISTOR → NTC_PIN (ADC) → NTC probe → NTC_ENABLE_PIN (GND switch)
+// A 100 nF filter cap (Cfn) at NTC_PIN → GND low-pass filters the ADC input.
 // NTC_ENABLE_PIN is driven LOW to complete the divider; Hi-Z during sleep cuts quiescent current.
 // Temperature is derived via the Steinhart-Hart simplified (Beta) equation:
 //   1/T = 1/T0 + (1/B) * ln(R_ntc / R0)
@@ -204,7 +209,7 @@ float readNTC() {
   // Enable divider by driving GND switch LOW
   pinMode(NTC_ENABLE_PIN, OUTPUT);
   digitalWrite(NTC_ENABLE_PIN, LOW);
-  delay(10); // Let voltage divider settle
+  delay(10); // Let divider + 100 nF filter cap settle (RC ≈ 0.5 ms, 10 ms covers 20× time constants)
 
   analogReadResolution(12);
   analogRead(NTC_PIN);                        // Initialise ADC channel
@@ -314,12 +319,15 @@ const char* getBatteryStatus(int pct) {
   return "CRITICAL";
 }
 
+// Battery divider: BAT+ → R3 (120k) → BAT_ADC tap → R4 (120k) → DIVIDER_ENABLE_PIN (GND switch)
+// A 10 nF filter cap (Cfb) at BAT_ADC → GND low-pass filters the ADC input.
+// DIVIDER_ENABLE_PIN LOW enables the divider; Hi-Z during sleep cuts quiescent current.
 BatteryInfo getBatteryInfo() {
   analogReadResolution(12);
 
   pinMode(DIVIDER_ENABLE_PIN, OUTPUT);
   digitalWrite(DIVIDER_ENABLE_PIN, LOW);
-  delay(10);
+  delay(10); // Let divider + 10 nF filter cap settle (RC ≈ 0.6 ms at ~60 kΩ source)
 
   analogRead(BAT_ADC_PIN);
   analogSetPinAttenuation(BAT_ADC_PIN, ADC_11db);

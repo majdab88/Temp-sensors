@@ -34,22 +34,22 @@
 
   <!-- Frame + title -->
   <rect x="10" y="10" width="1380" height="880" fill="none" stroke="#111" stroke-width="1.5"/>
-  <text x="30" y="42" class="title">SENSOR (NTC Probe) — XIAO ESP32-C6 + HT7333 + LS14500</text>
-  <text x="30" y="62" class="sub">Battery-powered NTC thermistor node. Regulated 3V3 feeds XIAO's 3V3 pin directly (bypasses onboard LDO).</text>
+  <text x="30" y="42" class="title">SENSOR (NTC Probe) — XIAO ESP32-C6 + HT7333 + TL-4903 Li-SOCl₂</text>
+  <text x="30" y="62" class="sub">Battery-powered NTC thermistor node. Regulated 3V3 feeds XIAO's 3V3 pin directly (bypasses onboard LDO). 1 F supercap handles ESP-NOW TX bursts.</text>
   <line x1="10" y1="80" x2="1390" y2="80" stroke="#111" stroke-width="1"/>
 
   <!-- ==================== BLOCK 1: POWER SUPPLY ==================== -->
   <rect x="30" y="100" width="560" height="340" class="grp" rx="6"/>
   <text x="45" y="122" class="grpL">Power supply</text>
-  <text x="45" y="140" class="sub">LS14500 3.6 V → HT7333-A → regulated 3V3</text>
+  <text x="45" y="140" class="sub">TL-4903 Li-SOCl₂ 3.6 V → SC1 1 F supercap → HT7333-A → regulated 3V3</text>
 
   <!-- Battery BT1 (simple labeled block) -->
   <rect x="70" y="185" width="90" height="170" class="part" rx="4"/>
   <text x="115" y="210" text-anchor="middle" class="ref">BT1</text>
-  <text x="115" y="230" text-anchor="middle" class="val">LS14500</text>
-  <text x="115" y="246" text-anchor="middle" class="val">ER14505</text>
+  <text x="115" y="230" text-anchor="middle" class="val">Tadiran</text>
+  <text x="115" y="246" text-anchor="middle" class="val">TL-4903</text>
   <text x="115" y="262" text-anchor="middle" class="val">AA 3.6 V</text>
-  <text x="115" y="278" text-anchor="middle" class="val">primary Li</text>
+  <text x="115" y="278" text-anchor="middle" class="val">Li-SOCl₂</text>
   <!-- + / - terminal marks -->
   <text x="85" y="205" class="netP">+</text>
   <text x="85" y="350" class="netP">−</text>
@@ -62,12 +62,18 @@
   <!-- BAT+ horizontal bus: y=170, from battery to VIN vertical -->
   <line x1="115" y1="170" x2="290" y2="170" class="pwr"/>
 
-  <!-- Schottky diode D1 (optional) — inline -->
-  <line x1="180" y1="170" x2="205" y2="170" class="pwr"/>
-  <polygon points="205,160 205,180 225,170" class="part"/>
-  <line x1="225" y1="160" x2="225" y2="180" class="wire"/>
-  <text x="215" y="152" text-anchor="middle" class="val">D1 (opt.)</text>
-  <text x="215" y="196" text-anchor="middle" class="val">BAT54 / SS14</text>
+  <!-- SC1 1 F supercapacitor (polarised) — placed near LDO input -->
+  <use href="#j" x="215" y="170"/>
+  <line x1="215" y1="170" x2="215" y2="235" class="wire"/>
+  <!-- Positive plate (longer line) -->
+  <line x1="195" y1="235" x2="235" y2="235" class="wire" stroke-width="2.2"/>
+  <!-- Negative plate (curved for polarised cap) -->
+  <path d="M 192,248 Q 215,258 238,248" class="wire" fill="none"/>
+  <text x="200" y="232" text-anchor="end" class="netP">+</text>
+  <line x1="215" y1="258" x2="215" y2="400" class="wire"/>
+  <text x="160" y="232" class="ref">SC1</text>
+  <text x="160" y="246" class="val">1 F / 5.5 V</text>
+  <text x="160" y="260" class="val">EDLC supercap</text>
 
   <!-- Junction at C1 top -->
   <use href="#j" x="260" y="170"/>
@@ -80,7 +86,7 @@
   <line x1="246" y1="263" x2="274" y2="263" class="wire"/>
   <line x1="260" y1="263" x2="260" y2="400" class="wire"/>
   <text x="280" y="256" class="ref">C1</text>
-  <text x="280" y="270" class="val">1 µF X7R</text>
+  <text x="280" y="270" class="val">10 µF X7R</text>
 
   <!-- Vertical wire from BAT+ bus down to HT7333 VIN -->
   <line x1="290" y1="170" x2="290" y2="255" class="wire"/>
@@ -113,7 +119,7 @@
   <line x1="506" y1="263" x2="534" y2="263" class="wire"/>
   <line x1="520" y1="263" x2="520" y2="400" class="wire"/>
   <text x="540" y="256" class="ref">C2</text>
-  <text x="540" y="270" class="val">10 µF X7R</text>
+  <text x="540" y="270" class="val">220 µF elec.</text>
 
   <!-- 3V3 power label (flag) on right edge of this block -->
   <line x1="520" y1="170" x2="560" y2="170" class="pwr"/>
@@ -125,6 +131,7 @@
   <!-- GND bus: y=400, from x=95 to x=540 -->
   <line x1="95" y1="400" x2="540" y2="400" class="wire"/>
   <use href="#j" x="115" y="400"/>
+  <use href="#j" x="215" y="400"/>
   <use href="#j" x="260" y="400"/>
   <use href="#j" x="370" y="400"/>
   <use href="#j" x="520" y="400"/>
@@ -157,6 +164,16 @@
   <polygon points="320,645 310,639 310,651" class="netBox"/>
   <text x="370" y="650" text-anchor="middle" class="netS">BAT_ADC</text>
   <text x="320" y="625" class="sub">→ XIAO D2</text>
+
+  <!-- Cfb 10 nF filter cap on BAT_ADC net → GND (anti-aliasing / noise reject) -->
+  <use href="#j" x="260" y="645"/>
+  <line x1="260" y1="645" x2="260" y2="660" class="wire"/>
+  <line x1="246" y1="660" x2="274" y2="660" class="wire"/>
+  <line x1="246" y1="666" x2="274" y2="666" class="wire"/>
+  <line x1="260" y1="666" x2="260" y2="695" class="wire"/>
+  <use href="#gnd" x="260" y="695"/>
+  <text x="284" y="665" class="ref">Cfb</text>
+  <text x="284" y="679" class="val">10 nF X7R</text>
 
   <line x1="200" y1="645" x2="200" y2="670" class="wire"/>
   <use href="#resV" x="200" y="670"/>
@@ -265,6 +282,16 @@
   <!-- Mid-tap junction -->
   <line x1="1170" y1="265" x2="1170" y2="295" class="wire"/>
   <use href="#j" x="1170" y="295"/>
+
+  <!-- Cfn 100 nF filter cap on NTC_ADC net → GND (anti-aliasing / noise reject) -->
+  <line x1="1170" y1="295" x2="1280" y2="295" class="wire"/>
+  <line x1="1280" y1="295" x2="1280" y2="330" class="wire"/>
+  <line x1="1266" y1="330" x2="1294" y2="330" class="wire"/>
+  <line x1="1266" y1="336" x2="1294" y2="336" class="wire"/>
+  <line x1="1280" y1="336" x2="1280" y2="370" class="wire"/>
+  <use href="#gnd" x="1280" y="370"/>
+  <text x="1300" y="335" class="ref">Cfn</text>
+  <text x="1300" y="349" class="val">100 nF X7R</text>
 
   <!-- Tap out to [NTC_ADC] flag on left of block -->
   <line x1="1170" y1="295" x2="1030" y2="295" class="wire"/>

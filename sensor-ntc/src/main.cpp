@@ -75,20 +75,20 @@ static const uint8_t LMK_KEY[16] = {
 };
 
 // --- BATTERY LOOKUP TABLE ---
-// {voltage, percentage} for Tadiran TL-4903 iXtra (Li-SOCl₂, AA, 3.6 V nominal)
-// Flat discharge: most of the cell's life sits between 3.52 V and 3.60 V.
-// EOL knee falls sharply below ~3.0 V; treat ≤2.4 V as empty to stay safe.
-// Note: Li-SOCl₂ requires a 1 F supercap at BAT+ to handle ESP-NOW TX bursts;
-// without it the passivation layer causes the LDO to brown out on every wake.
+// {voltage, percentage} for 2× Energizer Ultimate Lithium (L91, Li-FeS₂, AA)
+// in SERIES. Nominal pack voltage 3.0 V; fresh ≈ 3.4 V, dead ≈ 1.8 V.
+// NOTE: The HT7333-A LDO drops out below ~3.5 V under load, so the node
+// will brown out long before the cells are physically empty. Useful pack
+// voltage range with this regulator is roughly 3.6 V → 3.4 V.
 struct BatteryPoint {
   float voltage;
   int   percentage;
 };
 const BatteryPoint batteryTable[] = {
-  { 3.65, 100 }, { 3.60,  90 }, { 3.58,  80 }, { 3.56,  70 },
-  { 3.54,  60 }, { 3.52,  50 }, { 3.50,  40 }, { 3.45,  30 },
-  { 3.35,  20 }, { 3.20,  10 }, { 3.00,   5 }, { 2.70,   2 },
-  { 2.40,   0 }
+  { 3.40, 100 }, { 3.30,  90 }, { 3.20,  80 }, { 3.10,  70 },
+  { 3.00,  60 }, { 2.90,  50 }, { 2.80,  40 }, { 2.65,  30 },
+  { 2.45,  20 }, { 2.20,  10 }, { 2.00,   5 }, { 1.85,   2 },
+  { 1.80,   0 }
 };
 const int TABLE_SIZE = sizeof(batteryTable) / sizeof(batteryTable[0]);
 

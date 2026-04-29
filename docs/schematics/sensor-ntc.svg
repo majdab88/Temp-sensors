@@ -34,22 +34,23 @@
 
   <!-- Frame + title -->
   <rect x="10" y="10" width="1380" height="880" fill="none" stroke="#111" stroke-width="1.5"/>
-  <text x="30" y="42" class="title">SENSOR (NTC Probe) — XIAO ESP32-C6 + HT7333 + TL-4903 Li-SOCl₂</text>
-  <text x="30" y="62" class="sub">Battery-powered NTC thermistor node. Regulated 3V3 feeds XIAO's 3V3 pin directly (bypasses onboard LDO). 1 F supercap handles ESP-NOW TX bursts.</text>
+  <text x="30" y="42" class="title">SENSOR (NTC Probe) — XIAO ESP32-C6 + HT7333 + 2× L91</text>
+  <text x="30" y="62" class="sub">Battery-powered NTC thermistor node. 2× Energizer Ultimate Lithium L91 in series → HT7333-A 3.3 V → XIAO 3V3 pin.</text>
   <line x1="10" y1="80" x2="1390" y2="80" stroke="#111" stroke-width="1"/>
 
   <!-- ==================== BLOCK 1: POWER SUPPLY ==================== -->
   <rect x="30" y="100" width="560" height="340" class="grp" rx="6"/>
   <text x="45" y="122" class="grpL">Power supply</text>
-  <text x="45" y="140" class="sub">TL-4903 Li-SOCl₂ 3.6 V → SC1 1 F supercap → HT7333-A → regulated 3V3</text>
+  <text x="45" y="140" class="sub">2× L91 (3.0 V nominal) → HT7333-A → regulated 3V3</text>
 
-  <!-- Battery BT1 (simple labeled block) -->
+  <!-- Battery BT1 (simple labeled block) — 2× L91 in series -->
   <rect x="70" y="185" width="90" height="170" class="part" rx="4"/>
-  <text x="115" y="210" text-anchor="middle" class="ref">BT1</text>
-  <text x="115" y="230" text-anchor="middle" class="val">Tadiran</text>
-  <text x="115" y="246" text-anchor="middle" class="val">TL-4903</text>
-  <text x="115" y="262" text-anchor="middle" class="val">AA 3.6 V</text>
-  <text x="115" y="278" text-anchor="middle" class="val">Li-SOCl₂</text>
+  <text x="115" y="208" text-anchor="middle" class="ref">BT1</text>
+  <text x="115" y="226" text-anchor="middle" class="val">Energizer</text>
+  <text x="115" y="240" text-anchor="middle" class="val">Ultimate Li</text>
+  <text x="115" y="256" text-anchor="middle" class="val">2× AA L91</text>
+  <text x="115" y="270" text-anchor="middle" class="val">3.0 V series</text>
+  <text x="115" y="284" text-anchor="middle" class="val">(Li-FeS₂)</text>
   <!-- + / - terminal marks -->
   <text x="85" y="205" class="netP">+</text>
   <text x="85" y="350" class="netP">−</text>
@@ -61,19 +62,6 @@
 
   <!-- BAT+ horizontal bus: y=170, from battery to VIN vertical -->
   <line x1="115" y1="170" x2="290" y2="170" class="pwr"/>
-
-  <!-- SC1 1 F supercapacitor (polarised) — placed near LDO input -->
-  <use href="#j" x="215" y="170"/>
-  <line x1="215" y1="170" x2="215" y2="235" class="wire"/>
-  <!-- Positive plate (longer line) -->
-  <line x1="195" y1="235" x2="235" y2="235" class="wire" stroke-width="2.2"/>
-  <!-- Negative plate (curved for polarised cap) -->
-  <path d="M 192,248 Q 215,258 238,248" class="wire" fill="none"/>
-  <text x="200" y="232" text-anchor="end" class="netP">+</text>
-  <line x1="215" y1="258" x2="215" y2="400" class="wire"/>
-  <text x="160" y="232" class="ref">SC1</text>
-  <text x="160" y="246" class="val">1 F / 5.5 V</text>
-  <text x="160" y="260" class="val">EDLC supercap</text>
 
   <!-- Junction at C1 top -->
   <use href="#j" x="260" y="170"/>
@@ -131,7 +119,6 @@
   <!-- GND bus: y=400, from x=95 to x=540 -->
   <line x1="95" y1="400" x2="540" y2="400" class="wire"/>
   <use href="#j" x="115" y="400"/>
-  <use href="#j" x="215" y="400"/>
   <use href="#j" x="260" y="400"/>
   <use href="#j" x="370" y="400"/>
   <use href="#j" x="520" y="400"/>
@@ -154,7 +141,7 @@
   <line x1="200" y1="550" x2="200" y2="575" class="wire"/>
   <use href="#resV" x="200" y="575"/>
   <text x="218" y="600" class="ref">R3</text>
-  <text x="218" y="614" class="val">120 kΩ 1%</text>
+  <text x="218" y="614" class="val">100 kΩ 1%</text>
   <line x1="200" y1="620" x2="200" y2="645" class="wire"/>
   <use href="#j" x="200" y="645"/>
 
@@ -178,7 +165,7 @@
   <line x1="200" y1="645" x2="200" y2="670" class="wire"/>
   <use href="#resV" x="200" y="670"/>
   <text x="218" y="695" class="ref">R4</text>
-  <text x="218" y="709" class="val">120 kΩ 1%</text>
+  <text x="218" y="709" class="val">100 kΩ 1%</text>
   <line x1="200" y1="715" x2="200" y2="735" class="wire"/>
 
   <!-- To [DIV_EN] -->

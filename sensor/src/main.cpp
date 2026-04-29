@@ -411,6 +411,12 @@ void enterPairingMode() {
 
 // --- SETUP ---
 void setup() {
+  pinMode(3, OUTPUT);
+  digitalWrite(3, LOW);
+  delay(100);
+  pinMode(14, OUTPUT);
+  digitalWrite(14, HIGH); // external antenna
+
   Serial.begin(115200);
   delay(500); // C6 needs extra time for serial to stabilize
   Serial.println("\n=== XIAO ESP32-C6 Sensor (SHT40) ===");

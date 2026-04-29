@@ -1,0 +1,334 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1400 900" font-family="Helvetica, Arial, sans-serif" font-size="13">
+  <style>
+    .wire     { stroke: #111; stroke-width: 2; fill: none; }
+    .pwr      { stroke: #c0392b; stroke-width: 2.2; fill: none; }
+    .part     { stroke: #111; stroke-width: 1.8; fill: #fff; }
+    .title    { font-size: 22px; font-weight: bold; }
+    .sub      { font-size: 12px; fill: #555; }
+    .pin      { fill: #444; font-size: 11px; }
+    .val      { fill: #333; font-size: 11px; }
+    .ref      { fill: #111; font-size: 12px; font-weight: bold; }
+    .dot      { fill: #111; }
+    .grp      { fill: none; stroke: #888; stroke-dasharray: 6 4; }
+    .grpL     { font-size: 13px; fill: #333; font-weight: bold; }
+    .netP     { fill: #c0392b; font-weight: bold; font-size: 12px; }
+    .netS     { fill: #1b4f72; font-weight: bold; font-size: 12px; }
+    .netBox   { fill: #eaf2f8; stroke: #2874a6; stroke-width: 1.4; }
+    .pwrBox   { fill: #fdecea; stroke: #c0392b; stroke-width: 1.4; }
+  </style>
+
+  <defs>
+    <!-- GND symbol -->
+    <g id="gnd">
+      <line x1="0" y1="0" x2="0" y2="10" class="wire"/>
+      <line x1="-14" y1="10" x2="14" y2="10" class="wire"/>
+      <line x1="-9" y1="18" x2="9" y2="18" class="wire"/>
+      <line x1="-4" y1="26" x2="4" y2="26" class="wire"/>
+    </g>
+    <!-- Junction dot -->
+    <circle id="j" cx="0" cy="0" r="3.5" class="dot"/>
+    <!-- Vertical resistor 16x45 -->
+    <g id="resV"><rect x="-8" y="0" width="16" height="45" class="part"/></g>
+  </defs>
+
+  <!-- Frame + title -->
+  <rect x="10" y="10" width="1380" height="880" fill="none" stroke="#111" stroke-width="1.5"/>
+  <text x="30" y="42" class="title">SENSOR (NTC Probe) — XIAO ESP32-C6 + HT7333 + 2× L91</text>
+  <text x="30" y="62" class="sub">Battery-powered NTC thermistor node. 2× Energizer Ultimate Lithium L91 in series → HT7333-A 3.3 V → XIAO 3V3 pin.</text>
+  <line x1="10" y1="80" x2="1390" y2="80" stroke="#111" stroke-width="1"/>
+
+  <!-- ==================== BLOCK 1: POWER SUPPLY ==================== -->
+  <rect x="30" y="100" width="560" height="340" class="grp" rx="6"/>
+  <text x="45" y="122" class="grpL">Power supply</text>
+  <text x="45" y="140" class="sub">2× L91 (3.0 V nominal) → HT7333-A → regulated 3V3</text>
+
+  <!-- Battery BT1 (simple labeled block) — 2× L91 in series -->
+  <rect x="70" y="185" width="90" height="170" class="part" rx="4"/>
+  <text x="115" y="208" text-anchor="middle" class="ref">BT1</text>
+  <text x="115" y="226" text-anchor="middle" class="val">Energizer</text>
+  <text x="115" y="240" text-anchor="middle" class="val">Ultimate Li</text>
+  <text x="115" y="256" text-anchor="middle" class="val">2× AA L91</text>
+  <text x="115" y="270" text-anchor="middle" class="val">3.0 V series</text>
+  <text x="115" y="284" text-anchor="middle" class="val">(Li-FeS₂)</text>
+  <!-- + / - terminal marks -->
+  <text x="85" y="205" class="netP">+</text>
+  <text x="85" y="350" class="netP">−</text>
+
+  <!-- Battery + terminal wire up to BAT+ bus -->
+  <line x1="115" y1="185" x2="115" y2="170" class="pwr"/>
+  <!-- Battery - terminal wire down to GND bus -->
+  <line x1="115" y1="355" x2="115" y2="400" class="wire"/>
+
+  <!-- BAT+ horizontal bus: y=170, from battery to VIN vertical -->
+  <line x1="115" y1="170" x2="290" y2="170" class="pwr"/>
+
+  <!-- Junction at C1 top -->
+  <use href="#j" x="260" y="170"/>
+  <!-- Junction at VIN column top -->
+  <use href="#j" x="290" y="170"/>
+
+  <!-- C1 input cap (vertical), axis at x=260 -->
+  <line x1="260" y1="170" x2="260" y2="257" class="wire"/>
+  <line x1="246" y1="257" x2="274" y2="257" class="wire"/>
+  <line x1="246" y1="263" x2="274" y2="263" class="wire"/>
+  <line x1="260" y1="263" x2="260" y2="400" class="wire"/>
+  <text x="280" y="256" class="ref">C1</text>
+  <text x="280" y="270" class="val">10 µF X7R</text>
+
+  <!-- Vertical wire from BAT+ bus down to HT7333 VIN -->
+  <line x1="290" y1="170" x2="290" y2="255" class="wire"/>
+
+  <!-- HT7333-A U2 -->
+  <rect x="290" y="255" width="160" height="90" class="part" rx="4"/>
+  <text x="370" y="278" text-anchor="middle" class="ref">U2  HT7333-A</text>
+  <text x="370" y="295" text-anchor="middle" class="sub">3.3 V LDO, SOT-89</text>
+  <text x="308" y="330" class="pin">VIN</text>
+  <text x="370" y="330" text-anchor="middle" class="pin">GND</text>
+  <text x="432" y="330" class="pin" text-anchor="end">VOUT</text>
+  <!-- Pin markers (small tick marks inside the chip) -->
+  <line x1="290" y1="300" x2="302" y2="300" stroke="#111" stroke-width="1.2"/>
+  <line x1="450" y1="300" x2="438" y2="300" stroke="#111" stroke-width="1.2"/>
+  <line x1="370" y1="345" x2="370" y2="335" stroke="#111" stroke-width="1.2"/>
+
+  <!-- HT7333 VIN wire (actually goes into chip at x=290, y=300) -->
+  <line x1="290" y1="255" x2="290" y2="300" class="wire"/>
+  <!-- HT7333 GND wire down to GND bus -->
+  <line x1="370" y1="345" x2="370" y2="400" class="wire"/>
+  <!-- HT7333 VOUT wire right to 3V3 node -->
+  <line x1="450" y1="300" x2="490" y2="300" class="pwr"/>
+  <line x1="490" y1="300" x2="490" y2="170" class="pwr"/>
+
+  <!-- C2 output cap, axis at x=520 -->
+  <use href="#j" x="490" y="170"/>
+  <line x1="490" y1="170" x2="520" y2="170" class="pwr"/>
+  <line x1="520" y1="170" x2="520" y2="257" class="wire"/>
+  <line x1="506" y1="257" x2="534" y2="257" class="wire"/>
+  <line x1="506" y1="263" x2="534" y2="263" class="wire"/>
+  <line x1="520" y1="263" x2="520" y2="400" class="wire"/>
+  <text x="540" y="256" class="ref">C2</text>
+  <text x="540" y="270" class="val">220 µF elec.</text>
+
+  <!-- 3V3 power label (flag) on right edge of this block -->
+  <line x1="520" y1="170" x2="560" y2="170" class="pwr"/>
+  <use href="#j" x="520" y="170"/>
+  <rect x="560" y="157" width="20" height="26" class="pwrBox" rx="3"/>
+  <polygon points="560,170 550,164 550,176" class="pwrBox"/>
+  <text x="570" y="175" text-anchor="middle" class="netP">3V3</text>
+
+  <!-- GND bus: y=400, from x=95 to x=540 -->
+  <line x1="95" y1="400" x2="540" y2="400" class="wire"/>
+  <use href="#j" x="115" y="400"/>
+  <use href="#j" x="260" y="400"/>
+  <use href="#j" x="370" y="400"/>
+  <use href="#j" x="520" y="400"/>
+  <!-- GND symbols at both ends of bus -->
+  <use href="#gnd" x="95" y="400"/>
+  <use href="#gnd" x="540" y="400"/>
+
+  <!-- ==================== BLOCK 2: BATTERY DIVIDER ==================== -->
+  <rect x="30" y="470" width="410" height="280" class="grp" rx="6"/>
+  <text x="45" y="492" class="grpL">Battery voltage divider</text>
+  <text x="45" y="510" class="sub">Taps raw BAT+ (before regulator) for % reporting</text>
+
+  <!-- [BAT+] source flag on left -->
+  <rect x="55" y="537" width="60" height="26" class="pwrBox" rx="3"/>
+  <polygon points="115,550 125,544 125,556" class="pwrBox"/>
+  <text x="85" y="555" text-anchor="middle" class="netP">BAT+</text>
+  <line x1="125" y1="550" x2="200" y2="550" class="pwr"/>
+
+  <!-- Vertical divider column at x=200 -->
+  <line x1="200" y1="550" x2="200" y2="575" class="wire"/>
+  <use href="#resV" x="200" y="575"/>
+  <text x="218" y="600" class="ref">R3</text>
+  <text x="218" y="614" class="val">100 kΩ 1%</text>
+  <line x1="200" y1="620" x2="200" y2="645" class="wire"/>
+  <use href="#j" x="200" y="645"/>
+
+  <!-- Mid-tap out to [BAT_ADC] -->
+  <line x1="200" y1="645" x2="320" y2="645" class="wire"/>
+  <rect x="320" y="632" width="100" height="26" class="netBox" rx="3"/>
+  <polygon points="320,645 310,639 310,651" class="netBox"/>
+  <text x="370" y="650" text-anchor="middle" class="netS">BAT_ADC</text>
+  <text x="320" y="625" class="sub">→ XIAO D2</text>
+
+  <!-- Cfb 10 nF filter cap on BAT_ADC net → GND (anti-aliasing / noise reject) -->
+  <use href="#j" x="260" y="645"/>
+  <line x1="260" y1="645" x2="260" y2="660" class="wire"/>
+  <line x1="246" y1="660" x2="274" y2="660" class="wire"/>
+  <line x1="246" y1="666" x2="274" y2="666" class="wire"/>
+  <line x1="260" y1="666" x2="260" y2="695" class="wire"/>
+  <use href="#gnd" x="260" y="695"/>
+  <text x="284" y="665" class="ref">Cfb</text>
+  <text x="284" y="679" class="val">10 nF X7R</text>
+
+  <line x1="200" y1="645" x2="200" y2="670" class="wire"/>
+  <use href="#resV" x="200" y="670"/>
+  <text x="218" y="695" class="ref">R4</text>
+  <text x="218" y="709" class="val">100 kΩ 1%</text>
+  <line x1="200" y1="715" x2="200" y2="735" class="wire"/>
+
+  <!-- To [DIV_EN] -->
+  <line x1="200" y1="735" x2="320" y2="735" class="wire"/>
+  <rect x="320" y="722" width="100" height="26" class="netBox" rx="3"/>
+  <polygon points="320,735 310,729 310,741" class="netBox"/>
+  <text x="370" y="740" text-anchor="middle" class="netS">DIV_EN</text>
+  <text x="320" y="714" class="sub">→ XIAO D3 (GND switch)</text>
+
+  <!-- ==================== BLOCK 3: XIAO MODULE ==================== -->
+  <rect x="620" y="120" width="320" height="620" class="part" rx="6"/>
+  <text x="780" y="148" text-anchor="middle" class="ref">U1  XIAO ESP32-C6</text>
+  <text x="780" y="165" text-anchor="middle" class="sub">ESP-NOW sensor node (Seeed)</text>
+
+  <!-- Left pin labels -->
+  <g font-size="11" fill="#444">
+    <text x="630" y="205">3V3 (pin)</text>
+    <text x="630" y="255">GND</text>
+    <text x="630" y="305">D0 / GPIO0</text>
+    <text x="630" y="355">D1 / GPIO1</text>
+    <text x="630" y="405">D2 / GPIO2</text>
+    <text x="630" y="455">D3 / GPIO21</text>
+    <text x="630" y="505">D4 / GPIO22</text>
+    <text x="630" y="555">GPIO15</text>
+  </g>
+
+  <!-- Right-side function labels -->
+  <g font-size="11" fill="#444" text-anchor="end">
+    <text x="930" y="305">RESET</text>
+    <text x="930" y="355">NTC_ADC</text>
+    <text x="930" y="405">BAT_ADC</text>
+    <text x="930" y="455">DIV_EN</text>
+    <text x="930" y="505">NTC_EN</text>
+    <text x="930" y="555">LED (built-in)</text>
+  </g>
+
+  <!-- Left pin stubs with net-label flags (all exit LEFT, keeping short local wires) -->
+  <!-- 3V3 -->
+  <line x1="620" y1="200" x2="600" y2="200" class="pwr"/>
+  <rect x="540" y="187" width="60" height="26" class="pwrBox" rx="3"/>
+  <polygon points="600,200 610,194 610,206" class="pwrBox"/>
+  <text x="570" y="205" text-anchor="middle" class="netP">3V3</text>
+
+  <!-- GND -->
+  <line x1="620" y1="250" x2="600" y2="250" class="wire"/>
+  <use href="#gnd" x="600" y="250" transform="rotate(-90 600 250)"/>
+  <text x="595" y="254" text-anchor="end" class="pin">GND</text>
+
+  <!-- D0 → RESET -->
+  <line x1="620" y1="300" x2="600" y2="300" class="wire"/>
+  <rect x="530" y="287" width="70" height="26" class="netBox" rx="3"/>
+  <polygon points="600,300 610,294 610,306" class="netBox"/>
+  <text x="565" y="305" text-anchor="middle" class="netS">RESET</text>
+
+  <!-- D1 → NTC_ADC -->
+  <line x1="620" y1="350" x2="600" y2="350" class="wire"/>
+  <rect x="510" y="337" width="90" height="26" class="netBox" rx="3"/>
+  <polygon points="600,350 610,344 610,356" class="netBox"/>
+  <text x="555" y="355" text-anchor="middle" class="netS">NTC_ADC</text>
+
+  <!-- D2 → BAT_ADC -->
+  <line x1="620" y1="400" x2="600" y2="400" class="wire"/>
+  <rect x="510" y="387" width="90" height="26" class="netBox" rx="3"/>
+  <polygon points="600,400 610,394 610,406" class="netBox"/>
+  <text x="555" y="405" text-anchor="middle" class="netS">BAT_ADC</text>
+
+  <!-- D3 → DIV_EN -->
+  <line x1="620" y1="450" x2="600" y2="450" class="wire"/>
+  <rect x="520" y="437" width="80" height="26" class="netBox" rx="3"/>
+  <polygon points="600,450 610,444 610,456" class="netBox"/>
+  <text x="560" y="455" text-anchor="middle" class="netS">DIV_EN</text>
+
+  <!-- D4 → NTC_EN -->
+  <line x1="620" y1="500" x2="600" y2="500" class="wire"/>
+  <rect x="520" y="487" width="80" height="26" class="netBox" rx="3"/>
+  <polygon points="600,500 610,494 610,506" class="netBox"/>
+  <text x="560" y="505" text-anchor="middle" class="netS">NTC_EN</text>
+
+  <!-- GPIO15 (built-in LED) — just a note -->
+  <text x="600" y="555" text-anchor="end" class="sub">(on-module)</text>
+
+  <!-- XIAO note -->
+  <text x="780" y="720" text-anchor="middle" class="sub">No other pins routed to PCB on this build</text>
+
+  <!-- ==================== BLOCK 4: NTC DIVIDER ==================== -->
+  <rect x="970" y="100" width="400" height="500" class="grp" rx="6"/>
+  <text x="985" y="122" class="grpL">NTC probe divider</text>
+  <text x="985" y="140" class="sub">3V3 → R5 → [NTC_ADC tap] → probe → [NTC_EN GND switch]</text>
+
+  <!-- [3V3] source flag at top -->
+  <rect x="1150" y="155" width="40" height="26" class="pwrBox" rx="3"/>
+  <polygon points="1170,181 1164,191 1176,191" class="pwrBox"/>
+  <text x="1170" y="173" text-anchor="middle" class="netP">3V3</text>
+  <line x1="1170" y1="191" x2="1170" y2="220" class="pwr"/>
+
+  <!-- R5 series resistor -->
+  <use href="#resV" x="1170" y="220"/>
+  <text x="1188" y="245" class="ref">R5</text>
+  <text x="1188" y="259" class="val">10 kΩ 1%</text>
+
+  <!-- Mid-tap junction -->
+  <line x1="1170" y1="265" x2="1170" y2="295" class="wire"/>
+  <use href="#j" x="1170" y="295"/>
+
+  <!-- Cfn 100 nF filter cap on NTC_ADC net → GND (anti-aliasing / noise reject) -->
+  <line x1="1170" y1="295" x2="1280" y2="295" class="wire"/>
+  <line x1="1280" y1="295" x2="1280" y2="330" class="wire"/>
+  <line x1="1266" y1="330" x2="1294" y2="330" class="wire"/>
+  <line x1="1266" y1="336" x2="1294" y2="336" class="wire"/>
+  <line x1="1280" y1="336" x2="1280" y2="370" class="wire"/>
+  <use href="#gnd" x="1280" y="370"/>
+  <text x="1300" y="335" class="ref">Cfn</text>
+  <text x="1300" y="349" class="val">100 nF X7R</text>
+
+  <!-- Tap out to [NTC_ADC] flag on left of block -->
+  <line x1="1170" y1="295" x2="1030" y2="295" class="wire"/>
+  <rect x="1030" y="282" width="100" height="26" class="netBox" rx="3"/>
+  <polygon points="1030,295 1020,289 1020,301" class="netBox"/>
+  <text x="1080" y="300" text-anchor="middle" class="netS">NTC_ADC</text>
+  <text x="1030" y="275" class="sub">→ XIAO D1</text>
+
+  <!-- Wire down to probe connector J1 -->
+  <line x1="1170" y1="295" x2="1170" y2="330" class="wire"/>
+  <rect x="1120" y="330" width="100" height="40" class="part" rx="3"/>
+  <text x="1170" y="355" text-anchor="middle" class="ref">J1</text>
+  <text x="1170" y="385" text-anchor="middle" class="sub">NTC probe connector</text>
+
+  <!-- NTC thermistor body with diagonal arrow (standard symbol) -->
+  <line x1="1170" y1="395" x2="1170" y2="415" class="wire"/>
+  <rect x="1158" y="415" width="24" height="50" class="part"/>
+  <!-- diagonal through-arrow indicating thermistor -->
+  <line x1="1143" y1="475" x2="1197" y2="405" stroke="#111" stroke-width="1.6"/>
+  <polygon points="1197,405 1188,407 1195,414" fill="#111"/>
+  <text x="1210" y="435" class="ref">RT1</text>
+  <text x="1210" y="449" class="val">NTC 10 kΩ @25 °C</text>
+  <text x="1210" y="463" class="val">B = 3435 K</text>
+
+  <!-- Continue wire down to [NTC_EN] -->
+  <line x1="1170" y1="465" x2="1170" y2="495" class="wire"/>
+  <line x1="1170" y1="495" x2="1030" y2="495" class="wire"/>
+  <rect x="1030" y="482" width="90" height="26" class="netBox" rx="3"/>
+  <polygon points="1030,495 1020,489 1020,501" class="netBox"/>
+  <text x="1075" y="500" text-anchor="middle" class="netS">NTC_EN</text>
+  <text x="1030" y="475" class="sub">→ XIAO D4 (GND switch)</text>
+
+  <!-- ==================== BLOCK 5: RESET SWITCH ==================== -->
+  <rect x="340" y="780" width="240" height="90" class="grp" rx="6"/>
+  <text x="355" y="802" class="grpL">Reset switch</text>
+
+  <!-- [RESET] flag on left -->
+  <rect x="360" y="827" width="70" height="26" class="netBox" rx="3"/>
+  <polygon points="430,840 440,834 440,846" class="netBox"/>
+  <text x="395" y="845" text-anchor="middle" class="netS">RESET</text>
+  <line x1="440" y1="840" x2="475" y2="840" class="wire"/>
+
+  <!-- SW1 body -->
+  <rect x="475" y="822" width="55" height="36" class="part"/>
+  <text x="502" y="844" text-anchor="middle" class="ref">SW1</text>
+  <!-- GND on right of SW1 -->
+  <line x1="530" y1="840" x2="555" y2="840" class="wire"/>
+  <use href="#gnd" x="555" y="840" transform="rotate(-90 555 840)"/>
+  <text x="558" y="844" class="pin">GND</text>
+
+  <!-- ==================== FOOTER NOTES ==================== -->
+  <text x="30" y="875" class="sub">All inter-block connections use named nets (flags). Matching tags connect automatically — there are no crossing wires in the drawing.</text>
+</svg>

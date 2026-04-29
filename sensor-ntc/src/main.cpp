@@ -34,7 +34,11 @@
 
 // PCB circuit (for reference):
 //   3.3V ─── SERIES_RESISTOR ─── NTC_PIN (ADC) ─── NTC probe ─── NTC_ENABLE_PIN (GND switch)
+//                                  │
+//                                  └── 100 nF filter cap (Cfn) ── GND
 // NTC_ENABLE_PIN driven LOW to enable divider; INPUT (Hi-Z) during sleep to cut quiescent current.
+// Cfn low-pass filters the ADC input (RC ≈ 0.5 ms with ~5 kΩ source impedance).
+// The existing 10 ms settling delay after enabling the divider covers the filter-cap charge-up.
 
 // --- SLEEP SETTINGS ---
 #define SLEEP_TIME 900  // Seconds
@@ -71,18 +75,20 @@ static const uint8_t LMK_KEY[16] = {
 };
 
 // --- BATTERY LOOKUP TABLE ---
-// {voltage, percentage} for 3.7V Li-ion / 18650 measured at rest
+// {voltage, percentage} for 2× Energizer Ultimate Lithium (L91, Li-FeS₂, AA)
+// in SERIES. Nominal pack voltage 3.0 V; fresh ≈ 3.4 V, dead ≈ 1.8 V.
+// NOTE: The HT7333-A LDO drops out below ~3.5 V under load, so the node
+// will brown out long before the cells are physically empty. Useful pack
+// voltage range with this regulator is roughly 3.6 V → 3.4 V.
 struct BatteryPoint {
   float voltage;
   int   percentage;
 };
 const BatteryPoint batteryTable[] = {
-  { 4.20, 100 }, { 4.15,  95 }, { 4.10,  90 }, { 4.05,  85 },
-  { 4.00,  80 }, { 3.95,  75 }, { 3.90,  70 }, { 3.85,  65 },
-  { 3.80,  60 }, { 3.75,  55 }, { 3.70,  50 }, { 3.65,  45 },
-  { 3.60,  40 }, { 3.55,  35 }, { 3.50,  30 }, { 3.45,  25 },
-  { 3.40,  20 }, { 3.30,  15 }, { 3.20,  10 }, { 3.10,   5 },
-  { 3.00,   0 }
+  { 3.40, 100 }, { 3.30,  90 }, { 3.20,  80 }, { 3.10,  70 },
+  { 3.00,  60 }, { 2.90,  50 }, { 2.80,  40 }, { 2.65,  30 },
+  { 2.45,  20 }, { 2.20,  10 }, { 2.00,   5 }, { 1.85,   2 },
+  { 1.80,   0 }
 };
 const int TABLE_SIZE = sizeof(batteryTable) / sizeof(batteryTable[0]);
 
@@ -195,6 +201,7 @@ void checkFactoryReset() {
 
 // --- READ NTC PROBE ---
 // Circuit: 3.3V → SERIES_RESISTOR → NTC_PIN (ADC) → NTC probe → NTC_ENABLE_PIN (GND switch)
+// A 100 nF filter cap (Cfn) at NTC_PIN → GND low-pass filters the ADC input.
 // NTC_ENABLE_PIN is driven LOW to complete the divider; Hi-Z during sleep cuts quiescent current.
 // Temperature is derived via the Steinhart-Hart simplified (Beta) equation:
 //   1/T = 1/T0 + (1/B) * ln(R_ntc / R0)
@@ -202,7 +209,7 @@ float readNTC() {
   // Enable divider by driving GND switch LOW
   pinMode(NTC_ENABLE_PIN, OUTPUT);
   digitalWrite(NTC_ENABLE_PIN, LOW);
-  delay(10); // Let voltage divider settle
+  delay(10); // Let divider + 100 nF filter cap settle (RC ≈ 0.5 ms, 10 ms covers 20× time constants)
 
   analogReadResolution(12);
   analogRead(NTC_PIN);                        // Initialise ADC channel
@@ -312,12 +319,15 @@ const char* getBatteryStatus(int pct) {
   return "CRITICAL";
 }
 
+// Battery divider: BAT+ → R3 (120k) → BAT_ADC tap → R4 (120k) → DIVIDER_ENABLE_PIN (GND switch)
+// A 10 nF filter cap (Cfb) at BAT_ADC → GND low-pass filters the ADC input.
+// DIVIDER_ENABLE_PIN LOW enables the divider; Hi-Z during sleep cuts quiescent current.
 BatteryInfo getBatteryInfo() {
   analogReadResolution(12);
 
   pinMode(DIVIDER_ENABLE_PIN, OUTPUT);
   digitalWrite(DIVIDER_ENABLE_PIN, LOW);
-  delay(10);
+  delay(10); // Let divider + 10 nF filter cap settle (RC ≈ 0.6 ms at ~60 kΩ source)
 
   analogRead(BAT_ADC_PIN);
   analogSetPinAttenuation(BAT_ADC_PIN, ADC_11db);

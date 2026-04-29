@@ -1,0 +1,196 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1300 800" font-family="Helvetica, Arial, sans-serif" font-size="13">
+  <style>
+    .wire  { stroke: #111; stroke-width: 2; fill: none; }
+    .pwr   { stroke: #c0392b; stroke-width: 2.2; fill: none; }
+    .part  { stroke: #111; stroke-width: 1.8; fill: #fff; }
+    .pin   { fill: #444; font-size: 11px; }
+    .net   { fill: #c0392b; font-weight: bold; font-size: 12px; }
+    .netL  { fill: #2c3e50; font-weight: bold; font-size: 12px; }
+    .title { font-size: 22px; font-weight: bold; }
+    .sub   { font-size: 12px; fill: #555; }
+    .dot   { fill: #111; }
+    .grp   { fill: none; stroke: #888; stroke-dasharray: 6 4; }
+    .grpL  { font-size: 13px; fill: #333; font-weight: bold; }
+  </style>
+
+  <defs>
+    <g id="gnd">
+      <line x1="0" y1="0" x2="0" y2="10" class="wire"/>
+      <line x1="-15" y1="10" x2="15" y2="10" class="wire"/>
+      <line x1="-10" y1="18" x2="10" y2="18" class="wire"/>
+      <line x1="-5" y1="26" x2="5" y2="26" class="wire"/>
+    </g>
+    <circle id="j" cx="0" cy="0" r="3.5" class="dot"/>
+    <g id="resV"><rect x="-8" y="0" width="16" height="45" class="part"/></g>
+    <g id="capV">
+      <line x1="-12" y1="-2" x2="12" y2="-2" class="wire"/>
+      <line x1="-12" y1="2" x2="12" y2="2" class="wire"/>
+    </g>
+    <!-- Net-label flag: points right -->
+    <g id="netTagR">
+      <polygon points="0,0 10,-8 60,-8 60,8 10,8" class="part"/>
+    </g>
+    <!-- Net-label flag: points left -->
+    <g id="netTagL">
+      <polygon points="0,0 -10,-8 -60,-8 -60,8 -10,8" class="part"/>
+    </g>
+  </defs>
+
+  <!-- Frame + title -->
+  <rect x="10" y="10" width="1280" height="780" fill="none" stroke="#111" stroke-width="1.5"/>
+  <text x="30" y="42" class="title">SENSOR (SHT40) — XIAO ESP32-C6</text>
+  <text x="30" y="62" class="sub">ESP-NOW sensor node — reads SHT40 temperature &amp; humidity, sends to hub, deep-sleeps.</text>
+  <line x1="10" y1="80" x2="1290" y2="80" stroke="#111" stroke-width="1"/>
+
+  <!-- Global 3V3 rail -->
+  <text x="60" y="108" class="net">+3V3</text>
+  <line x1="60" y1="120" x2="1250" y2="120" class="pwr"/>
+  <rect x="1170" y="135" width="100" height="55" class="part" rx="4"/>
+  <text x="1220" y="158" text-anchor="middle">USB-C</text>
+  <text x="1220" y="176" text-anchor="middle" class="sub">or Li-ion (XIAO BAT)</text>
+  <line x1="1220" y1="135" x2="1220" y2="120" class="pwr"/>
+  <use href="#j" x="1220" y="120"/>
+
+  <!-- ================= XIAO ================= -->
+  <rect x="430" y="220" width="340" height="420" class="part" rx="6"/>
+  <text x="600" y="248" text-anchor="middle" font-weight="bold">XIAO ESP32-C6</text>
+  <text x="600" y="265" text-anchor="middle" class="sub">U1</text>
+
+  <g font-size="11" fill="#444">
+    <text x="440" y="295">3V3 (pin)</text>
+    <text x="440" y="325">GND</text>
+    <text x="440" y="355">D0 / GPIO0</text>
+    <text x="440" y="385">D1 / GPIO1</text>
+    <text x="440" y="415">D2 / GPIO2</text>
+    <text x="440" y="445">D4 / GPIO22</text>
+    <text x="440" y="475">D5 / GPIO23</text>
+    <text x="440" y="505">GPIO15 (LED)</text>
+  </g>
+  <g font-size="11" fill="#444" text-anchor="end">
+    <text x="760" y="355">RESET</text>
+    <text x="760" y="385">DIV_EN</text>
+    <text x="760" y="415">BAT_ADC</text>
+    <text x="760" y="445">SDA</text>
+    <text x="760" y="475">SCL</text>
+  </g>
+
+  <!-- Left stubs -->
+  <line x1="430" y1="290" x2="410" y2="290" class="pwr"/>
+  <line x1="430" y1="320" x2="410" y2="320" class="wire"/>
+  <line x1="430" y1="350" x2="200" y2="350" class="wire"/>
+  <line x1="430" y1="380" x2="280" y2="380" class="wire"/>
+  <line x1="430" y1="410" x2="300" y2="410" class="wire"/>
+
+  <!-- Right stubs (SDA/SCL carry net labels) -->
+  <line x1="770" y1="440" x2="820" y2="440" class="wire"/>
+  <line x1="770" y1="470" x2="820" y2="470" class="wire"/>
+  <use href="#netTagR" x="820" y="440"/>
+  <text x="825" y="444" class="netL">SDA</text>
+  <use href="#netTagR" x="820" y="470"/>
+  <text x="825" y="474" class="netL">SCL</text>
+
+  <!-- 3V3 pin up -->
+  <line x1="410" y1="290" x2="410" y2="120" class="pwr"/>
+  <use href="#j" x="410" y="120"/>
+  <!-- GND down -->
+  <line x1="410" y1="320" x2="410" y2="720" class="wire"/>
+  <use href="#gnd" x="410" y="720"/>
+
+  <!-- ================= RESET SW1 ================= -->
+  <line x1="200" y1="350" x2="200" y2="400" class="wire"/>
+  <rect x="170" y="400" width="60" height="35" class="part"/>
+  <text x="200" y="423" text-anchor="middle">SW1</text>
+  <text x="200" y="455" text-anchor="middle" class="sub">Factory reset / wake</text>
+  <line x1="200" y1="435" x2="200" y2="480" class="wire"/>
+  <use href="#gnd" x="200" y="480"/>
+
+  <!-- ================= BATTERY DIVIDER ================= -->
+  <rect x="40" y="540" width="380" height="220" class="grp" rx="6"/>
+  <text x="55" y="562" class="grpL">Battery voltage divider (optional)</text>
+  <text x="55" y="579" class="sub">Populate only if using a bare Li-ion cell (not via XIAO BAT pads).</text>
+
+  <text x="60" y="615" class="net">BAT+</text>
+  <line x1="95" y1="610" x2="160" y2="610" class="pwr"/>
+  <line x1="160" y1="610" x2="160" y2="630" class="wire"/>
+  <use href="#resV" x="160" y="630"/>
+  <text x="178" y="658" class="pin">R1 120 kΩ 1%</text>
+  <line x1="160" y1="675" x2="160" y2="700" class="wire"/>
+  <use href="#j" x="160" y="700"/>
+  <line x1="160" y1="700" x2="300" y2="700" class="wire"/>
+  <line x1="300" y1="700" x2="300" y2="410" class="wire"/>
+  <text x="180" y="693" class="pin">→ D2 (BAT_ADC)</text>
+
+  <line x1="160" y1="700" x2="160" y2="715" class="wire"/>
+  <use href="#resV" x="160" y="715"/>
+  <text x="178" y="743" class="pin">R2 120 kΩ 1%</text>
+  <line x1="160" y1="760" x2="160" y2="780" class="wire"/>
+  <!-- Out of the group box: continue to D1 -->
+  <line x1="160" y1="780" x2="280" y2="780" class="wire"/>
+  <line x1="280" y1="780" x2="280" y2="380" class="wire"/>
+  <text x="180" y="774" class="pin">→ D1 (DIV_EN)</text>
+
+  <!-- ================= SHT40 ================= -->
+  <rect x="920" y="340" width="260" height="200" class="part" rx="6"/>
+  <text x="1050" y="368" text-anchor="middle" font-weight="bold">SHT40</text>
+  <text x="1050" y="385" text-anchor="middle" class="sub">U2 (DFN-4)  I²C 0x44</text>
+
+  <g font-size="11" fill="#444">
+    <text x="930" y="415">SDA  (1)</text>
+    <text x="930" y="445">GND  (2)</text>
+    <text x="930" y="475">VDD  (3)</text>
+    <text x="930" y="505">SCL  (4)</text>
+  </g>
+
+  <!-- SHT40 pin stubs go left into "flags" / vertical channels -->
+  <line x1="920" y1="410" x2="880" y2="410" class="wire"/>
+  <use href="#netTagL" x="880" y="410"/>
+  <text x="820" y="414" class="netL">SDA</text>
+
+  <line x1="920" y1="440" x2="880" y2="440" class="wire"/>
+  <line x1="880" y1="440" x2="880" y2="660" class="wire"/>
+  <use href="#gnd" x="880" y="660"/>
+
+  <line x1="920" y1="470" x2="850" y2="470" class="wire"/>
+  <line x1="850" y1="470" x2="850" y2="120" class="pwr"/>
+  <use href="#j" x="850" y="120"/>
+
+  <line x1="920" y1="500" x2="880" y2="500" class="wire"/>
+  <!-- Wait SCL shares x=880 with GND column. Use a different channel x=900 -->
+  <!-- Correction: reroute SCL -->
+  <rect x="875" y="495" width="50" height="10" fill="#fff" stroke="none"/>
+  <line x1="920" y1="500" x2="900" y2="500" class="wire"/>
+  <use href="#netTagL" x="900" y="500"/>
+  <text x="835" y="504" class="netL">SCL</text>
+
+  <!-- Decoupling C1 for SHT40 -->
+  <line x1="1080" y1="540" x2="1080" y2="590" class="wire"/>
+  <use href="#capV" x="1080" y="595"/>
+  <text x="1095" y="600" class="pin">C1 100 nF</text>
+  <line x1="1080" y1="600" x2="1080" y2="660" class="wire"/>
+  <use href="#gnd" x="1080" y="660"/>
+  <line x1="1080" y1="540" x2="1080" y2="120" class="pwr"/>
+  <use href="#j" x="1080" y="120"/>
+
+  <!-- I²C pull-ups (R3 on SDA net, R4 on SCL net) -->
+  <text x="1200" y="160" class="grpL">I²C pull-ups</text>
+  <line x1="1190" y1="170" x2="1190" y2="210" class="pwr"/>
+  <use href="#j" x="1190" y="120"/>
+  <line x1="1190" y1="120" x2="1190" y2="210" class="pwr"/>
+  <use href="#resV" x="1190" y="210"/>
+  <text x="1208" y="236" class="pin">R3 10 kΩ</text>
+  <line x1="1190" y1="255" x2="1190" y2="280" class="wire"/>
+  <use href="#netTagL" x="1190" y="280"/>
+  <text x="1125" y="284" class="netL">SDA</text>
+
+  <line x1="1250" y1="120" x2="1250" y2="210" class="pwr"/>
+  <use href="#j" x="1250" y="120"/>
+  <use href="#resV" x="1250" y="210"/>
+  <text x="1268" y="236" class="pin">R4 10 kΩ</text>
+  <line x1="1250" y1="255" x2="1250" y2="310" class="wire"/>
+  <use href="#netTagL" x="1250" y="310"/>
+  <text x="1185" y="314" class="netL">SCL</text>
+
+  <!-- Notes -->
+  <text x="30" y="790" class="sub">NOTES: SDA / SCL shown as named nets (XIAO right side ↔ SHT40 left side ↔ pull-ups). • If the SHT40 breakout has built-in pull-ups, omit R3 / R4. • D1 = Hi-Z in sleep → divider draws 0 µA.</text>
+</svg>

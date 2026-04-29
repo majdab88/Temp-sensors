@@ -132,6 +132,52 @@ NTC PCB circuit: `3.3V → 10 kΩ (series) → GPIO1/D1 (ADC) → NTC probe → 
 - No I2C bus — GPIO22 (D4) is repurposed as NTC GND switch; GPIO23 (D5) is unused.
 - `hum` is always sent as `-999`; the hub should display "N/A" for these nodes.
 - NTC parameters (`NTC_NOMINAL`, `NTC_BCOEFF`, `SERIES_RESISTOR`) must match your probe's datasheet.
+- **Filter caps on ADC pins** (noise rejection / anti-aliasing):
+  - `Cfn` = 100 nF X7R from GPIO1/D1 (NTC_ADC) to GND
+  - `Cfb` = 10 nF X7R from GPIO2/D2 (BAT_ADC) to GND
+  - Placed as close to the GPIO pin as possible. Existing 10 ms settling delay in firmware covers charge-up (RC ≈ 0.5 ms NTC, ≈ 0.5 ms battery at 50 kΩ source).
+
+#### Power Supply (battery-powered build)
+
+Feed the regulated output into the XIAO's `3V3` pin (not `5V`) to bypass the onboard LDO.
+
+```
+BAT+ ──┬── HT7333-A VIN ── VOUT ──┬── XIAO 3V3 pin
+       │  (3.3 V LDO, SOT-89)     │
+       C1 (10 µF X7R)             C2 (220 µF elec.)
+       │                          │
+BAT– ──┴──────────────────────────┴── XIAO GND
+
+Battery divider (taps BAT+ before regulator):
+BAT+ ── R1 (100 kΩ, 1%) ──┬── R2 (100 kΩ, 1%) ── GPIO21/D3 (enable)
+                           └── GPIO2/D2 (ADC)
+```
+
+| Item | Value |
+|------|-------|
+| Battery | **2× Energizer Ultimate Lithium L91** (Li-FeS₂, AA, 1.5 V each → 3.0 V nominal in series, ~3.4 V fresh) — cold-tolerant to −40 °C, ~20-year shelf life, ~3000 mAh per cell |
+| Regulator | HT7333-A, SOT-89, Iq ≈ 4 µA, Vdrop ≈ 170 mV @ 50 mA |
+| C1 | 10 µF ceramic X7R (HT7333 input) |
+| C2 | 220 µF electrolytic (HT7333 output, TX spike buffer) |
+| Divider | 2× 100 kΩ 1 %; midpoint → GPIO2/D2; GPIO21/D3 = GND switch (Hi-Z during sleep). ~18 µA when enabled |
+| Expected sleep current | < 25 µA (HT7333 Iq + ESP32-C6 deep sleep) |
+
+> **⚠ LDO dropout limits useful battery life.** The HT7333-A needs ≥ 3.47 V
+> at its input to maintain 3.3 V output under load (and more during the
+> 200 mA ESP-NOW TX burst because dropout grows with current). L91 cells in
+> series start at ~3.4 V and drop steadily toward ~1.8 V at end-of-life.
+> Practically the node will brown out once BAT+ falls below ~3.4 V — which
+> happens after only **10–25 % of the L91 pack's total capacity** has been
+> used. The remaining ~75 % is unreachable through this regulator.
+>
+> The L91 chemistry itself supplies pulse current natively (no passivation),
+> so no supercapacitor is needed. Cold-weather and shelf-life behaviour are
+> excellent.
+>
+> **Upgrade path for full capacity utilisation:** replace the HT7333-A with
+> a **buck-boost converter** (e.g., TI TPS63031, TPS63001) which holds 3.3 V
+> across the full L91 voltage range (1.8 V → 3.6 V). This is the right move
+> if you need to extract the full ~3000 mAh per cell.
 
 ---
 
@@ -160,7 +206,7 @@ NTC PCB circuit: `3.3V → 10 kΩ (series) → GPIO1/D1 (ADC) → NTC probe → 
 | Constant | Value | Notes |
 |----------|-------|-------|
 | `NTC_NOMINAL` | 10000 Ω | NTC resistance at reference temp — check datasheet |
-| `NTC_BCOEFF` | 3950 K | Beta coefficient — check datasheet |
+| `NTC_BCOEFF` | 3435 K | Beta coefficient — Eliwell/Carel/Dixell standard NTC 10K; check your probe's datasheet |
 | `NTC_T0_CELSIUS` | 25 °C | Reference temperature for `NTC_NOMINAL` |
 | `SERIES_RESISTOR` | 10000 Ω | Fixed series resistor — use ≥1 % tolerance |
 | `NTC_SAMPLES` | 20 | ADC readings averaged per measurement |

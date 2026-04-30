@@ -122,7 +122,8 @@ SHT40 I2C address: `0x44`.
 | NTC ADC | 1 (D1) | ADC midpoint of NTC voltage divider |
 | NTC enable | 22 (D4) | GND switch for NTC divider (OUTPUT LOW = on; INPUT = Hi-Z during sleep) |
 
-NTC PCB circuit: `3.3V → 10 kΩ (series) → GPIO1/D1 (ADC) → NTC probe → GPIO22/D4 (GND switch)`
+NTC PCB circuit: `3.3V → NTC probe → GPIO1/D1 (ADC) → 10 kΩ (series) → GPIO22/D4 (GND switch)`
+- NTC is on the **high side** (between 3.3V and ADC pin). At cold temperatures the NTC resistance is high, which keeps the ADC voltage low — in the accurate zone of the ESP32 ADC. The old topology (series R on top) drove the ADC to ~2.9V at -17°C, which is in the nonlinear region of ADC_11db and caused ~11°C over-reading. ADC attenuation is `ADC_6db` (0–2.2V), covering -40°C to +40°C for a 10K NTC.
 - No I2C bus — GPIO22 (D4) is repurposed as NTC GND switch; GPIO23 (D5) is unused.
 - `hum` is always sent as `-999`; the hub should display "N/A" for these nodes.
 - NTC parameters (`NTC_NOMINAL`, `NTC_BCOEFF`, `SERIES_RESISTOR`) must match your probe's datasheet.

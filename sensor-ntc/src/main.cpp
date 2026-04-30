@@ -200,7 +200,10 @@ void checkFactoryReset() {
 }
 
 // --- READ NTC PROBE ---
-// Circuit: 3.3V → SERIES_RESISTOR → NTC_PIN (ADC) → NTC probe → NTC_ENABLE_PIN (GND switch)
+// Circuit: 3.3V → NTC probe → NTC_PIN (ADC) → SERIES_RESISTOR → NTC_ENABLE_PIN (GND switch)
+// NTC is on the high side so cold temps (high R_ntc) give LOW ADC voltage — the accurate
+// region of the ESP32 ADC. Old topology (R_series on top) pushed cold readings to ~2.9V
+// which is in the nonlinear zone of ADC_11db, causing ~11°C error at -17°C.
 // A 100 nF filter cap (Cfn) at NTC_PIN → GND low-pass filters the ADC input.
 // NTC_ENABLE_PIN is driven LOW to complete the divider; Hi-Z during sleep cuts quiescent current.
 // Temperature is derived via the Steinhart-Hart simplified (Beta) equation:
@@ -212,9 +215,9 @@ float readNTC() {
   delay(10); // Let divider + 100 nF filter cap settle (RC ≈ 0.5 ms, 10 ms covers 20× time constants)
 
   analogReadResolution(12);
-  analogRead(NTC_PIN);                        // Initialise ADC channel
-  analogSetPinAttenuation(NTC_PIN, ADC_11db); // 0–3.3 V range
-  analogRead(NTC_PIN);                        // Latch attenuation
+  analogRead(NTC_PIN);                       // Initialise ADC channel
+  analogSetPinAttenuation(NTC_PIN, ADC_6db); // 0–2.2 V range — covers -40°C to +40°C for 10K NTC
+  analogRead(NTC_PIN);                       // Latch attenuation
 
   // Discard first reading (settling artefact)
   analogReadMilliVolts(NTC_PIN);
@@ -240,8 +243,8 @@ float readNTC() {
   }
 
   // Resolve NTC resistance from voltage divider equation
-  // V_adc = vcc * R_ntc / (SERIES_RESISTOR + R_ntc)  =>  R_ntc = R_series * V_adc / (vcc - V_adc)
-  float r_ntc = SERIES_RESISTOR * adcV / (vcc - adcV);
+  // V_adc = vcc * R_series / (R_ntc + R_series)  =>  R_ntc = R_series * (vcc - V_adc) / V_adc
+  float r_ntc = SERIES_RESISTOR * (vcc - adcV) / adcV;
 
   // Steinhart-Hart beta equation
   float t0K      = (float)(NTC_T0_CELSIUS) + 273.15f;

@@ -540,15 +540,24 @@ void startBleProvisioning() {
           buildTopics();
           notifyStatus("connecting", "WiFi OK — connecting to cloud...");
           if (!connectCloud()) {
-            // Bad MQTT credentials — erase them so the user can re-provision
-            Preferences cPrefs; cPrefs.begin("cloud", false); cPrefs.clear(); cPrefs.end();
-            cloudConfigured = false;
-            // Include PubSubClient state for diagnostics:
-            //  -4=timeout  -3=connection lost  -2=connect failed (TCP/TLS)
+            // PubSubClient state codes:
+            //  -4=timeout  -3=conn lost  -2=connect failed (TCP/TLS)  -1=disconnect
             //   4=bad credentials  5=unauthorized
-            char failMsg[80];
+            // Only auth failures (4, 5) mean the credentials themselves are
+            // wrong; everything else is a network/broker problem and the
+            // creds should be preserved so the user can retry without
+            // re-provisioning.
+            bool authFail = (lastMqttState == 4 || lastMqttState == 5);
+            if (authFail) {
+              Preferences cPrefs; cPrefs.begin("cloud", false); cPrefs.clear(); cPrefs.end();
+              cloudConfigured = false;
+            }
+            char failMsg[96];
             snprintf(failMsg, sizeof(failMsg),
-                     "Cloud connection failed (rc %d) — check MQTT credentials", lastMqttState);
+                     authFail
+                       ? "Cloud auth failed (rc %d) — check MQTT username/password"
+                       : "Cloud unreachable (rc %d) — check host/port/network",
+                     lastMqttState);
             notifyStatus("failed", failMsg);
             NimBLEDevice::startAdvertising();
             // Stay in the provisioning loop; app shows "failed" and user
@@ -594,11 +603,17 @@ void startBleProvisioning() {
         buildTopics();
         notifyStatus("connecting", "Connecting to cloud...");
         if (!connectCloud()) {
-          Preferences cPrefs; cPrefs.begin("cloud", false); cPrefs.clear(); cPrefs.end();
-          cloudConfigured = false;
-          char failMsg[80];
+          bool authFail = (lastMqttState == 4 || lastMqttState == 5);
+          if (authFail) {
+            Preferences cPrefs; cPrefs.begin("cloud", false); cPrefs.clear(); cPrefs.end();
+            cloudConfigured = false;
+          }
+          char failMsg[96];
           snprintf(failMsg, sizeof(failMsg),
-                   "Cloud connection failed (rc %d) — check MQTT credentials", lastMqttState);
+                   authFail
+                     ? "Cloud auth failed (rc %d) — check MQTT username/password"
+                     : "Cloud unreachable (rc %d) — check host/port/network",
+                   lastMqttState);
           notifyStatus("failed", failMsg);
           NimBLEDevice::startAdvertising();
         } else {
@@ -1791,8 +1806,11 @@ void setup() {
   unsigned long wifiStart = millis();
   while (WiFi.status() != WL_CONNECTED) {
     if (millis() - wifiStart > WIFI_CONNECT_TIMEOUT_MS) {
-      Serial.println("WiFi connection timed out — clearing credentials, restarting.");
-      wPrefs.begin("wifi", false); wPrefs.clear(); wPrefs.end();
+      // Network outage / router down — keep credentials and restart so the
+      // boot logic tries again. Wiping NVS here would force the user to
+      // re-provision after any transient disconnect (router reboot, ISP outage).
+      // The BOOT button is the only sanctioned way to clear WiFi creds.
+      Serial.println("WiFi connection timed out — restarting (credentials preserved).");
       ESP.restart();
     }
     delay(200);

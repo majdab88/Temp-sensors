@@ -52,7 +52,7 @@ static const uint8_t LMK_KEY[16] = {
 #define PROV_CHAR_INFO     "a9b12301-bc5d-4e8a-9c23-c5d1b3f4a5e6"  // Read: {mac} — auto-detected by setup page
 
 // --- TIMEOUTS ---
-#define WIFI_CONNECT_TIMEOUT_MS 15000  // ms to wait for WiFi after credentials received
+#define WIFI_CONNECT_TIMEOUT_MS 30000  // ms to wait for WiFi after credentials received
 
 // --- NTP CONFIGURATION ---
 const char*         ntpServer          = "pool.ntp.org";
@@ -1160,9 +1160,26 @@ void applySyncFromCloud(const String& json) {
 bool connectCloud() {
   if (!cloudConfigured) return false;
 
+  // Tear down any prior TLS state. Stale mbedtls buffers from a previous
+  // failed connect can otherwise prevent the next handshake from allocating
+  // cleanly — especially during BLE provisioning while NimBLE is co-resident.
+  wifiSecure.stop();
+
   // Encrypt the connection but skip CA certificate validation.
   // The broker address is trusted via network (VPS + Let's Encrypt TLS).
   wifiSecure.setInsecure();
+
+  // Shrink TLS RX/TX buffers (default 16 KB + 16 KB → 4 KB + 1 KB).
+  // Saves ~27 KB of heap, which is the difference between a clean handshake
+  // and an mbedtls allocation failure when NimBLE is still up. Our largest
+  // MQTT payload (cloud sync JSON) is ~500 bytes, well under 4 KB rx.
+  wifiSecure.setBufferSizes(4096, 1024);
+
+  // Bound the TLS handshake. Without this, mbedtls retries internally for
+  // ~130 s on a flaky connection (this is what produced the long "connecting"
+  // hang the user observed). 15 s is plenty for a healthy network and gives
+  // the BLE app a prompt failure instead of looking dead.
+  wifiSecure.setHandshakeTimeout(15);
 
   mqttClient.setServer(mqttHost, mqttPort);
   mqttClient.setCallback(mqttCallback);
@@ -1172,6 +1189,9 @@ bool connectCloud() {
   // take several seconds).  maintainCloud() tightens this to 3 s after the first
   // successful connect so that reconnect attempts don't block ESP-NOW.
   mqttClient.setSocketTimeout(10);
+
+  Serial.printf("[MQTT] Free heap before connect: %u bytes (min seen: %u)\n",
+                ESP.getFreeHeap(), ESP.getMinFreeHeap());
 
   // Client ID includes last 3 MAC octets so it is unique per device
   uint8_t mac[6]; WiFi.macAddress(mac);

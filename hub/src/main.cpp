@@ -1169,12 +1169,6 @@ bool connectCloud() {
   // The broker address is trusted via network (VPS + Let's Encrypt TLS).
   wifiSecure.setInsecure();
 
-  // Shrink TLS RX/TX buffers (default 16 KB + 16 KB → 4 KB + 1 KB).
-  // Saves ~27 KB of heap, which is the difference between a clean handshake
-  // and an mbedtls allocation failure when NimBLE is still up. Our largest
-  // MQTT payload (cloud sync JSON) is ~500 bytes, well under 4 KB rx.
-  wifiSecure.setBufferSizes(4096, 1024);
-
   // Bound the TLS handshake. Without this, mbedtls retries internally for
   // ~130 s on a flaky connection (this is what produced the long "connecting"
   // hang the user observed). 15 s is plenty for a healthy network and gives

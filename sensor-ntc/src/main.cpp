@@ -58,8 +58,8 @@
 // Set UDP_LOG_ENABLED to 0 before long-term deployment (saves ~3 s per wake cycle)
 #define UDP_LOG_ENABLED  1
 #define UDP_LOG_PORT     4444
-#define UDP_WIFI_SSID    "YOUR_SSID"   // <-- your WiFi AP SSID
-#define UDP_WIFI_PASS    "YOUR_PASS"   // <-- your WiFi AP password
+#define UDP_WIFI_SSID    "Majd phone"   // <-- your WiFi AP SSID
+#define UDP_WIFI_PASS    "Majd1234"   // <-- your WiFi AP password
 
 // --- BATTERY MONITOR ---
 #define ADC_SAMPLES      20  // Readings to average for a stable result

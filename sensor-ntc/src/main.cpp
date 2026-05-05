@@ -29,8 +29,8 @@
 //   3. gain   = (ref2 - ref1) / (raw2 - raw1)
 //      offset = ref1 - gain * raw1
 // Single-point only: leave NTC_CAL_GAIN=1.0 and set NTC_CAL_OFFSET = ref - raw
-#define NTC_CAL_GAIN      1.0f  // slope — 1.0 = no gain correction
-#define NTC_CAL_OFFSET    0.0f  // °C offset — 0.0 = no offset
+#define NTC_CAL_GAIN      1.570f // two-point calibration: raw=-3.1°C@actual-19.1°C, raw=25°C@actual 25°C
+#define NTC_CAL_OFFSET  -14.25f // gain=(−19.1−25)/(−3.1−25)=1.570  offset=25−1.570×25=−14.25
 
 // PCB circuit (for reference):
 //   3.3V ─── SERIES_RESISTOR ─── NTC_PIN (ADC) ─── NTC probe ─── NTC_ENABLE_PIN (GND switch)
@@ -216,7 +216,7 @@ float readNTC() {
 
   analogReadResolution(12);
   analogRead(NTC_PIN);                       // Initialise ADC channel
-  analogSetPinAttenuation(NTC_PIN, ADC_6db); // 0–2.2 V range — covers -40°C to +40°C for 10K NTC
+  analogSetPinAttenuation(NTC_PIN, ADC_11db); // 0–2.5 V range on ESP32-C6; ADC_6db saturates at ~1.3V (too low for room temp)
   analogRead(NTC_PIN);                       // Latch attenuation
 
   // Discard first reading (settling artefact)

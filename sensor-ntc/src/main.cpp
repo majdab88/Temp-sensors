@@ -5,6 +5,7 @@
 #include <Preferences.h>
 #include <esp_wifi.h>
 #include <esp_sleep.h>   // Explicit include needed on C6
+#include <WiFiUdp.h>
 
 // --- XIAO ESP32-C6 PIN DEFINITIONS ---
 #define LED_PIN            15   // Built-in LED on XIAO ESP32-C6
@@ -52,6 +53,13 @@
 #define ESPNOW_CHANNEL 0          // 0 = auto-detect
 #define HUB_AP_SSID   "TempHub-AP"  // hub's hidden AP — always on the ESP-NOW channel
 #define FALLBACK_CHANNEL 1        // used when neither hub AP nor any router is visible
+
+// --- UDP LOGGING ---
+// Set UDP_LOG_ENABLED to 0 before long-term deployment (saves ~3 s per wake cycle)
+#define UDP_LOG_ENABLED  1
+#define UDP_LOG_PORT     4444
+#define UDP_WIFI_SSID    "YOUR_SSID"   // <-- your WiFi AP SSID
+#define UDP_WIFI_PASS    "YOUR_PASS"   // <-- your WiFi AP password
 
 // --- BATTERY MONITOR ---
 #define ADC_SAMPLES      20  // Readings to average for a stable result
@@ -120,6 +128,53 @@ uint8_t broadcastAddress[] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF};
 volatile bool tx_success  = false;
 volatile bool tx_complete = false;
 
+// --- UDP LOG BUFFER ---
+static char s_udpBuf[1024];
+static int  s_udpLen = 0;
+
+// ulog() — drop-in for Serial.printf; also appends to UDP buffer when enabled
+void ulog(const char *fmt, ...) {
+  char tmp[256];
+  va_list ap;
+  va_start(ap, fmt);
+  vsnprintf(tmp, sizeof(tmp), fmt, ap);
+  va_end(ap);
+  Serial.print(tmp);
+#if UDP_LOG_ENABLED
+  int rem = (int)sizeof(s_udpBuf) - s_udpLen - 1;
+  if (rem > 0) {
+    int n = (int)strlen(tmp);
+    if (n > rem) n = rem;
+    memcpy(s_udpBuf + s_udpLen, tmp, n);
+    s_udpLen += n;
+    s_udpBuf[s_udpLen] = '\0';
+  }
+#endif
+}
+
+// flushLogsUDP() — connect to WiFi AP, broadcast the accumulated log, disconnect
+// Called after esp_now_deinit() while the WiFi radio is still running
+void flushLogsUDP() {
+#if UDP_LOG_ENABLED
+  if (s_udpLen == 0) return;
+  WiFi.begin(UDP_WIFI_SSID, UDP_WIFI_PASS);
+  unsigned long t0 = millis();
+  while (WiFi.status() != WL_CONNECTED && millis() - t0 < 5000) delay(100);
+  if (WiFi.status() != WL_CONNECTED) {
+    Serial.println("[UDP] connect timeout — logs not sent");
+    WiFi.disconnect();
+    return;
+  }
+  WiFiUDP udp;
+  udp.beginPacket("255.255.255.255", UDP_LOG_PORT);
+  udp.write((const uint8_t*)s_udpBuf, s_udpLen);
+  udp.endPacket();
+  delay(200);
+  WiFi.disconnect();
+  Serial.println("[UDP] sent");
+#endif
+}
+
 // --- SAFE DEEP SLEEP ---
 // ESP32-C6 RISC-V requires proper WiFi/ESP-NOW shutdown before sleep
 // Skipping this causes the illegal instruction crash (MCAUSE: 0x18)
@@ -128,7 +183,8 @@ void goToSleep(int seconds) {
   Serial.flush();         // Ensure serial output completes
 
   esp_now_deinit();       // Step 1: Deinit ESP-NOW
-  esp_wifi_stop();        // Step 2: Stop WiFi radio
+  flushLogsUDP();         // Step 2: Connect AP → broadcast log → disconnect
+  esp_wifi_stop();        // Step 3: Stop WiFi radio
   delay(100);             // Step 3: Allow shutdown to settle
 
   esp_sleep_enable_timer_wakeup((uint64_t)seconds * 1000000ULL);
@@ -238,7 +294,7 @@ float readNTC() {
 
   if (adcV <= 0.01f || adcV >= (vcc - 0.01f)) {
     // Saturated ADC almost certainly means open or shorted probe
-    Serial.println("✗ NTC read failed — probe open or shorted (check wiring)");
+    ulog("✗ NTC read failed — probe open or shorted (check wiring)\n");
     return -999;
   }
 
@@ -252,10 +308,10 @@ float readNTC() {
   float tempC    = (1.0f / steinhart) - 273.15f;
 
   tempC = tempC * NTC_CAL_GAIN + NTC_CAL_OFFSET;
-  Serial.printf("[NTC] adc=%.0fmV  R_ntc=%.0fΩ  T=%.2f°C\n", adcMv, r_ntc, tempC);
+  ulog("[NTC] adc=%.0fmV  R_ntc=%.0fΩ  T=%.2f°C\n", adcMv, r_ntc, tempC);
 
   if (tempC < -55.0f || tempC > 125.0f) {
-    Serial.println("✗ NTC temperature out of valid range");
+    ulog("✗ NTC temperature out of valid range\n");
     return -999;
   }
 
@@ -274,7 +330,7 @@ bool readSensor() {
   }
 
   myData.temp = temp;
-  Serial.printf("✓ Temp: %.2f°C  Hum: N/A\n", myData.temp);
+  ulog("✓ Temp: %.2f°C  Hum: N/A\n", myData.temp);
   return true;
 }
 
@@ -295,7 +351,7 @@ float readADCVoltage() {
   float adcMv      = sum / (float)ADC_SAMPLES;
   float adcVoltage = adcMv / 1000.0f;
   int   rawCount   = analogRead(BAT_ADC_PIN);
-  Serial.printf("[BAT] pin_mv=%.0f  raw=%d  bat_v=%.3f\n", adcMv, rawCount, adcVoltage * 2.0f);
+  ulog("[BAT] pin_mv=%.0f  raw=%d  bat_v=%.3f\n", adcMv, rawCount, adcVoltage * 2.0f);
   return adcVoltage * 2.0f;    // × 2 restores full voltage (equal-value divider)
 }
 
@@ -371,7 +427,7 @@ bool sendDataWithRetry() {
     }
 
     if (tx_success) {
-      Serial.println("✓ Delivered!");
+      ulog("✓ Delivered!\n");
       digitalWrite(LED_PIN, HIGH); delay(100); digitalWrite(LED_PIN, LOW);
       return true;
     }
@@ -382,7 +438,7 @@ bool sendDataWithRetry() {
     delay(RETRY_DELAY_MS);
   }
 
-  Serial.println("✗ All retries failed.");
+  ulog("✗ All retries failed.\n");
   return false;
 }
 
@@ -463,7 +519,7 @@ void setup() {
 
   Serial.begin(115200);
   delay(500); // C6 needs extra time for serial to stabilize
-  Serial.println("\n=== XIAO ESP32-C6 Sensor (NTC Probe) ===");
+  ulog("\n=== XIAO ESP32-C6 Sensor (NTC Probe) ===\n");
 
   pinMode(RESET_PIN, INPUT_PULLUP);
   pinMode(LED_PIN, OUTPUT);
@@ -473,12 +529,12 @@ void setup() {
 
   esp_sleep_wakeup_cause_t wakeup_reason = esp_sleep_get_wakeup_cause();
   if (wakeup_reason == ESP_SLEEP_WAKEUP_GPIO) {
-    Serial.println("Wakeup caused by button press on D0");
+    ulog("Wakeup caused by button press on D0\n");
   }
 
   // Read battery BEFORE radio init
   BatteryInfo bat = getBatteryInfo();
-  Serial.printf("Battery: %.2fV  %d%%  %s\n", bat.voltage, bat.percentage, bat.status);
+  ulog("Battery: %.2fV  %d%%  %s\n", bat.voltage, bat.percentage, bat.status);
   if (bat.percentage != 255 && bat.percentage <= CRITICAL_PCT) {
     Serial.println("Battery critical — sleeping to protect cell.");
     esp_sleep_enable_timer_wakeup((uint64_t)SLEEP_TIME * 1000000ULL);
@@ -492,9 +548,9 @@ void setup() {
   isPaired = (len == 6);
 
   if (isPaired) {
-    Serial.printf("✓ Paired to: %02X:%02X:%02X:%02X:%02X:%02X\n",
-                  hubMac[0], hubMac[1], hubMac[2],
-                  hubMac[3], hubMac[4], hubMac[5]);
+    ulog("✓ Paired to: %02X:%02X:%02X:%02X:%02X:%02X\n",
+         hubMac[0], hubMac[1], hubMac[2],
+         hubMac[3], hubMac[4], hubMac[5]);
   } else {
     Serial.println("Not paired.");
   }

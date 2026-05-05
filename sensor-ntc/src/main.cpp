@@ -29,8 +29,8 @@
 //   3. gain   = (ref2 - ref1) / (raw2 - raw1)
 //      offset = ref1 - gain * raw1
 // Single-point only: leave NTC_CAL_GAIN=1.0 and set NTC_CAL_OFFSET = ref - raw
-#define NTC_CAL_GAIN      1.570f // two-point calibration: raw=-3.1°C@actual-19.1°C, raw=25°C@actual 25°C
-#define NTC_CAL_OFFSET  -14.25f // gain=(−19.1−25)/(−3.1−25)=1.570  offset=25−1.570×25=−14.25
+#define NTC_CAL_GAIN      1.671f // two-point calibration: raw=-3.1°C@actual-19.1°C, raw=21.67°C@actual 22.3°C
+#define NTC_CAL_OFFSET  -13.92f // gain=(22.3−(−19.1))/(21.67−(−3.1))=1.671  offset=−19.1−1.671×(−3.1)=−13.92
 
 // PCB circuit (for reference):
 //   3.3V ─── SERIES_RESISTOR ─── NTC_PIN (ADC) ─── NTC probe ─── NTC_ENABLE_PIN (GND switch)

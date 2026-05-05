@@ -30,8 +30,8 @@
 //   3. gain   = (ref2 - ref1) / (raw2 - raw1)
 //      offset = ref1 - gain * raw1
 // Single-point only: leave NTC_CAL_GAIN=1.0 and set NTC_CAL_OFFSET = ref - raw
-#define NTC_CAL_GAIN      1.671f // two-point calibration: raw=-3.1°C@actual-19.1°C, raw=21.67°C@actual 22.3°C
-#define NTC_CAL_OFFSET  -13.92f // gain=(22.3−(−19.1))/(21.67−(−3.1))=1.671  offset=−19.1−1.671×(−3.1)=−13.92
+#define NTC_CAL_GAIN      1.655f // battery-mode calibration: raw=-3.25°C@actual-19.1°C, raw=21.65°C@actual 22.1°C
+#define NTC_CAL_OFFSET  -13.72f // gain=(22.1−(−19.1))/(21.65−(−3.25))=1.655  offset=−19.1−1.655×(−3.25)=−13.72
 
 // PCB circuit (for reference):
 //   3.3V ─── SERIES_RESISTOR ─── NTC_PIN (ADC) ─── NTC probe ─── NTC_ENABLE_PIN (GND switch)
@@ -63,6 +63,7 @@
 
 // --- BATTERY MONITOR ---
 #define ADC_SAMPLES      20  // Readings to average for a stable result
+#define LDO_DROPOUT_V  0.11f // HT7333-A dropout at ~20 mA; empirical: bat_v=3.295V → VCC=3.185V
 #define LOW_BATTERY_PCT  15  // "LOW" status below this %
 #define CRITICAL_PCT      5  // Sleep immediately below this % to protect the cell
 
@@ -127,6 +128,8 @@ uint8_t broadcastAddress[] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF};
 
 volatile bool tx_success  = false;
 volatile bool tx_complete = false;
+
+static float g_bat_v = 3.3f; // Set by getBatteryInfo(); used in readNTC() for VCC estimation
 
 // --- UDP LOG BUFFER ---
 static char s_udpBuf[1024];
@@ -290,7 +293,11 @@ float readNTC() {
 
   float adcMv  = sum / (float)NTC_SAMPLES;
   float adcV   = adcMv / 1000.0f;
-  float vcc    = 3.3f;
+  // HT7333-A: regulated at 3.3V when bat_v > ~3.41V; drops below that in proportion.
+  // constrain() clamps to [2.8, 3.3] — handles both regulated and dropout regions.
+  // On USB the XIAO's onboard LDO holds VCC=3.3V regardless; bat_v won't reflect this,
+  // so USB readings are ~+2°C higher than battery-calibrated values — acceptable for debug use.
+  float vcc    = constrain(g_bat_v - LDO_DROPOUT_V, 2.8f, 3.3f);
 
   if (adcV <= 0.01f || adcV >= (vcc - 0.01f)) {
     // Saturated ADC almost certainly means open or shorted probe
@@ -308,7 +315,7 @@ float readNTC() {
   float tempC    = (1.0f / steinhart) - 273.15f;
 
   tempC = tempC * NTC_CAL_GAIN + NTC_CAL_OFFSET;
-  ulog("[NTC] adc=%.0fmV  R_ntc=%.0fΩ  T=%.2f°C\n", adcMv, r_ntc, tempC);
+  ulog("[NTC] vcc=%.3fV  adc=%.0fmV  R_ntc=%.0fΩ  T=%.2f°C\n", vcc, adcMv, r_ntc, tempC);
 
   if (tempC < -55.0f || tempC > 125.0f) {
     ulog("✗ NTC temperature out of valid range\n");
@@ -393,6 +400,7 @@ BatteryInfo getBatteryInfo() {
   analogRead(BAT_ADC_PIN);
 
   float voltage = readADCVoltage();
+  g_bat_v = voltage;
   int   pct;
   if (voltage < 2.5f) {
     pct = 255;

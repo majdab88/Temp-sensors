@@ -19,7 +19,7 @@
 // Adjust these constants to match your specific NTC thermistor's datasheet.
 // Common 10kΩ probe (e.g. 10k @ 25°C, B=3950):
 #define NTC_NOMINAL     10000   // NTC resistance at reference temperature (Ω)
-#define NTC_BCOEFF       3435   // Beta coefficient of the NTC (K) — Eliwell/Carel/Dixell standard NTC 10K curve
+#define NTC_BCOEFF       3950   // Beta coefficient (K) — NTC 10K B3950 class probe
 #define NTC_T0_CELSIUS     25   // Reference temperature for NTC_NOMINAL (°C)
 #define SERIES_RESISTOR 10000   // Series resistor value (Ω) — must be 1% tolerance or better
 #define NTC_SAMPLES        20   // ADC readings to average for stable result
@@ -30,8 +30,8 @@
 //   3. gain   = (ref2 - ref1) / (raw2 - raw1)
 //      offset = ref1 - gain * raw1
 // Single-point only: leave NTC_CAL_GAIN=1.0 and set NTC_CAL_OFFSET = ref - raw
-#define NTC_CAL_GAIN      1.655f // battery-mode calibration: raw=-3.25°C@actual-19.1°C, raw=21.65°C@actual 22.1°C
-#define NTC_CAL_OFFSET  -13.72f // gain=(22.1−(−19.1))/(21.65−(−3.25))=1.655  offset=−19.1−1.655×(−3.25)=−13.72
+#define NTC_CAL_GAIN      0.933f // battery-mode 2-pt: raw=10.51°C@actual 11.1°C, raw=22.30°C@actual 22.1°C
+#define NTC_CAL_OFFSET    1.29f // gain=11.0/11.79=0.933  offset=11.1−0.933×10.51=+1.29
 
 // PCB circuit (for reference):
 //   3.3V ─── SERIES_RESISTOR ─── NTC_PIN (ADC) ─── NTC probe ─── NTC_ENABLE_PIN (GND switch)

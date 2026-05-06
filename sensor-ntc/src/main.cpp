@@ -21,7 +21,7 @@
 #define NTC_NOMINAL     10000   // NTC resistance at reference temperature (Ω)
 #define NTC_BCOEFF       3950   // Beta coefficient (K) — NTC 10K B3950 class probe
 #define NTC_T0_CELSIUS     25   // Reference temperature for NTC_NOMINAL (°C)
-#define SERIES_RESISTOR 10000   // Series resistor value (Ω) — must be 1% tolerance or better
+#define SERIES_RESISTOR  9860   // Measured actual value (Ω) — nominal 10kΩ, measured 9860Ω
 #define NTC_SAMPLES        20   // ADC readings to average for stable result
 // Two-point linear calibration: T_cal = T_raw * NTC_CAL_GAIN + NTC_CAL_OFFSET
 // How to calibrate:
@@ -30,8 +30,8 @@
 //   3. gain   = (ref2 - ref1) / (raw2 - raw1)
 //      offset = ref1 - gain * raw1
 // Single-point only: leave NTC_CAL_GAIN=1.0 and set NTC_CAL_OFFSET = ref - raw
-#define NTC_CAL_GAIN      0.933f // battery-mode 2-pt: raw=10.51°C@actual 11.1°C, raw=22.30°C@actual 22.1°C
-#define NTC_CAL_OFFSET    1.29f // gain=11.0/11.79=0.933  offset=11.1−0.933×10.51=+1.29
+#define NTC_CAL_GAIN      0.935f // battery-mode 2-pt: R_series=9860Ω; raw=10.85°C@actual 11.1°C, raw=22.61°C@actual 22.1°C
+#define NTC_CAL_OFFSET    0.95f  // gain=11.0/11.76=0.935  offset=11.1−0.935×10.85=+0.95
 
 // PCB circuit (for reference):
 //   3.3V ─── SERIES_RESISTOR ─── NTC_PIN (ADC) ─── NTC probe ─── NTC_ENABLE_PIN (GND switch)

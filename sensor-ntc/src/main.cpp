@@ -16,25 +16,27 @@
 #define NTC_ENABLE_PIN     22   // GPIO22/D4 — NTC divider GND switch; LOW enables divider, INPUT (Hi-Z) during sleep
 
 // --- NTC PROBE PARAMETERS ---
-// Adjust these constants to match your specific NTC thermistor's datasheet.
-// Common 10kΩ probe (e.g. 10k @ 25°C, B=3950):
-#define NTC_NOMINAL     10000   // NTC resistance at reference temperature (Ω)
-#define NTC_BCOEFF       3435   // Beta coefficient (K) — NTC 10K B3435 class probe
-#define NTC_T0_CELSIUS     25   // Reference temperature for NTC_NOMINAL (°C)
 #define SERIES_RESISTOR  9860   // Measured actual value (Ω) — nominal 10kΩ, measured 9860Ω
 #define NTC_SAMPLES        20   // ADC readings to average for stable result
-// Two-point linear calibration: T_cal = T_raw * NTC_CAL_GAIN + NTC_CAL_OFFSET
-// How to calibrate:
-//   1. Stabilize sensor, note raw T (serial log) and reference T at a COLD point → (raw1, ref1)
-//   2. Repeat at a HOT point (e.g. warm water vs ice water, or fridge vs room) → (raw2, ref2)
-//   3. gain   = (ref2 - ref1) / (raw2 - raw1)
-//      offset = ref1 - gain * raw1
-// Single-point only: leave NTC_CAL_GAIN=1.0 and set NTC_CAL_OFFSET = ref - raw
-//#define NTC_CAL_GAIN      1.19f // battery-mode 2-pt: R_series=9860Ω; 
-//#define NTC_CAL_OFFSET    -1.588f  // 
 
-#define NTC_CAL_GAIN      1 // battery-mode raw data is already very close to actual; no gain adjustment needed
-#define NTC_CAL_OFFSET    0  // raw data -- no offset needed
+// Full Steinhart-Hart equation: 1/T(K) = A + B·ln(R) + C·(ln(R))³
+// Default coefficients are derived from the simplified beta equation (B=3435, R0=10kΩ, T0=25°C)
+// so behaviour is identical to before until you replace them with measured values.
+//
+// To calibrate with 3 points:
+//   1. Stabilize probe at 3 reference temperatures (cold / mid / warm).
+//      The serial log already prints R_ntc — record that and the true °C at each point.
+//   2. Compute A, B, C (T in Kelvin = °C + 273.15):
+//        L1=ln(R1), L2=ln(R2), L3=ln(R3)
+//        Y1=1/(T1+273.15), Y2=1/(T2+273.15), Y3=1/(T3+273.15)
+//        g21=(Y2-Y1)/(L2-L1),  g31=(Y3-Y1)/(L3-L1)
+//        C = (g21-g31) / ((L2-L3)*(L1+L2+L3))
+//        B = g21 - C*(L2²+L1·L2+L1²)
+//        A = Y1 - L1*(B + C·L1²)
+//      Or paste the 3 (°C, Ω) pairs into any online Steinhart-Hart calculator.
+#define NTC_SH_A  6.7272e-4f   // Steinhart-Hart A (K⁻¹)
+#define NTC_SH_B  2.9113e-4f   // Steinhart-Hart B (K⁻¹)
+#define NTC_SH_C  0.0f         // Steinhart-Hart C (K⁻¹) — nonzero only after real calibration
 
 
 // PCB circuit (for reference):
@@ -313,12 +315,9 @@ float readNTC() {
   // V_adc = vcc * R_series / (R_ntc + R_series)  =>  R_ntc = R_series * (vcc - V_adc) / V_adc
   float r_ntc = SERIES_RESISTOR * (vcc - adcV) / adcV;
 
-  // Steinhart-Hart beta equation
-  float t0K      = (float)(NTC_T0_CELSIUS) + 273.15f;
-  float steinhart = log(r_ntc / (float)NTC_NOMINAL) / (float)NTC_BCOEFF + 1.0f / t0K;
-  float tempC    = (1.0f / steinhart) - 273.15f;
-
-  tempC = tempC * NTC_CAL_GAIN + NTC_CAL_OFFSET;
+  // Full Steinhart-Hart equation: 1/T(K) = A + B·ln(R) + C·(ln(R))³
+  float lnR   = log(r_ntc);
+  float tempC = 1.0f / (NTC_SH_A + NTC_SH_B * lnR + NTC_SH_C * lnR * lnR * lnR) - 273.15f;
   ulog("[NTC] vcc=%.3fV  adc=%.0fmV  R_ntc=%.0fΩ  T=%.2f°C\n", vcc, adcMv, r_ntc, tempC);
 
   if (tempC < -55.0f || tempC > 125.0f) {

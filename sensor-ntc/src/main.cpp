@@ -19,7 +19,7 @@
 // Adjust these constants to match your specific NTC thermistor's datasheet.
 // Common 10kΩ probe (e.g. 10k @ 25°C, B=3950):
 #define NTC_NOMINAL     10000   // NTC resistance at reference temperature (Ω)
-#define NTC_BCOEFF       3950   // Beta coefficient (K) — NTC 10K B3950 class probe
+#define NTC_BCOEFF       3435   // Beta coefficient (K) — NTC 10K B3435 class probe
 #define NTC_T0_CELSIUS     25   // Reference temperature for NTC_NOMINAL (°C)
 #define SERIES_RESISTOR  9860   // Measured actual value (Ω) — nominal 10kΩ, measured 9860Ω
 #define NTC_SAMPLES        20   // ADC readings to average for stable result
@@ -30,8 +30,12 @@
 //   3. gain   = (ref2 - ref1) / (raw2 - raw1)
 //      offset = ref1 - gain * raw1
 // Single-point only: leave NTC_CAL_GAIN=1.0 and set NTC_CAL_OFFSET = ref - raw
-#define NTC_CAL_GAIN      0.935f // battery-mode 2-pt: R_series=9860Ω; raw=10.85°C@actual 11.1°C, raw=22.61°C@actual 22.1°C
-#define NTC_CAL_OFFSET    0.95f  // gain=11.0/11.76=0.935  offset=11.1−0.935×10.85=+0.95
+//#define NTC_CAL_GAIN      1.19f // battery-mode 2-pt: R_series=9860Ω; 
+//#define NTC_CAL_OFFSET    -1.588f  // 
+
+#define NTC_CAL_GAIN      1 // battery-mode raw data is already very close to actual; no gain adjustment needed
+#define NTC_CAL_OFFSET    0  // raw data -- no offset needed
+
 
 // PCB circuit (for reference):
 //   3.3V ─── SERIES_RESISTOR ─── NTC_PIN (ADC) ─── NTC probe ─── NTC_ENABLE_PIN (GND switch)
@@ -271,7 +275,7 @@ float readNTC() {
   // Enable divider by driving GND switch LOW
   pinMode(NTC_ENABLE_PIN, OUTPUT);
   digitalWrite(NTC_ENABLE_PIN, LOW);
-  delay(10); // Let divider + 100 nF filter cap settle (RC ≈ 0.5 ms, 10 ms covers 20× time constants)
+  delay(60); // Let divider + 100 nF filter cap settle (RC ≈ 0.5 ms, 10 ms covers 20× time constants)
 
   analogReadResolution(12);
   analogRead(NTC_PIN);                       // Initialise ADC channel
@@ -548,6 +552,8 @@ void setup() {
     esp_sleep_enable_timer_wakeup((uint64_t)SLEEP_TIME * 1000000ULL);
     esp_deep_sleep_start();
   }
+  //read ntc before radio init since it can cause brownout at low battery levels, leading to failed reads
+  readSensor();
 
   // Load pairing
   preferences.begin("network", true);
@@ -601,7 +607,7 @@ void setup() {
 
     myData.msgType  = MSG_DATA;
     myData.battery  = (uint8_t)bat.percentage;
-    readSensor();
+    //readSensor();
 
     if (!sendDataWithRetry()) {
       Serial.println("Waiting 5s then re-scanning and retrying...");

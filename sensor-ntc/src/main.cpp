@@ -161,24 +161,28 @@ void ulog(const char *fmt, ...) {
 #endif
 }
 
-// flushLogsUDP() — connect to WiFi AP, broadcast the accumulated log, disconnect
-// Called after esp_now_deinit() while the WiFi radio is still running
+// flushLogsUDP() — connect to WiFi AP, send log to gateway IP, disconnect
+// Targets the gateway (= phone hotspot host) directly instead of broadcast;
+// broadcast packets are often filtered on mobile hotspots (AP isolation / iOS).
+// Called after esp_now_deinit() while the WiFi radio is still running.
 void flushLogsUDP() {
 #if UDP_LOG_ENABLED
   if (s_udpLen == 0) return;
   WiFi.begin(UDP_WIFI_SSID, UDP_WIFI_PASS);
   unsigned long t0 = millis();
-  while (WiFi.status() != WL_CONNECTED && millis() - t0 < 5000) delay(100);
+  while (WiFi.status() != WL_CONNECTED && millis() - t0 < 8000) delay(100);
   if (WiFi.status() != WL_CONNECTED) {
     Serial.println("[UDP] connect timeout — logs not sent");
     WiFi.disconnect();
     return;
   }
+  IPAddress target = WiFi.gatewayIP();
+  Serial.printf("[UDP] sending to %s\n", target.toString().c_str());
   WiFiUDP udp;
-  udp.beginPacket("255.255.255.255", UDP_LOG_PORT);
+  udp.beginPacket(target, UDP_LOG_PORT);
   udp.write((const uint8_t*)s_udpBuf, s_udpLen);
   udp.endPacket();
-  delay(200);
+  delay(500);
   WiFi.disconnect();
   Serial.println("[UDP] sent");
 #endif

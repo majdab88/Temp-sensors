@@ -576,7 +576,18 @@ void setup() {
     WIFI_PROTOCOL_11N | WIFI_PROTOCOL_LR);
 
   {
-    uint8_t ch = detectWiFiChannel();
+    preferences.begin("network", true);
+    uint8_t ch = (uint8_t)preferences.getUChar("channel", 0);
+    preferences.end();
+    if (ch == 0) {
+      ch = detectWiFiChannel();
+      preferences.begin("network", false);
+      preferences.putUChar("channel", ch);
+      preferences.end();
+      ulog("[CH] Scanned and cached channel %d\n", ch);
+    } else {
+      ulog("[CH] Using cached channel %d\n", ch);
+    }
     esp_wifi_set_channel(ch, WIFI_SECOND_CHAN_NONE);
   }
 
@@ -612,6 +623,9 @@ void setup() {
       Serial.println("Waiting 5s then re-scanning and retrying...");
       delay(5000);
       uint8_t ch = detectWiFiChannel();
+      preferences.begin("network", false);
+      preferences.putUChar("channel", ch);
+      preferences.end();
       esp_wifi_set_channel(ch, WIFI_SECOND_CHAN_NONE);
       sendDataWithRetry();
     }

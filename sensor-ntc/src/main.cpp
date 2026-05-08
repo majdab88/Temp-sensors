@@ -16,12 +16,12 @@
 #define NTC_ENABLE_PIN     22   // GPIO22/D4 — NTC divider GND switch; LOW enables divider, INPUT (Hi-Z) during sleep
 
 // --- NTC PROBE PARAMETERS ---
-#define SERIES_RESISTOR  9860   // Measured actual value (Ω) — nominal 10kΩ, measured 9860Ω
+#define SERIES_RESISTOR 10000   // Accurate 10kΩ resistor (measured ≈ nominal)
 #define NTC_SAMPLES        20   // ADC readings to average for stable result
 
 // Full Steinhart-Hart equation: 1/T(K) = A + B·ln(R) + C·(ln(R))³
-// Default coefficients are derived from the simplified beta equation (B=3435, R0=10kΩ, T0=25°C)
-// so behaviour is identical to before until you replace them with measured values.
+// Default coefficients are derived from the simplified beta equation (B=3950, R0=10kΩ, T0=25°C).
+// Replace with probe-measured values for best accuracy.
 //
 // To calibrate with 3 points:
 //   1. Stabilize probe at 3 reference temperatures (cold / mid / warm).
@@ -34,8 +34,8 @@
 //        B = g21 - C*(L2²+L1·L2+L1²)
 //        A = Y1 - L1*(B + C·L1²)
 //      Or paste the 3 (°C, Ω) pairs into any online Steinhart-Hart calculator.
-#define NTC_SH_A  6.7272e-4f   // Steinhart-Hart A (K⁻¹)
-#define NTC_SH_B  2.9113e-4f   // Steinhart-Hart B (K⁻¹)
+#define NTC_SH_A  1.0223e-3f   // Steinhart-Hart A (K⁻¹) — beta-equivalent for B3950, R0=10kΩ, T0=25°C
+#define NTC_SH_B  2.5316e-4f   // Steinhart-Hart B (K⁻¹)
 #define NTC_SH_C  0.0f         // Steinhart-Hart C (K⁻¹) — nonzero only after real calibration
 
 

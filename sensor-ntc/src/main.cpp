@@ -34,9 +34,9 @@
 //        B = g21 - C*(L2²+L1·L2+L1²)
 //        A = Y1 - L1*(B + C·L1²)
 //      Or paste the 3 (°C, Ω) pairs into any online Steinhart-Hart calculator.
-#define NTC_SH_A  1.0223e-3f   // Steinhart-Hart A (K⁻¹) — beta-equivalent for B3950, R0=10kΩ, T0=25°C
-#define NTC_SH_B  2.5316e-4f   // Steinhart-Hart B (K⁻¹)
-#define NTC_SH_C  0.0f         // Steinhart-Hart C (K⁻¹) — nonzero only after real calibration
+#define NTC_SH_A  1.590e-3f    // Steinhart-Hart A (K⁻¹) — fitted from 3 measured points:
+#define NTC_SH_B  1.707e-4f    // Steinhart-Hart B (K⁻¹) — (-18.2°C/94235Ω, 3.8°C/28336Ω, 23°C/10794Ω)
+#define NTC_SH_C  2.507e-7f    // Steinhart-Hart C (K⁻¹) — SHT40 used as reference thermometer
 
 
 // PCB circuit (for reference):

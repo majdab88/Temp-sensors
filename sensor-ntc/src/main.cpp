@@ -68,7 +68,13 @@
 
 // --- BATTERY MONITOR ---
 #define ADC_SAMPLES      20  // Readings to average for a stable result
-#define LDO_DROPOUT_V  0.11f // HT7333-A dropout at ~20 mA; empirical: bat_v=3.295V → VCC=3.185V
+// LDO_DROPOUT_V is subtracted from bat_v to estimate VCC for the NTC R_ntc calc.
+// Set to 0 because the LDO has been removed — battery feeds the ESP32 directly,
+// so VCC = bat_v exactly. (When the LDO was present and in dropout, this was
+// 0.11 V — but during the S-H calibration the LDO was actually regulating at
+// 3.3 V, so the calibration ended up baked-in to a "VCC ≈ bat_v" assumption,
+// which lines up with the no-LDO topology too.)
+#define LDO_DROPOUT_V  0.0f
 #define LOW_BATTERY_PCT  15  // "LOW" status below this %
 #define CRITICAL_PCT      5  // Sleep immediately below this % to protect the cell
 
@@ -312,11 +318,12 @@ float readNTC() {
 
   float adcMv  = sum / (float)NTC_SAMPLES;
   float adcV   = adcMv / 1000.0f;
-  // HT7333-A: regulated at 3.3V when bat_v > ~3.41V; drops below that in proportion.
-  // constrain() clamps to [2.8, 3.3] — handles both regulated and dropout regions.
-  // On USB the XIAO's onboard LDO holds VCC=3.3V regardless; bat_v won't reflect this,
-  // so USB readings are ~+2°C higher than battery-calibrated values — acceptable for debug use.
-  float vcc    = constrain(g_bat_v - LDO_DROPOUT_V, 2.8f, 3.3f);
+  // No LDO between battery and ESP32 → VCC = bat_v exactly. The constrain() is
+  // a sanity clamp to the ESP32-C6 valid supply range (≈ 2.5 V brownout up to
+  // 3.6 V max recommended). On USB power, the XIAO's onboard LDO holds VCC at
+  // 3.3 V; bat_v won't reflect that, so USB-only debugging will read warmer
+  // than the calibration — that's fine for bench work.
+  float vcc    = constrain(g_bat_v - LDO_DROPOUT_V, 2.5f, 3.6f);
 
   if (adcV <= 0.01f || adcV >= (vcc - 0.01f)) {
     // Saturated ADC almost certainly means open or shorted probe
@@ -636,7 +643,7 @@ void setup() {
     // and pulled the input cap (and battery) down. Idle here so the LDO refills
     // both caps from the battery before the 200 mA TX burst hits. ~150 ms is
     // ~50× the 1000 µF input-cap RC time constant — fully recharges either cap.
-    delay(150);
+    delay(500);
 
     if (!sendDataWithRetry()) {
       Serial.println("Waiting 5s then re-scanning and retrying...");

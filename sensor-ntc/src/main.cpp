@@ -552,6 +552,20 @@ void setup() {
   delay(500); // C6 needs extra time for serial to stabilize
   ulog("\n=== XIAO ESP32-C6 Sensor (NTC Probe) ===\n");
 
+  // If the previous boot ended in a brownout (radio TX pulled VCC below the
+  // ESP32-C6's brownout threshold), do NOT try to TX again immediately. That
+  // creates a tight boot→TX→brownout→reset loop that drains the battery in
+  // hours instead of months. Just sleep the normal interval and let the
+  // battery rest / warm up before trying again.
+  esp_reset_reason_t reset_reason = esp_reset_reason();
+  ulog("Reset reason: %d\n", (int)reset_reason);
+  if (reset_reason == ESP_RST_BROWNOUT) {
+    ulog("⚠ Brownout on previous boot — skipping wake cycle\n");
+    esp_sleep_enable_timer_wakeup((uint64_t)SLEEP_TIME * 1000000ULL);
+    esp_deep_sleep_enable_gpio_wakeup(1ULL << RESET_PIN, ESP_GPIO_WAKEUP_GPIO_LOW);
+    esp_deep_sleep_start();
+  }
+
   pinMode(RESET_PIN, INPUT_PULLUP);
   pinMode(LED_PIN, OUTPUT);
   digitalWrite(LED_PIN, LOW);

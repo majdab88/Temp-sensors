@@ -22,6 +22,9 @@ void publishSensorData(int idx);
 void applySyncFromCloud(const String& json);
 void removeSensorByMac(const uint8_t* mac);
 void sanitizeName(char* name, size_t maxLen);
+struct log_message;
+void handleLogChunk(const uint8_t* mac, const log_message* msg);
+int  findSensor(const uint8_t* mac);
 
 // --- XIAO ESP32-C6 PIN DEFINITIONS ---
 #define TRIGGER_PIN 9   // BOOT button
@@ -30,6 +33,11 @@ void sanitizeName(char* name, size_t maxLen);
 // --- MESSAGE TYPES ---
 #define MSG_PAIRING 1
 #define MSG_DATA    2
+#define MSG_LOG     3   // Sensor → hub remote log (chunked text)
+
+// --- REMOTE LOG STORAGE ---
+#define LOG_BUF_SIZE     1024  // bytes of log retained per sensor (latest only)
+#define LOG_CHUNK_DATA    240  // payload per ESP-NOW packet (must match sensor)
 
 // --- ESP-NOW ENCRYPTION ---
 // IMPORTANT: Change both keys to your own secret values before deploying.
@@ -71,6 +79,17 @@ typedef struct struct_message {
   uint8_t battery;  // 0–100 %; 255 = read error
 } struct_message;
 
+// --- LOG MESSAGE STRUCTURE (must match sensor) ---
+// Sensor-ntc sends its wake-cycle serial log to the hub in 240-byte chunks
+// over the existing encrypted ESP-NOW peer.
+typedef struct log_message {
+  uint8_t msgType;            // MSG_LOG = 3
+  uint8_t seq;                // chunk index (0-based)
+  uint8_t total;              // total chunks in this log
+  uint8_t len;                // valid bytes in data[] for this chunk
+  char    data[LOG_CHUNK_DATA];
+} log_message;
+
 struct_message incomingData;
 volatile int   incomingRSSI = 0;
 
@@ -87,6 +106,15 @@ struct SensorData {
   bool          active;
   char          name[20];
   uint8_t       battery;
+
+  // Latest remote log received from this sensor (filled by handleLogChunk).
+  // logExpectedTotal/logChunksRcvd track the in-progress assembly so we know
+  // when the log is complete; logUpdated is the millis() of the last full assembly.
+  char          log[LOG_BUF_SIZE];
+  uint16_t      logLen;             // bytes filled in log[]
+  uint8_t       logExpectedTotal;   // total chunks the sensor announced
+  uint8_t       logChunksRcvd;      // chunks received so far (resets at seq 0)
+  unsigned long logUpdated;         // millis() of last assembled log
 };
 
 SensorData sensors[MAX_SENSORS];
@@ -680,13 +708,18 @@ int addSensor(const uint8_t* mac) {
     return -1;
   }
   memcpy(sensors[sensorCount].mac, mac, 6);
-  sensors[sensorCount].active       = true;
-  sensors[sensorCount].temp         = 0;
-  sensors[sensorCount].hum          = 0;
-  sensors[sensorCount].rssi         = 0;
-  sensors[sensorCount].battery      = 0;
-  sensors[sensorCount].lastUpdate   = millis();
-  sensors[sensorCount].lastRxMillis = 0;
+  sensors[sensorCount].active           = true;
+  sensors[sensorCount].temp             = 0;
+  sensors[sensorCount].hum              = 0;
+  sensors[sensorCount].rssi             = 0;
+  sensors[sensorCount].battery          = 0;
+  sensors[sensorCount].lastUpdate       = millis();
+  sensors[sensorCount].lastRxMillis     = 0;
+  sensors[sensorCount].log[0]           = '\0';
+  sensors[sensorCount].logLen           = 0;
+  sensors[sensorCount].logExpectedTotal = 0;
+  sensors[sensorCount].logChunksRcvd    = 0;
+  sensors[sensorCount].logUpdated       = 0;
   sprintf(sensors[sensorCount].name, "Sensor-%02X%02X", mac[4], mac[5]);
   sensorCount++;
   Serial.printf("Sensor added. Total: %d\n", sensorCount);
@@ -741,12 +774,17 @@ void loadPairedSensors() {
     if (prefs.getBytes(key, mac, 6) != 6) continue;
 
     memcpy(sensors[sensorCount].mac, mac, 6);
-    sensors[sensorCount].active     = false;
-    sensors[sensorCount].temp       = 0;
-    sensors[sensorCount].hum        = 0;
-    sensors[sensorCount].rssi       = 0;
-    sensors[sensorCount].battery    = 0;
-    sensors[sensorCount].lastUpdate = 0;
+    sensors[sensorCount].active           = false;
+    sensors[sensorCount].temp             = 0;
+    sensors[sensorCount].hum              = 0;
+    sensors[sensorCount].rssi             = 0;
+    sensors[sensorCount].battery          = 0;
+    sensors[sensorCount].lastUpdate       = 0;
+    sensors[sensorCount].log[0]           = '\0';
+    sensors[sensorCount].logLen           = 0;
+    sensors[sensorCount].logExpectedTotal = 0;
+    sensors[sensorCount].logChunksRcvd    = 0;
+    sensors[sensorCount].logUpdated       = 0;
     sprintf(sensors[sensorCount].name, "Sensor-%02X%02X", mac[4], mac[5]);
     // Load saved name from NVS (keyed by MAC bytes 2–5)
     char nameKey[10];
@@ -981,12 +1019,17 @@ void addSensorFromCloud(const uint8_t* mac, const char* name) {
     return;
   }
   memcpy(sensors[sensorCount].mac, mac, 6);
-  sensors[sensorCount].active     = false;
-  sensors[sensorCount].temp       = 0;
-  sensors[sensorCount].hum        = 0;
-  sensors[sensorCount].rssi       = 0;
-  sensors[sensorCount].battery    = 0;
-  sensors[sensorCount].lastUpdate = 0;
+  sensors[sensorCount].active           = false;
+  sensors[sensorCount].temp             = 0;
+  sensors[sensorCount].hum              = 0;
+  sensors[sensorCount].rssi             = 0;
+  sensors[sensorCount].battery          = 0;
+  sensors[sensorCount].lastUpdate       = 0;
+  sensors[sensorCount].log[0]           = '\0';
+  sensors[sensorCount].logLen           = 0;
+  sensors[sensorCount].logExpectedTotal = 0;
+  sensors[sensorCount].logChunksRcvd    = 0;
+  sensors[sensorCount].logUpdated       = 0;
 
   if (name && strlen(name) > 0) {
     strncpy(sensors[sensorCount].name, name, 19);
@@ -1656,12 +1699,127 @@ void handleJSON() {
   server.send(200, "application/json", json);
 }
 
+// Escape characters that would break out of <pre> HTML context.
+static String htmlEscape(const char* src, size_t len) {
+  String out; out.reserve(len + 16);
+  for (size_t i = 0; i < len; i++) {
+    char c = src[i];
+    switch (c) {
+      case '<':  out += "&lt;";   break;
+      case '>':  out += "&gt;";   break;
+      case '&':  out += "&amp;";  break;
+      default:   out += c;        break;
+    }
+  }
+  return out;
+}
+
+// /logs — minimal page showing the latest wake-cycle log per sensor.
+// Auto-refreshes every 30 s. One <pre> block per sensor, newest at top of section.
+void handleLogs() {
+  String html;
+  html.reserve(4096);
+  html += F("<!DOCTYPE html><html><head><meta charset='UTF-8'>"
+           "<meta name='viewport' content='width=device-width, initial-scale=1.0'>"
+           "<meta http-equiv='refresh' content='30'>"
+           "<title>Sensor Logs</title><style>"
+           "body{font-family:Arial,sans-serif;margin:20px;background:#f0f0f0;color:#2c3e50;}"
+           "h1{color:#333;}h2{margin-top:30px;color:#2c3e50;font-size:1.1em;}"
+           ".meta{font-size:0.85em;color:#7f8c8d;font-family:monospace;margin-bottom:6px;}"
+           "pre{background:#1e1e1e;color:#d4d4d4;padding:14px;border-radius:6px;"
+           "white-space:pre-wrap;word-break:break-word;font-size:0.85em;line-height:1.4;"
+           "max-height:400px;overflow:auto;}"
+           ".empty{color:#7f8c8d;font-style:italic;padding:14px;background:#fff;border-radius:6px;}"
+           ".back{display:inline-block;margin-bottom:12px;color:#3498db;text-decoration:none;}"
+           "</style></head><body>"
+           "<a class='back' href='/'>← Dashboard</a>"
+           "<h1>Sensor Logs</h1>"
+           "<p style='color:#7f8c8d;font-size:0.9em;'>Latest wake-cycle log per sensor. Auto-refreshes every 30 s.</p>");
+
+  if (sensorCount == 0) {
+    html += F("<p class='empty'>No paired sensors.</p>");
+  } else {
+    for (int i = 0; i < sensorCount; i++) {
+      const SensorData& s = sensors[i];
+      char macStr[18];
+      snprintf(macStr, sizeof(macStr), "%02X:%02X:%02X:%02X:%02X:%02X",
+               s.mac[0], s.mac[1], s.mac[2], s.mac[3], s.mac[4], s.mac[5]);
+      html += "<h2>" + String(s.name) + "</h2>";
+      html += "<div class='meta'>" + String(macStr);
+      if (s.logUpdated > 0) {
+        unsigned long ageSec = (millis() - s.logUpdated) / 1000;
+        html += " &nbsp;·&nbsp; updated " + String(ageSec) + " s ago";
+        if (s.logChunksRcvd != s.logExpectedTotal) {
+          html += " &nbsp;·&nbsp; <span style='color:#e67e22;'>partial ("
+               + String(s.logChunksRcvd) + "/" + String(s.logExpectedTotal) + " chunks)</span>";
+        }
+      }
+      html += "</div>";
+      if (s.logLen == 0) {
+        html += F("<div class='empty'>No log received yet.</div>");
+      } else {
+        html += "<pre>" + htmlEscape(s.log, s.logLen) + "</pre>";
+      }
+    }
+  }
+
+  html += F("</body></html>");
+  server.send(200, "text/html", html);
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
-// ESP-NOW CALLBACK (unchanged)
+// REMOTE LOG ASSEMBLY
+// ─────────────────────────────────────────────────────────────────────────────
+
+// Reassemble chunked MSG_LOG packets from a sensor into its SensorData.log buffer.
+// seq=0 starts a fresh log; subsequent in-order chunks append. A skipped chunk
+// (seq jumps) is left as a gap — we still keep what arrived. Unknown sensors
+// (not paired) are ignored.
+void handleLogChunk(const uint8_t* mac, const log_message* msg) {
+  int idx = findSensor(mac);
+  if (idx < 0) return;  // log from a sensor we haven't paired with — drop
+  SensorData& s = sensors[idx];
+
+  if (msg->seq == 0) {
+    s.logLen           = 0;
+    s.logExpectedTotal = msg->total;
+    s.logChunksRcvd    = 0;
+    s.log[0]           = '\0';
+  }
+
+  int chunkLen = msg->len;
+  if (chunkLen > LOG_CHUNK_DATA) chunkLen = LOG_CHUNK_DATA;
+  int room = (int)sizeof(s.log) - 1 - (int)s.logLen;
+  if (chunkLen > room) chunkLen = room;
+  if (chunkLen > 0) {
+    memcpy(s.log + s.logLen, msg->data, chunkLen);
+    s.logLen += chunkLen;
+    s.log[s.logLen] = '\0';
+  }
+  s.logChunksRcvd++;
+
+  if (msg->seq + 1 == msg->total) {
+    s.logUpdated = millis();
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// ESP-NOW CALLBACK
 // ─────────────────────────────────────────────────────────────────────────────
 
 void OnDataRecv(const esp_now_recv_info_t* esp_now_info,
                 const uint8_t* incomingDataBytes, int len) {
+  if (len < 1) return;
+  uint8_t msgType = incomingDataBytes[0];
+
+  // MSG_LOG packets are larger than struct_message — dispatch before memcpy.
+  if (msgType == MSG_LOG) {
+    if (len < (int)sizeof(log_message)) return;
+    handleLogChunk(esp_now_info->src_addr, (const log_message*)incomingDataBytes);
+    return;
+  }
+
+  if (len < (int)sizeof(incomingData)) return;
   memcpy(&incomingData, incomingDataBytes, sizeof(incomingData));
   incomingRSSI = esp_now_info->rx_ctrl->rssi;
 
@@ -1870,6 +2028,7 @@ void setup() {
   // ── Web server ───────────────────────────────────────────────────────────
   // Start before ESP-NOW so the dashboard is available even if ESP-NOW fails.
   server.on("/", handleRoot);
+  server.on("/logs", handleLogs);
   server.on("/api/sensors", HTTP_GET,    handleJSON);
   server.on("/api/sensors", HTTP_PUT,    handleRenameSensor);
   server.on("/api/sensors", HTTP_DELETE, handleRemoveSensor);

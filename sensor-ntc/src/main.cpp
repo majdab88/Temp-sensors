@@ -632,6 +632,12 @@ void setup() {
     myData.battery  = (uint8_t)bat.percentage;
     //readSensor();
 
+    // Settle window before the TX burst: WiFi scan just drew ~100 mA for ~1.5 s
+    // and pulled the input cap (and battery) down. Idle here so the LDO refills
+    // both caps from the battery before the 200 mA TX burst hits. ~150 ms is
+    // ~50× the 1000 µF input-cap RC time constant — fully recharges either cap.
+    delay(150);
+
     if (!sendDataWithRetry()) {
       Serial.println("Waiting 5s then re-scanning and retrying...");
       delay(5000);

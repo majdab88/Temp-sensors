@@ -5,7 +5,6 @@
 #include <Preferences.h>
 #include <esp_wifi.h>
 #include <esp_sleep.h>   // Explicit include needed on C6
-#include <WiFiUdp.h>
 
 // --- XIAO ESP32-C6 PIN DEFINITIONS ---
 #define LED_PIN            15   // Built-in LED on XIAO ESP32-C6
@@ -60,12 +59,12 @@
 #define HUB_AP_SSID   "TempHub-AP"  // hub's hidden AP — always on the ESP-NOW channel
 #define FALLBACK_CHANNEL 1        // used when neither hub AP nor any router is visible
 
-// --- UDP LOGGING ---
-// Set UDP_LOG_ENABLED to 0 before long-term deployment (saves ~3 s per wake cycle)
-#define UDP_LOG_ENABLED  1
-#define UDP_LOG_PORT     4444
-#define UDP_WIFI_SSID    "Majd phone"   // <-- your WiFi AP SSID
-#define UDP_WIFI_PASS    "Majd1234"   // <-- your WiFi AP password
+// --- REMOTE LOG (over ESP-NOW to hub) ---
+// Sensor sends its log buffer to the hub via the existing encrypted ESP-NOW peer.
+// The hub stores the latest log per sensor and exposes it at http://<hub>/logs.
+// Costs ~50 ms per wake — orders of magnitude cheaper than connecting to a WiFi AP.
+#define LOG_BUF_SIZE     1024
+#define LOG_CHUNK_DATA    240   // bytes of log payload per ESP-NOW packet (max 250)
 
 // --- BATTERY MONITOR ---
 #define ADC_SAMPLES      20  // Readings to average for a stable result
@@ -76,6 +75,7 @@
 // --- MESSAGE TYPES ---
 #define MSG_PAIRING 1
 #define MSG_DATA    2
+#define MSG_LOG     3
 
 // --- ESP-NOW ENCRYPTION ---
 // IMPORTANT: These keys must be identical on all devices (hub + all sensors)
@@ -123,6 +123,18 @@ typedef struct struct_message {
   uint8_t battery;   // 0–100 %; 255 = read error
 } struct_message;
 
+// --- LOG MESSAGE STRUCTURE ---
+// Sent over the same encrypted ESP-NOW peer as the data message.
+// Chunked because ESP-NOW max payload is 250 bytes; one wake cycle's log
+// is typically a few hundred bytes — usually fits in 1–2 chunks.
+typedef struct log_message {
+  uint8_t msgType;            // MSG_LOG = 3
+  uint8_t seq;                // chunk index (0-based)
+  uint8_t total;              // total chunks in this log
+  uint8_t len;                // valid bytes in data[] for this chunk
+  char    data[LOG_CHUNK_DATA];
+} log_message;
+
 // --- GLOBALS ---
 Preferences preferences;
 esp_now_peer_info_t peerInfo;
@@ -137,11 +149,12 @@ volatile bool tx_complete = false;
 
 static float g_bat_v = 3.3f; // Set by getBatteryInfo(); used in readNTC() for VCC estimation
 
-// --- UDP LOG BUFFER ---
-static char s_udpBuf[1024];
-static int  s_udpLen = 0;
+// --- LOG BUFFER ---
+static char s_logBuf[LOG_BUF_SIZE];
+static int  s_logLen = 0;
 
-// ulog() — drop-in for Serial.printf; also appends to UDP buffer when enabled
+// ulog() — drop-in for Serial.printf; also appends to the in-memory log buffer
+// that's sent to the hub over ESP-NOW just before deep sleep.
 void ulog(const char *fmt, ...) {
   char tmp[256];
   va_list ap;
@@ -149,43 +162,39 @@ void ulog(const char *fmt, ...) {
   vsnprintf(tmp, sizeof(tmp), fmt, ap);
   va_end(ap);
   Serial.print(tmp);
-#if UDP_LOG_ENABLED
-  int rem = (int)sizeof(s_udpBuf) - s_udpLen - 1;
+  int rem = (int)sizeof(s_logBuf) - s_logLen - 1;
   if (rem > 0) {
     int n = (int)strlen(tmp);
     if (n > rem) n = rem;
-    memcpy(s_udpBuf + s_udpLen, tmp, n);
-    s_udpLen += n;
-    s_udpBuf[s_udpLen] = '\0';
+    memcpy(s_logBuf + s_logLen, tmp, n);
+    s_logLen += n;
+    s_logBuf[s_logLen] = '\0';
   }
-#endif
 }
 
-// flushLogsUDP() — connect to WiFi AP, send log to gateway IP, disconnect
-// Targets the gateway (= phone hotspot host) directly instead of broadcast;
-// broadcast packets are often filtered on mobile hotspots (AP isolation / iOS).
-// Called after esp_now_deinit() while the WiFi radio is still running.
-void flushLogsUDP() {
-#if UDP_LOG_ENABLED
-  if (s_udpLen == 0) return;
-  WiFi.begin(UDP_WIFI_SSID, UDP_WIFI_PASS);
-  unsigned long t0 = millis();
-  while (WiFi.status() != WL_CONNECTED && millis() - t0 < 8000) delay(100);
-  if (WiFi.status() != WL_CONNECTED) {
-    Serial.println("[UDP] connect timeout — logs not sent");
-    WiFi.disconnect();
-    return;
+// sendLogToHub() — chunk the accumulated log buffer and ship it over ESP-NOW.
+// Fire-and-forget per chunk: log delivery is best-effort by design (a missing
+// chunk just leaves a gap in the hub's view; we don't retry to keep the wake
+// cycle short and the energy budget tight).
+void sendLogToHub() {
+  if (!isPaired || s_logLen == 0) return;
+  int total = (s_logLen + LOG_CHUNK_DATA - 1) / LOG_CHUNK_DATA;
+  if (total > 255) total = 255;  // seq/total are uint8_t
+
+  log_message msg;
+  msg.msgType = MSG_LOG;
+  msg.total   = (uint8_t)total;
+
+  for (int i = 0; i < total; i++) {
+    int offset    = i * LOG_CHUNK_DATA;
+    int chunk_len = s_logLen - offset;
+    if (chunk_len > LOG_CHUNK_DATA) chunk_len = LOG_CHUNK_DATA;
+    msg.seq = (uint8_t)i;
+    msg.len = (uint8_t)chunk_len;
+    memcpy(msg.data, s_logBuf + offset, chunk_len);
+    esp_now_send(hubMac, (uint8_t*)&msg, sizeof(msg));
+    delay(40);  // pacing — let the previous packet leave the radio queue
   }
-  IPAddress target = WiFi.gatewayIP();
-  Serial.printf("[UDP] sending to %s\n", target.toString().c_str());
-  WiFiUDP udp;
-  udp.beginPacket(target, UDP_LOG_PORT);
-  udp.write((const uint8_t*)s_udpBuf, s_udpLen);
-  udp.endPacket();
-  delay(500);
-  WiFi.disconnect();
-  Serial.println("[UDP] sent");
-#endif
 }
 
 // --- SAFE DEEP SLEEP ---
@@ -195,10 +204,10 @@ void goToSleep(int seconds) {
   Serial.printf("Sleeping for %d seconds...\n\n", seconds);
   Serial.flush();         // Ensure serial output completes
 
-  esp_now_deinit();       // Step 1: Deinit ESP-NOW
-  flushLogsUDP();         // Step 2: Connect AP → broadcast log → disconnect
-  esp_wifi_stop();        // Step 3: Stop WiFi radio
-  delay(100);             // Step 3: Allow shutdown to settle
+  sendLogToHub();         // Ship the wake-cycle log to the hub via ESP-NOW
+  esp_now_deinit();       // Then deinit ESP-NOW
+  esp_wifi_stop();        // Stop WiFi radio
+  delay(100);             // Allow shutdown to settle
 
   esp_sleep_enable_timer_wakeup((uint64_t)seconds * 1000000ULL);
   // D0 (GPIO0) is an LP GPIO — supports deep sleep GPIO wakeup.

@@ -33,9 +33,10 @@
 //        B = g21 - C*(L2²+L1·L2+L1²)
 //        A = Y1 - L1*(B + C·L1²)
 //      Or paste the 3 (°C, Ω) pairs into any online Steinhart-Hart calculator.
-#define NTC_SH_A  1.590e-3f    // Steinhart-Hart A (K⁻¹) — fitted from 3 measured points:
-#define NTC_SH_B  1.707e-4f    // Steinhart-Hart B (K⁻¹) — (-18.2°C/94235Ω, 3.8°C/28336Ω, 23°C/10794Ω)
-#define NTC_SH_C  2.507e-7f    // Steinhart-Hart C (K⁻¹) — SHT40 used as reference thermometer
+#define NTC_SH_A  -8.96e-4f    // Steinhart-Hart A (K⁻¹) — refit for cold-board operation:
+#define NTC_SH_B   5.148e-4f   // Steinhart-Hart B (K⁻¹) — (-18.2°C/81911Ω, 0.6°C/30287Ω, 21.8°C/13003Ω)
+#define NTC_SH_C  -6.95e-7f    // Steinhart-Hart C (K⁻¹) — SHT40 reference, board cold + LDO removed
+                               // (negative A,C are valid: empirical fit, compensates cold-board ADC drift)
 
 
 // PCB circuit (for reference):

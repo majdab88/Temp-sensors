@@ -33,9 +33,10 @@
 //        B = g21 - C*(L2²+L1·L2+L1²)
 //        A = Y1 - L1*(B + C·L1²)
 //      Or paste the 3 (°C, Ω) pairs into any online Steinhart-Hart calculator.
-#define NTC_SH_A  3.22e-4f     // Steinhart-Hart A (K⁻¹) — refit with consistent points:
-#define NTC_SH_B  3.455e-4f    // Steinhart-Hart B (K⁻¹) — (-18.2°C/81911Ω, 0.6°C/30287Ω, 25.3°C/10457Ω)
-#define NTC_SH_C  -2.13e-7f    // Steinhart-Hart C (K⁻¹) — SHT40 reference, no LDO, cold-board operation
+#define NTC_SH_A  2.535e-3f    // Steinhart-Hart A (K⁻¹) — cold-range fit (deployment range only):
+#define NTC_SH_B  3.01e-5f     // Steinhart-Hart B (K⁻¹) — (-18.2°C/81911Ω, -7.2°C/47214Ω, +4°C/26811Ω)
+#define NTC_SH_C  7.23e-7f     // Steinhart-Hart C (K⁻¹) — SHT40 reference, cold-board operation
+                               // All 3 anchors inside fridge/freezer range → tight interpolation in deployment
 
 
 // PCB circuit (for reference):

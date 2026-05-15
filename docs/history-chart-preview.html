@@ -1,0 +1,395 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<title>History chart — options preview</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<style>
+  :root {
+    --bg: #f8fafc;
+    --card: #ffffff;
+    --text-1: #0f172a;
+    --text-2: #475569;
+    --text-3: #94a3b8;
+    --border: #e2e8f0;
+    --accent: #2563eb;
+  }
+  * { box-sizing: border-box; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    background: var(--bg);
+    color: var(--text-1);
+    margin: 0;
+    padding: 24px;
+  }
+  h1 { margin: 0 0 4px; font-size: 22px; }
+  .sub { color: var(--text-2); margin-bottom: 24px; font-size: 14px; }
+  .grid {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 20px;
+    max-width: 920px;
+    margin: 0 auto;
+  }
+  .card {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 20px;
+    box-shadow: 0 1px 2px rgba(0,0,0,.04);
+  }
+  .card h2 {
+    font-size: 15px;
+    margin: 0 0 4px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .pill {
+    font-size: 11px;
+    font-weight: 600;
+    padding: 2px 8px;
+    border-radius: 999px;
+    background: #eff6ff;
+    color: var(--accent);
+  }
+  .pill.bad { background: #fef2f2; color: #b91c1c; }
+  .pill.good { background: #ecfdf5; color: #047857; }
+  .desc { font-size: 13px; color: var(--text-2); margin: 0 0 14px; }
+  .chart-box { position: relative; height: 260px; }
+  .reading-note { font-size: 11px; color: var(--text-3); margin-top: 6px; }
+  .controls { display: flex; gap: 8px; margin-bottom: 12px; }
+  button.toggle {
+    border: 1px solid var(--border);
+    background: #fff;
+    color: var(--text-2);
+    padding: 4px 10px;
+    border-radius: 6px;
+    font-size: 12px;
+    cursor: pointer;
+  }
+  button.toggle.active { background: var(--accent); color: #fff; border-color: var(--accent); }
+</style>
+</head>
+<body>
+
+<h1>History chart — visual options</h1>
+<p class="sub">Same synthetic 24 h freezer data (~56 readings, mean −18 °C, ±1.5 °C compressor cycling). Compare how it feels to read.</p>
+
+<div class="grid">
+
+  <div class="card">
+    <h2>Current <span class="pill bad">freaks users out</span></h2>
+    <p class="desc">Chart.js auto-scales Y to data → small wiggles fill the whole chart height.</p>
+    <div class="chart-box"><canvas id="c0"></canvas></div>
+    <p class="reading-note">Y-axis: auto · raw points · no smoothing</p>
+  </div>
+
+  <div class="card">
+    <h2>Option 1 — Padded Y-axis <span class="pill good">recommended, ~5 lines</span></h2>
+    <p class="desc">Force a minimum 10 °C visible window centred on the data; round to whole degrees. Same data, calm presentation.</p>
+    <div class="chart-box"><canvas id="c1"></canvas></div>
+    <p class="reading-note">Y-axis: min(data)−2 → max(data)+2, expanded to ≥10 °C span</p>
+  </div>
+
+  <div class="card">
+    <h2>Option 2 — Rolling average overlay</h2>
+    <p class="desc">Raw points faded into the background; bold line shows the 5-point moving average. Trend is obvious; noise is still there if you look.</p>
+    <div class="chart-box"><canvas id="c2"></canvas></div>
+    <p class="reading-note">Raw: light · Smoothed: bold · Y-axis still padded</p>
+  </div>
+
+  <div class="card">
+    <h2>Option 3 — Min/max band + average</h2>
+    <p class="desc">For 7 d / 30 d views: aggregate to hourly buckets, shade the min-max envelope, plot the average. Reads as "stays between −19 and −17" at a glance.</p>
+    <div class="chart-box"><canvas id="c3"></canvas></div>
+    <p class="reading-note">Hourly buckets · band = min..max · line = avg</p>
+  </div>
+
+  <div class="card">
+    <h2>Option 1 + 2 combined <span class="pill">my preferred default</span></h2>
+    <p class="desc">Padded axis with a "Smooth" toggle. Default on; users can flip to raw if they want every dot.</p>
+    <div class="controls">
+      <button class="toggle active" id="smoothOn">Smooth</button>
+      <button class="toggle" id="smoothOff">Raw</button>
+    </div>
+    <div class="chart-box"><canvas id="c4"></canvas></div>
+  </div>
+
+</div>
+
+<script>
+// ---- Synthetic data matching the screenshot ----
+const N = 56;
+const startMs = Date.UTC(2026, 4, 15, 3, 0, 0); // 15 May 03:00 UTC
+const stepMs  = 25 * 60 * 1000; // ~25 min
+
+const labels = [];
+const temps  = [];
+let seed = 42;
+function rand() { seed = (seed * 9301 + 49297) % 233280; return seed / 233280; }
+
+for (let i = 0; i < N; i++) {
+  const t = new Date(startMs + i * stepMs);
+  labels.push(t.toLocaleString(undefined, {
+    month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit',
+  }));
+  // freezer compressor cycle: -18 ± 1.5 with some noise
+  const base = -18 + Math.sin(i / 2.1) * 1.2 + Math.sin(i / 0.9) * 0.6;
+  const noise = (rand() - 0.5) * 0.6;
+  temps.push(+(base + noise).toFixed(2));
+}
+
+// ---- Helpers ----
+function rollingAvg(arr, win) {
+  const half = Math.floor(win / 2);
+  return arr.map((_, i) => {
+    let s = 0, c = 0;
+    for (let k = i - half; k <= i + half; k++) {
+      if (k >= 0 && k < arr.length) { s += arr[k]; c++; }
+    }
+    return +(s / c).toFixed(2);
+  });
+}
+
+function paddedRange(values, minSpan = 10, pad = 2) {
+  const lo = Math.min(...values);
+  const hi = Math.max(...values);
+  let min = Math.floor(lo - pad);
+  let max = Math.ceil(hi + pad);
+  const span = max - min;
+  if (span < minSpan) {
+    const extra = (minSpan - span) / 2;
+    min = Math.floor(min - extra);
+    max = Math.ceil(max + extra);
+  }
+  return { min, max };
+}
+
+function hourlyBuckets(timestampsMs, values, stepMs) {
+  const buckets = new Map();
+  values.forEach((v, i) => {
+    const t = startMs + i * stepMs;
+    const hourKey = Math.floor(t / (60 * 60 * 1000));
+    if (!buckets.has(hourKey)) buckets.set(hourKey, []);
+    buckets.get(hourKey).push(v);
+  });
+  const keys = [...buckets.keys()].sort((a, b) => a - b);
+  return keys.map(k => {
+    const vs = buckets.get(k);
+    return {
+      label: new Date(k * 3600 * 1000).toLocaleString(undefined, {
+        month: 'short', day: 'numeric', hour: '2-digit',
+      }),
+      min: Math.min(...vs),
+      max: Math.max(...vs),
+      avg: vs.reduce((a, b) => a + b, 0) / vs.length,
+    };
+  });
+}
+
+// ---- Common options ----
+const xTicks = {
+  maxTicksLimit: 8, maxRotation: 30, font: { size: 10 }, color: '#94a3b8',
+};
+const grid = { color: '#f1f5f9' };
+
+// ---- Chart 0: Current ----
+new Chart(document.getElementById('c0'), {
+  type: 'line',
+  data: {
+    labels,
+    datasets: [{
+      label: 'Temperature (°C)',
+      data: temps,
+      borderColor: '#ef4444',
+      backgroundColor: 'rgba(239,68,68,0.08)',
+      tension: 0.3,
+      pointRadius: 3,
+      borderWidth: 2,
+      fill: true,
+    }],
+  },
+  options: {
+    responsive: true, maintainAspectRatio: false,
+    plugins: { legend: { display: false } },
+    scales: { x: { ticks: xTicks, grid }, y: { ticks: { color: '#ef4444', font:{size:11} }, grid } },
+  },
+});
+
+// ---- Chart 1: Padded Y-axis ----
+const r1 = paddedRange(temps);
+new Chart(document.getElementById('c1'), {
+  type: 'line',
+  data: {
+    labels,
+    datasets: [{
+      label: 'Temperature (°C)',
+      data: temps,
+      borderColor: '#ef4444',
+      backgroundColor: 'rgba(239,68,68,0.08)',
+      tension: 0.3,
+      pointRadius: 0,
+      borderWidth: 2,
+      fill: true,
+    }],
+  },
+  options: {
+    responsive: true, maintainAspectRatio: false,
+    plugins: { legend: { display: false } },
+    scales: {
+      x: { ticks: xTicks, grid },
+      y: { min: r1.min, max: r1.max, ticks: { color: '#ef4444', font:{size:11}, stepSize: 2 }, grid },
+    },
+  },
+});
+
+// ---- Chart 2: Rolling average overlay ----
+const smooth = rollingAvg(temps, 5);
+const r2 = paddedRange(temps);
+new Chart(document.getElementById('c2'), {
+  type: 'line',
+  data: {
+    labels,
+    datasets: [
+      {
+        label: 'Raw',
+        data: temps,
+        borderColor: 'rgba(239,68,68,0.25)',
+        backgroundColor: 'rgba(239,68,68,0.04)',
+        borderWidth: 1,
+        tension: 0.2,
+        pointRadius: 0,
+        fill: false,
+      },
+      {
+        label: 'Smoothed (5-pt)',
+        data: smooth,
+        borderColor: '#ef4444',
+        backgroundColor: 'rgba(239,68,68,0.10)',
+        borderWidth: 2.5,
+        tension: 0.35,
+        pointRadius: 0,
+        fill: true,
+      },
+    ],
+  },
+  options: {
+    responsive: true, maintainAspectRatio: false,
+    plugins: { legend: { position: 'top', labels: { font:{size:11} } } },
+    scales: {
+      x: { ticks: xTicks, grid },
+      y: { min: r2.min, max: r2.max, ticks: { color: '#ef4444', font:{size:11}, stepSize: 2 }, grid },
+    },
+  },
+});
+
+// ---- Chart 3: Min/max band + average (hourly) ----
+const buckets = hourlyBuckets(null, temps, stepMs);
+const bLabels = buckets.map(b => b.label);
+const r3 = paddedRange([...buckets.map(b=>b.min), ...buckets.map(b=>b.max)]);
+
+new Chart(document.getElementById('c3'), {
+  type: 'line',
+  data: {
+    labels: bLabels,
+    datasets: [
+      {
+        label: 'Max',
+        data: buckets.map(b => b.max),
+        borderColor: 'rgba(239,68,68,0)',
+        backgroundColor: 'rgba(239,68,68,0.15)',
+        pointRadius: 0,
+        fill: '+1',
+        tension: 0.3,
+      },
+      {
+        label: 'Min',
+        data: buckets.map(b => b.min),
+        borderColor: 'rgba(239,68,68,0)',
+        backgroundColor: 'rgba(239,68,68,0.15)',
+        pointRadius: 0,
+        fill: false,
+        tension: 0.3,
+      },
+      {
+        label: 'Average',
+        data: buckets.map(b => b.avg),
+        borderColor: '#ef4444',
+        borderWidth: 2.5,
+        pointRadius: 0,
+        tension: 0.3,
+        fill: false,
+      },
+    ],
+  },
+  options: {
+    responsive: true, maintainAspectRatio: false,
+    plugins: {
+      legend: { position: 'top', labels: { font:{size:11}, filter: (i) => i.text === 'Average' || i.text === 'Min' } },
+    },
+    scales: {
+      x: { ticks: xTicks, grid },
+      y: { min: r3.min, max: r3.max, ticks: { color: '#ef4444', font:{size:11}, stepSize: 2 }, grid },
+    },
+  },
+});
+
+// ---- Chart 4: combined with toggle ----
+const r4 = paddedRange(temps);
+const chart4 = new Chart(document.getElementById('c4'), {
+  type: 'line',
+  data: {
+    labels,
+    datasets: [
+      {
+        label: 'Raw',
+        data: temps,
+        borderColor: 'rgba(239,68,68,0.22)',
+        borderWidth: 1,
+        tension: 0.2,
+        pointRadius: 0,
+        fill: false,
+        hidden: true,
+      },
+      {
+        label: 'Temperature',
+        data: smooth,
+        borderColor: '#ef4444',
+        backgroundColor: 'rgba(239,68,68,0.10)',
+        borderWidth: 2.5,
+        tension: 0.35,
+        pointRadius: 0,
+        fill: true,
+      },
+    ],
+  },
+  options: {
+    responsive: true, maintainAspectRatio: false,
+    plugins: { legend: { display: false } },
+    scales: {
+      x: { ticks: xTicks, grid },
+      y: { min: r4.min, max: r4.max, ticks: { color: '#ef4444', font:{size:11}, stepSize: 2 }, grid },
+    },
+  },
+});
+
+document.getElementById('smoothOn').addEventListener('click', () => {
+  chart4.data.datasets[0].hidden = true;
+  chart4.data.datasets[1].data = smooth;
+  chart4.data.datasets[1].borderWidth = 2.5;
+  chart4.update();
+  document.getElementById('smoothOn').classList.add('active');
+  document.getElementById('smoothOff').classList.remove('active');
+});
+document.getElementById('smoothOff').addEventListener('click', () => {
+  chart4.data.datasets[0].hidden = false;
+  chart4.data.datasets[1].data = temps;
+  chart4.data.datasets[1].borderWidth = 1.5;
+  chart4.update();
+  document.getElementById('smoothOff').classList.add('active');
+  document.getElementById('smoothOn').classList.remove('active');
+});
+</script>
+</body>
+</html>

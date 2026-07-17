@@ -180,6 +180,77 @@ BAT+ ── R1 (100 kΩ, 1%) ──┬── R2 (100 kΩ, 1%) ── GPIO21/D3 (
 > across the full L91 voltage range (1.8 V → 3.6 V). This is the right move
 > if you need to extract the full ~3000 mAh per cell.
 
+### Sensor — NTC probe variant v2 (`sensor-ntc/`, bare ESP32-C6-WROOM-1U)
+
+The v2 revision drops the XIAO carrier and builds the node on a discrete WROOM-1U
+module with a custom PCB. Schematic at [docs/schematics/sensor-ntc-v2.svg](docs/schematics/sensor-ntc-v2.svg).
+Why: kill the USB-C ingress path on deployed nodes, replace the HT7333 LDO with a
+TPS63802 buck-boost (full L91 capacity utilisation), and use the Espressif ESP-PROG
+for hands-free flashing.
+
+| Pin | GPIO | Function |
+|-----|------|----------|
+| External button | 0 | Factory reset (hold 3 s) **and** deep sleep wakeup; LP GPIO; also user wake button on PCB |
+| Status LED | **5** | Moved off GPIO15 (which is a strap pin on ESP32-C6) |
+| Battery ADC | 2 | ADC midpoint of battery voltage divider |
+| Divider enable | 21 | GND switch for battery divider (OUTPUT LOW = on; INPUT = Hi-Z during sleep) |
+| NTC ADC | 1 | ADC midpoint of NTC voltage divider |
+| NTC enable | 22 | GND switch for NTC divider (OUTPUT LOW = on; INPUT = Hi-Z during sleep) |
+| U0TXD | 16 | UART TX → ESP-PROG `ESP_TXD` (header pin 3) |
+| U0RXD | 17 | UART RX ← ESP-PROG `ESP_RXD` (header pin 5) |
+| BOOT strap | 9 | → ESP-PROG `ESP_IO0` (header pin 6); 10 kΩ pullup to 3V3 |
+| Strap (must be high) | 8 | 10 kΩ pullup to 3V3 |
+| Strap (log) | 15 | Floats — internal pullup keeps it high, default boot-log-enabled |
+
+GPIO14 (the XIAO RF-switch antenna-select pin) is **not used** on v2 — the WROOM-1U
+routes its antenna pin directly to a u.FL connector. The firmware block that drives
+GPIO3/14 at boot must be deleted when running on v2 hardware.
+
+#### Power supply v2 — TPS63802 buck-boost
+
+```
+BAT+ ──┬── C_buf_e (1000 µF elec.)  ── TPS63802 VIN ──┐
+       ├── C_buf_c (22 µF X7R)         L1 1.5 µH      │
+       │   (HLC substitute on cell)    R_FB1 / R_FB2  │
+       │                               PS=GND (PFM)   │
+       │                              C_in 10 µF      │
+       │                              C_out 22 µF     │
+BAT– ──┴──────────────────────────── PGND ────────────┴── 3V3 OUT → WROOM-1U VDD
+```
+
+| Item | Value |
+|------|-------|
+| Battery | Same as v1: 2× L91 AA in series (or TL-4903 if upgrading to Li-SOCl₂ later) |
+| Regulator | TI **TPS63802DMQR** buck-boost, V_in 1.3–5.5 V → V_out programmable, Iq ≈ 11 µA (PFM), **HotRod DFN-10** (1.4 × 2.3 mm) |
+| Pinout | VIN, L1, L2, GND, AGND, VOUT, FB, PG, EN, MODE (10 pins). **The inductor connects between the L1 and L2 pins** — there is no SW pin. |
+| L1_ext | 1.5 µH shielded power inductor between L1 and L2, ≥ 2 A saturation, ≤ 50 mΩ DCR (e.g., TDK MLP2520H1R5) |
+| C_in / C_out | 10 µF / 22 µF X7R 0805 at VIN / VOUT |
+| R_FB1 / R_FB2 | **560 kΩ / 100 kΩ** 1 % — V_out = 0.5 × (1 + R_FB1/R_FB2) = 3.30 V. R_FB2 must not exceed 100 kΩ per datasheet. |
+| **MODE pin** | **Tie to GND** — enables PFM (Power Save) mode for µA-class light-load Iq. MODE = HIGH forces continuous PWM and burns multi-mA Iq. |
+| EN pin | Tied directly to VIN/BAT+ (no resistor needed). Always-on regulator; deep sleep is the C6's, not the regulator's. |
+| PG pin | Power Good open-drain output. Leave NC, or pull up to 3V3 via 100 kΩ if monitoring. |
+| Cell-side buffer | 1000 µF elec. + 22 µF X7R across BAT (HLC substitute, buffers TX pulse) |
+| Output decoupling | 10 µF X7R 0603 + 100 nF X7R 0402 at WROOM-1U VDD |
+| Expected sleep current | < 20 µA (11 µA TPS63802 + ~7 µA C6 deep sleep + dividers Hi-Z) |
+
+Unlike v1's HT7333, the TPS63802 holds 3.3 V across the full L91 discharge curve
+(1.3 V → 5.5 V V_in window), so the node uses the cell down to true end-of-life
+instead of browning out with 75% capacity remaining.
+
+#### Programming header v2 — 2×3 IDC, ESP-PROG UART standard
+
+```
+       ┌────────────────┐
+   1 ──│  EN     3V3  │── 2
+   3 ──│  ESP_TXD GND │── 4
+   5 ──│  ESP_RXD IO0 │── 6   (IO0 = GPIO9 BOOT on C6)
+       └────────────────┘
+```
+
+2.54 mm pitch (matches commonly-sold ESP-PROG clones). Plugs directly into the
+ESP-PROG's UART ribbon — no adapter PCB or transistors on the sensor board.
+Set the **ESP-PROG VDD jumper to 3.3 V** before connecting; 5 V will damage the C6.
+
 ---
 
 ## Key Configuration Constants
@@ -267,6 +338,22 @@ Install third-party libraries via Arduino Library Manager or `platformio.ini`.
 4. Flash sensor; it broadcasts a pairing request and saves the hub's MAC.
 5. After pairing, sensors deep-sleep and send readings on each wake cycle.
 6. Monitor output via Serial (115200 baud).
+
+### Flashing v2 sensor-ntc hardware (bare WROOM-1U board)
+
+The v2 PCB has no USB-C — flash it with an **Espressif ESP-PROG** plugged into the
+2×3 IDC `J_PROG` header.
+
+1. Set the ESP-PROG VDD jumper to **3.3 V** (5 V will damage the C6).
+2. Plug the ESP-PROG's UART ribbon into `J_PROG` (pin 1 = EN, marked on silkscreen).
+3. Plug the ESP-PROG USB into the dev PC.
+4. `pio run -e <env> -t upload` — no buttons need to be pressed; ESP-PROG drives
+   EN + BOOT through its built-in auto-reset circuit.
+5. `pio device monitor` reuses the same ESP-PROG as a 115200-baud serial console.
+
+The board does not include an LDO or USB protection — the ESP-PROG can power the
+board through pin 2 (3V3) for bench testing, **but the battery should be disconnected**
+while doing so to avoid back-feeding the cell.
 
 ### First-Time Setup (Current — WiFiManager)
 1. Flash hub → connect to `Temp-sensor-Hub` AP → enter your WiFi credentials.

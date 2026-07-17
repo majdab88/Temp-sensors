@@ -1,0 +1,183 @@
+# sensor-ntc-v2 enclosure — parametric starter macro for FreeCAD
+#
+# Builds a weatherproof two-lid enclosure for the bare ESP32-C6-WROOM-1U node:
+#   - Base tray with PCB standoffs + cable-gland boss
+#   - Main lid with gasket groove, sealed-button boss, translucent LED window pocket
+#   - Separate battery bay with its own gasketed lid (replaceable 2x AA L91)
+#
+# Usage:
+#   1. Import your KiCad STEP first so you can measure real geometry.
+#   2. Fill the P{} params below from those measurements.
+#   3. Run: FreeCAD menu Macro -> Macros... -> select this file -> Execute,
+#      or paste into the Python console.
+#   4. Refine in the Part/Part Design GUI. Everything here is editable solids.
+#
+# This uses the Part workbench (boolean solids) for a reliable one-shot build.
+# Once you like the proportions, you can rebuild critical features in Part Design
+# for full sketch-driven parametrics.
+
+import FreeCAD as App
+import Part
+from FreeCAD import Vector
+
+# ---------------------------------------------------------------- parameters
+P = {
+    # PCB envelope (measure from the imported STEP)
+    "pcb_x": 60.0, "pcb_y": 40.0, "pcb_thk": 1.6,
+    "comp_top_h": 12.0,        # tallest part above the board (WROOM-1U etc.)
+    "comp_bot_h": 2.0,         # tallest part below the board
+    # mounting holes: (x, y) relative to PCB lower-left corner
+    "mount_holes": [(3.0, 3.0), (57.0, 3.0), (3.0, 37.0), (57.0, 37.0)],
+    "mount_d": 2.6,            # self-tapper pilot (M3 -> ~2.6)
+    "standoff_od": 6.0,
+
+    # shell
+    "wall": 2.0,
+    "clr": 1.0,                # clearance PCB-to-wall
+    "floor": 2.0, "ceil": 2.0,
+    "lip_h": 4.0,              # lid lip depth into base
+    "fit_clr": 0.25,           # FDM mating clearance
+
+    # gasket groove (O-ring cord)
+    "gasket_w": 1.5, "gasket_d": 1.2,
+
+    # cable gland (NTC probe), centered on the -Y wall
+    "gland_d": 12.5,           # M12 gland through-hole
+    "gland_z": 8.0,            # height of hole center above floor
+
+    # sealed button boss (top lid)
+    "btn_d": 7.0,              # boot/membrane bore
+    "btn_pos": (15.0, 20.0),   # x,y on lid, relative to inner cavity origin
+
+    # LED window (top lid)
+    "led_w": 4.0, "led_h": 4.0, "led_pos": (45.0, 20.0),
+    "led_window_thk": 0.8,     # thin floor left as translucent window
+
+    # corner screw bosses (outside gasket line)
+    "screw_boss_od": 6.0, "screw_d": 2.6,
+
+    # battery bay (2x AA = 2x ~14.5 dia x 50.5 long)
+    "bat_x": 56.0, "bat_y": 32.0, "bat_h": 17.0,
+}
+
+doc = App.newDocument("sensor_ntc_v2_enclosure")
+
+# ---------------------------------------------------------------- helpers
+def box(l, w, h, x=0, y=0, z=0):
+    b = Part.makeBox(l, w, h)
+    b.translate(Vector(x, y, z))
+    return b
+
+def tube(od, idd, h, x, y, z=0):
+    o = Part.makeCylinder(od / 2.0, h, Vector(x, y, z))
+    if idd > 0:
+        o = o.cut(Part.makeCylinder(idd / 2.0, h + 0.2, Vector(x, y, z - 0.1)))
+    return o
+
+# inner cavity footprint
+cav_x = P["pcb_x"] + 2 * P["clr"]
+cav_y = P["pcb_y"] + 2 * P["clr"]
+cav_h = P["comp_bot_h"] + P["pcb_thk"] + P["comp_top_h"] + 2.0
+out_x = cav_x + 2 * P["wall"]
+out_y = cav_y + 2 * P["wall"]
+
+# ---------------------------------------------------------------- base tray
+outer = box(out_x, out_y, P["floor"] + cav_h, 0, 0, 0)
+cavity = box(cav_x, cav_y, cav_h + 1, P["wall"], P["wall"], P["floor"])
+base = outer.cut(cavity)
+
+# PCB standoffs
+so_z = P["floor"]
+so_h = P["comp_bot_h"]
+for (hx, hy) in P["mount_holes"]:
+    cx = P["wall"] + P["clr"] + hx
+    cy = P["wall"] + P["clr"] + hy
+    base = base.fuse(tube(P["standoff_od"], P["mount_d"], so_h, cx, cy, so_z))
+
+# corner screw bosses (inside walls, run full height; tapped from lid side)
+boss_h = P["floor"] + cav_h
+inset = P["screw_boss_od"] / 2.0 + 0.5
+for (bx, by) in [(inset, inset), (out_x - inset, inset),
+                 (inset, out_y - inset), (out_x - inset, out_y - inset)]:
+    base = base.fuse(tube(P["screw_boss_od"], P["screw_d"], boss_h, bx, by, 0))
+
+# cable-gland boss + bore on -Y wall
+gboss = tube(P["gland_d"] + 6, 0, P["gland_d"] + 6, out_x / 2.0, P["wall"], P["floor"] + P["gland_z"])
+# rotate cylinder to point along -Y: easier to just cut a horizontal hole
+gland_hole = Part.makeCylinder(P["gland_d"] / 2.0, P["wall"] + 8,
+                               Vector(out_x / 2.0, -2, P["floor"] + P["gland_z"]),
+                               Vector(0, 1, 0))
+base = base.cut(gland_hole)
+
+base_obj = doc.addObject("Part::Feature", "Base_Tray")
+base_obj.Shape = base
+
+# ---------------------------------------------------------------- main lid
+lid_t = P["ceil"]
+lid = box(out_x, out_y, lid_t, 0, 0, 0)
+
+# lip that drops into the base cavity
+lip = box(cav_x - 2 * P["fit_clr"], cav_y - 2 * P["fit_clr"], P["lip_h"],
+          P["wall"] + P["fit_clr"], P["wall"] + P["fit_clr"], -P["lip_h"])
+lid = lid.fuse(lip)
+
+# gasket groove in the lip underside (rectangular channel)
+g_off = P["wall"] + P["fit_clr"] + 1.0
+gv_out = box(cav_x - 2 * g_off + P["gasket_w"], cav_y - 2 * g_off + P["gasket_w"],
+             P["gasket_d"], g_off - P["gasket_w"] / 2.0 + 0, g_off - P["gasket_w"] / 2.0,
+             -P["gasket_d"])
+gv_in = box(cav_x - 2 * g_off - P["gasket_w"], cav_y - 2 * g_off - P["gasket_w"],
+            P["gasket_d"] + 0.2, g_off + P["gasket_w"] / 2.0, g_off + P["gasket_w"] / 2.0,
+            -P["gasket_d"] - 0.1)
+lid = lid.cut(gv_out.cut(gv_in))
+
+# sealed-button boss + bore
+bx = P["wall"] + P["clr"] + P["btn_pos"][0]
+by = P["wall"] + P["clr"] + P["btn_pos"][1]
+lid = lid.fuse(tube(P["btn_d"] + 4, P["btn_d"], 4, bx, by, 0))
+lid = lid.cut(Part.makeCylinder(P["btn_d"] / 2.0, lid_t + 5, Vector(bx, by, -1)))
+
+# LED window: pocket from inside leaving a thin translucent floor
+lx = P["wall"] + P["clr"] + P["led_pos"][0]
+ly = P["wall"] + P["clr"] + P["led_pos"][1]
+led_pocket = box(P["led_w"], P["led_h"], lid_t - P["led_window_thk"] + 0.01,
+                 lx - P["led_w"] / 2.0, ly - P["led_h"] / 2.0, P["led_window_thk"])
+lid = lid.cut(led_pocket)
+
+# corner screw clearance holes through the lid
+for (sx, sy) in [(inset, inset), (out_x - inset, inset),
+                 (inset, out_y - inset), (out_x - inset, out_y - inset)]:
+    lid = lid.cut(Part.makeCylinder(P["screw_d"] / 2.0 + 0.4, lid_t + 2, Vector(sx, sy, -1)))
+
+lid_obj = doc.addObject("Part::Feature", "Main_Lid")
+lid_obj.Shape = lid
+lid_obj.Placement.Base = Vector(0, out_y + 10, 0)   # set aside for viewing
+
+# ---------------------------------------------------------------- battery bay
+bb_out_x = P["bat_x"] + 2 * P["wall"]
+bb_out_y = P["bat_y"] + 2 * P["wall"]
+bb_h = P["floor"] + P["bat_h"]
+bb = box(bb_out_x, bb_out_y, bb_h)
+bb = bb.cut(box(P["bat_x"], P["bat_y"], P["bat_h"] + 1, P["wall"], P["wall"], P["floor"]))
+bb_obj = doc.addObject("Part::Feature", "Battery_Bay")
+bb_obj.Shape = bb
+bb_obj.Placement.Base = Vector(out_x + 15, 0, 0)
+
+# battery lid (gasketed, same scheme as main lid, no cutouts)
+bl = box(bb_out_x, bb_out_y, lid_t)
+bl = bl.fuse(box(P["bat_x"] - 2 * P["fit_clr"], P["bat_y"] - 2 * P["fit_clr"], P["lip_h"],
+                 P["wall"] + P["fit_clr"], P["wall"] + P["fit_clr"], -P["lip_h"]))
+bl_obj = doc.addObject("Part::Feature", "Battery_Lid")
+bl_obj.Shape = bl
+bl_obj.Placement.Base = Vector(out_x + 15, bb_out_y + 10, 0)
+
+doc.recompute()
+try:
+    import FreeCADGui as Gui
+    Gui.activeDocument().activeView().viewIsometric()
+    Gui.SendMsgToActiveView("ViewFit")
+except Exception:
+    pass
+
+print("Built: Base_Tray, Main_Lid, Battery_Bay, Battery_Lid")
+print("Next: import the KiCad STEP, align Base_Tray to it, and correct P{} dimensions.")

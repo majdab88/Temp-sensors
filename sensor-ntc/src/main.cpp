@@ -6,13 +6,47 @@
 #include <esp_wifi.h>
 #include <esp_sleep.h>   // Explicit include needed on C6
 
-// --- XIAO ESP32-C6 PIN DEFINITIONS ---
-#define LED_PIN            15   // Built-in LED on XIAO ESP32-C6
+// --- BOARD REVISION ---
+// Set by platformio.ini build_flags. Controls hardware-specific bits like
+// LED pin assignment and the XIAO antenna-switch code in setup().
+//   1 = XIAO ESP32-C6 carrier
+//   2 = bare WROOM-1U PCB
+#ifndef BOARD_REV
+#define BOARD_REV 1
+#endif
+
+// --- POWER TOPOLOGY ---
+// Independent of BOARD_REV — describes whether an external 3.3 V regulator
+// (e.g., TPS63802 buck-boost) sits between battery and the C6's 3V3 pin.
+//   0 = battery is wired directly to the 3V3 pin (VCC = bat_v, swings with cell)
+//   1 = regulated 3.3 V (VCC is constant regardless of cell voltage)
+//
+// Three valid combinations:
+//   BOARD_REV=1, HAS_REGULATOR=0  → XIAO direct-from-battery (original setup)
+//   BOARD_REV=1, HAS_REGULATOR=1  → XIAO + external TPS63802 module (hybrid)
+//   BOARD_REV=2, HAS_REGULATOR=1  → custom WROOM PCB with onboard TPS63802
+//
+// If not set by build_flags, default depends on BOARD_REV: v1 assumes no
+// regulator (legacy default), v2 always has the regulator on-PCB.
+#ifndef HAS_REGULATOR
+#if BOARD_REV == 2
+#define HAS_REGULATOR 1
+#else
+#define HAS_REGULATOR 0
+#endif
+#endif
+
+// --- PIN DEFINITIONS ---
+#if BOARD_REV == 2
+#define LED_PIN             5   // v2 PCB: GPIO5 (moved off GPIO15 which is a strap pin)
+#else
+#define LED_PIN            15   // v1 XIAO: built-in LED on GPIO15
+#endif
 #define RESET_PIN           0   // External reset button on D0 (GPIO0 — LP GPIO, supports deep sleep wakeup)
-#define BAT_ADC_PIN         2   // GPIO2/D2 — ADC input (battery resistor divider midpoint)
-#define DIVIDER_ENABLE_PIN 21   // GPIO21/D3 — battery divider GND switch; LOW enables divider, INPUT (Hi-Z) during sleep
-#define NTC_PIN             1   // GPIO1/D1 — ADC input for NTC voltage divider midpoint
-#define NTC_ENABLE_PIN     22   // GPIO22/D4 — NTC divider GND switch; LOW enables divider, INPUT (Hi-Z) during sleep
+#define BAT_ADC_PIN         2   // GPIO2 — ADC input (battery resistor divider midpoint)
+#define DIVIDER_ENABLE_PIN 21   // GPIO21 — battery divider GND switch; LOW enables divider, INPUT (Hi-Z) during sleep
+#define NTC_PIN             1   // GPIO1 — ADC input for NTC voltage divider midpoint
+#define NTC_ENABLE_PIN     22   // GPIO22 — NTC divider GND switch; LOW enables divider, INPUT (Hi-Z) during sleep
 
 // --- NTC PROBE PARAMETERS ---
 #define SERIES_RESISTOR 10000   // Accurate 10kΩ resistor (measured ≈ nominal)
@@ -55,6 +89,30 @@
 #define RETRY_DELAY_MS 100
 #define TX_TIMEOUT_MS  500
 
+// --- FAILURE HANDLING / HIBERNATE MODE ---
+// If TX fails N consecutive wake cycles in a row, the sensor enters "hibernate
+// mode" — the timer wake is disabled and the device sleeps until the user
+// presses the D0 button. This protects battery life when the hub is offline
+// or unreachable for extended periods.
+//
+// Rationale: each failed wake cycle spends ~7-10 seconds at high current
+// (retries + optional rescan). Compared to a normal ~500 ms successful cycle,
+// that's ~15× the energy per wake. Without this policy, a 24 h hub outage
+// would drain ~15 mAh instead of ~1 mAh — nearly half a percent of pack
+// capacity for one outage.
+//
+// The user manually re-enters normal operation once connectivity is restored
+// by pressing the D0 button (short press). The LED blinks 3× to confirm.
+#define MAX_FAILED_WAKES_BEFORE_HIBERNATE 4  // 4 × 15 min ≈ 1 h of outage tolerated
+#define RESCAN_ON_FAILURE_AT_COUNT       2   // Try one channel rescan at this failure count
+                                             // (hub may have moved to a different channel)
+
+// RTC_DATA_ATTR variables persist across deep sleep. Reset on power-on and
+// (usually) on brownout — both events look like a fresh start where TX
+// should be attempted again, so that's the correct behavior.
+RTC_DATA_ATTR uint32_t consecutive_failed_wakes = 0;
+RTC_DATA_ATTR bool     in_hibernate_mode        = false;
+
 // --- COMMUNICATION CHANNEL ---
 #define ESPNOW_CHANNEL 0          // 0 = auto-detect
 #define HUB_AP_SSID   "TempHub-AP"  // hub's hidden AP — always on the ESP-NOW channel
@@ -69,12 +127,40 @@
 
 // --- BATTERY MONITOR ---
 #define ADC_SAMPLES      20  // Readings to average for a stable result
-// LDO_DROPOUT_V is subtracted from bat_v to estimate VCC for the NTC R_ntc calc.
-// Set to 0 because the LDO has been removed — battery feeds the ESP32 directly,
-// so VCC = bat_v exactly. (When the LDO was present and in dropout, this was
-// 0.11 V — but during the S-H calibration the LDO was actually regulating at
-// 3.3 V, so the calibration ended up baked-in to a "VCC ≈ bat_v" assumption,
-// which lines up with the no-LDO topology too.)
+
+// ---------------------------------------------------------------------------
+// NTC VCC reference — chosen based on power topology (HAS_REGULATOR)
+// ---------------------------------------------------------------------------
+// The NTC voltage divider is fed from the chip's 3V3 rail. Whether that rail
+// matches the battery or is regulated depends on whether an external 3.3 V
+// regulator is in the design (controlled by HAS_REGULATOR, set above):
+//
+//   HAS_REGULATOR == 0  (battery direct to 3V3 pin):
+//     VCC = bat_v (tracks the battery voltage). The S-H calibration was done
+//     under this assumption, so the coefficients absorb whatever bat_v sat at
+//     during calibration. Used by the original XIAO setup.
+//
+//   HAS_REGULATOR == 1  (TPS63802 buck-boost between battery and 3V3):
+//     VCC = 3.3 V (constant, regulated). The TPS63802 holds 3.3 V across
+//     V_in 1.3–5.5 V, so the 3V3 rail is independent of battery voltage.
+//     Using bat_v here would introduce a growing error as the cell drains
+//     (firmware would think VCC is dropping when it actually isn't).
+//
+// LDO_DROPOUT_V is a leftover from the original v1 HT7333 era — kept at 0 V
+// because no LDO sits between battery and VCC on any current configuration.
+//
+// NOTE: switching HAS_REGULATOR from 0 → 1 shifts the computed R_ntc by the
+// ratio (bat_v_at_calibration / 3.3 V), typically a few percent. This causes
+// a corresponding few-degree offset in the readings until you recalibrate
+// the S-H coefficients at the new (constant) VCC = 3.3 V operating point.
+// ---------------------------------------------------------------------------
+#if HAS_REGULATOR
+#define NTC_VCC_REGULATED  1     // External regulator provides fixed 3.3 V to NTC divider
+#define NTC_VCC_FIXED      3.3f  // Use this instead of bat_v in readNTC()
+#else
+#define NTC_VCC_REGULATED  0     // No regulator: VCC tracks battery
+#endif
+
 #define LDO_DROPOUT_V  0.0f
 #define LOW_BATTERY_PCT  15  // "LOW" status below this %
 #define CRITICAL_PCT      5  // Sleep immediately below this % to protect the cell
@@ -223,6 +309,33 @@ void goToSleep(int seconds) {
   esp_deep_sleep_start(); // Step 4: Sleep
 }
 
+// --- HIBERNATE SLEEP (button-wake only) ---
+// Used when the hub has been unreachable for MAX_FAILED_WAKES_BEFORE_HIBERNATE
+// consecutive wake cycles. The device sleeps until the user presses the D0
+// button; no timer wake is set, so battery drain is limited to the C6's deep
+// sleep quiescent current (~7 µA) plus any regulator Iq (~11 µA for TPS63802
+// in PFM mode). Total hibernate current: ~20 µA — the sensor can sit in
+// hibernate for months without appreciable battery drain.
+//
+// The next boot after button wake sees in_hibernate_mode == true and clears
+// the failure counter to give TX a fresh window (see setup() for the wake
+// handshake — LED blinks 3× to acknowledge the button press).
+void goToHibernateSleep() {
+  ulog("→ HIBERNATE  (press D0 button to wake)\n");
+  Serial.flush();
+
+  sendLogToHub();         // Best-effort — hub is probably unreachable, but try anyway
+  esp_now_deinit();
+  esp_wifi_stop();
+  delay(100);
+
+  // GPIO wake ONLY — no timer wake. Sensor sleeps indefinitely on the wall
+  // clock, waking only when the user presses D0 to signal that connectivity
+  // should be re-attempted.
+  esp_deep_sleep_enable_gpio_wakeup(1ULL << RESET_PIN, ESP_GPIO_WAKEUP_GPIO_LOW);
+  esp_deep_sleep_start();
+}
+
 // --- CALLBACKS ---
 void OnDataSent(const wifi_tx_info_t *info, esp_now_send_status_t status) {
   tx_complete = true;
@@ -319,12 +432,26 @@ float readNTC() {
 
   float adcMv  = sum / (float)NTC_SAMPLES;
   float adcV   = adcMv / 1000.0f;
-  // No LDO between battery and ESP32 → VCC = bat_v exactly. The constrain() is
-  // a sanity clamp to the ESP32-C6 valid supply range (≈ 2.5 V brownout up to
-  // 3.6 V max recommended). On USB power, the XIAO's onboard LDO holds VCC at
-  // 3.3 V; bat_v won't reflect that, so USB-only debugging will read warmer
-  // than the calibration — that's fine for bench work.
-  float vcc    = constrain(g_bat_v - LDO_DROPOUT_V, 2.5f, 3.6f);
+
+  // VCC reference for the NTC divider math — see the "NTC VCC reference"
+  // comment block in the BATTERY MONITOR section above for the full rationale.
+  //
+  //   HAS_REGULATOR=1 (external TPS63802 or onboard buck-boost):
+  //     VCC is constant 3.3 V regardless of bat_v. Using bat_v here would
+  //     make readings drift as the cell drains, because the 3V3 rail stays
+  //     at 3.3 V while bat_v can swing from 3.6 V → 1.8 V.
+  //
+  //   HAS_REGULATOR=0 (battery direct to 3V3 pin, no regulator):
+  //     VCC = bat_v (the C6 is fed straight from the battery). The constrain()
+  //     clamps to the ESP32-C6 valid supply range (≈ 2.5 V brownout to 3.6 V).
+  //     On USB power, the XIAO's onboard LDO holds VCC at 3.3 V; bat_v won't
+  //     reflect that, so USB-only debugging reads warmer than calibration —
+  //     fine for bench work.
+#if NTC_VCC_REGULATED
+  float vcc = NTC_VCC_FIXED;
+#else
+  float vcc = constrain(g_bat_v - LDO_DROPOUT_V, 2.5f, 3.6f);
+#endif
 
   if (adcV <= 0.01f || adcV >= (vcc - 0.01f)) {
     // Saturated ADC almost certainly means open or shorted probe
@@ -543,11 +670,16 @@ void enterPairingMode() {
 
 // --- SETUP ---
 void setup() {
+#if BOARD_REV == 1
+  // XIAO ESP32-C6 carrier only: GPIO3 powers the RF switch, GPIO14 selects the
+  // external u.FL antenna. v2 hardware wires the u.FL directly to the WROOM-1U's
+  // RF pin and does not need either of these.
   pinMode(3, OUTPUT);
   digitalWrite(3, LOW);
   delay(100);
   pinMode(14, OUTPUT);
   digitalWrite(14, HIGH); // external antenna
+#endif
 
   Serial.begin(115200);
   delay(500); // C6 needs extra time for serial to stabilize
@@ -576,6 +708,29 @@ void setup() {
   esp_sleep_wakeup_cause_t wakeup_reason = esp_sleep_get_wakeup_cause();
   if (wakeup_reason == ESP_SLEEP_WAKEUP_GPIO) {
     ulog("Wakeup caused by button press on D0\n");
+  }
+
+  // Force-rescan flag: true on any button-press wake. The user pressed the
+  // button because they want data delivered now — always give them a fresh
+  // channel scan rather than trusting the cached channel or waiting for the
+  // "rescan on 2nd consecutive failure" logic (which needs two failed wakes
+  // before it kicks in, i.e. two button presses to recover). Timer wakes keep
+  // using the cached channel to save the ~1.5 s scan energy.
+  //
+  // Also resets the failure counter and (implicitly, via the success path) the
+  // in_hibernate_mode flag: a button press is an explicit user action, not a
+  // background retry, so we don't count it against the hibernate budget.
+  bool force_rescan_this_cycle = false;
+
+  if (wakeup_reason == ESP_SLEEP_WAKEUP_GPIO) {
+    ulog("Button-press wake — resetting failure counter + forcing channel rescan\n");
+    consecutive_failed_wakes = 0;
+    force_rescan_this_cycle = true;
+    // Blink LED 3× to acknowledge the button press was received.
+    for (int i = 0; i < 3; i++) {
+      digitalWrite(LED_PIN, HIGH); delay(80);
+      digitalWrite(LED_PIN, LOW);  delay(80);
+    }
   }
 
   // Read battery BEFORE radio init
@@ -614,12 +769,21 @@ void setup() {
     preferences.begin("network", true);
     uint8_t ch = (uint8_t)preferences.getUChar("channel", 0);
     preferences.end();
-    if (ch == 0) {
+
+    // Rescan the WiFi channel when:
+    //   1. Nothing cached yet (first boot / after factory reset), OR
+    //   2. We woke via a D0 button press (user wants a fresh attempt; the
+    //      cached channel may be stale — hub may have moved to a different
+    //      channel since the last successful TX).
+    // Otherwise use the cached value to save the ~1.5 s scan energy cost.
+    if (ch == 0 || force_rescan_this_cycle) {
+      const char *why = (ch == 0) ? "no cached channel" : "button-press wake";
+      ulog("[CH] Rescanning (%s)...\n", why);
       ch = detectWiFiChannel();
       preferences.begin("network", false);
       preferences.putUChar("channel", ch);
       preferences.end();
-      ulog("[CH] Scanned and cached channel %d\n", ch);
+      ulog("[CH] Cached channel %d\n", ch);
     } else {
       ulog("[CH] Using cached channel %d\n", ch);
     }
@@ -660,15 +824,48 @@ void setup() {
     // ~50× the 1000 µF input-cap RC time constant — fully recharges either cap.
     delay(500);
 
-    if (!sendDataWithRetry()) {
-      Serial.println("Waiting 5s then re-scanning and retrying...");
-      delay(5000);
-      uint8_t ch = detectWiFiChannel();
-      preferences.begin("network", false);
-      preferences.putUChar("channel", ch);
-      preferences.end();
-      esp_wifi_set_channel(ch, WIFI_SECOND_CHAN_NONE);
-      sendDataWithRetry();
+    bool tx_ok = sendDataWithRetry();
+
+    if (tx_ok) {
+      // Success — clear failure state.
+      if (consecutive_failed_wakes > 0 || in_hibernate_mode) {
+        ulog("✓ Connectivity restored (cleared %u failure%s)\n",
+             consecutive_failed_wakes, consecutive_failed_wakes == 1 ? "" : "s");
+      }
+      consecutive_failed_wakes = 0;
+      in_hibernate_mode = false;
+
+    } else {
+      // Failure — bump the counter (RTC memory, persists across sleep).
+      consecutive_failed_wakes++;
+      ulog("✗ TX failed. Consecutive failures: %u/%u\n",
+           consecutive_failed_wakes, MAX_FAILED_WAKES_BEFORE_HIBERNATE);
+
+      // Once we hit RESCAN_ON_FAILURE_AT_COUNT, try a channel rescan in case
+      // the hub has moved to a different WiFi channel (router reboot etc.).
+      // We only rescan ONCE — repeated scans burn battery for little benefit,
+      // and the hibernate policy below caps total wasted energy anyway.
+      if (consecutive_failed_wakes == RESCAN_ON_FAILURE_AT_COUNT) {
+        ulog("Trying channel rescan (hub may have moved channels)...\n");
+        uint8_t new_ch = detectWiFiChannel();
+        preferences.begin("network", false);
+        preferences.putUChar("channel", new_ch);
+        preferences.end();
+        esp_wifi_set_channel(new_ch, WIFI_SECOND_CHAN_NONE);
+        if (sendDataWithRetry()) {
+          ulog("✓ TX succeeded after rescan — clearing failure counter\n");
+          consecutive_failed_wakes = 0;
+          in_hibernate_mode = false;
+        }
+      }
+
+      // If we've hit the hibernate threshold, sleep indefinitely (button-only
+      // wake) rather than continuing to burn ~10 s of high current per cycle
+      // trying to reach an unreachable hub.
+      if (consecutive_failed_wakes >= MAX_FAILED_WAKES_BEFORE_HIBERNATE) {
+        in_hibernate_mode = true;
+        goToHibernateSleep();  // Does not return.
+      }
     }
 
     goToSleep(SLEEP_TIME);

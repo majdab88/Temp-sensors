@@ -17,7 +17,8 @@
         "android.permission.ACCESS_FINE_LOCATION",
         "android.permission.ACCESS_COARSE_LOCATION"
       ],
-      "package": "com.tempsensors.app"
+      "package": "com.tempsensors.app",
+      "googleServicesFile": "./google-services.json"
     },
     "ios": {
       "supportsTablet": true,

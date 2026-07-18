@@ -1,8 +1,9 @@
-import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react';
+import React, { createContext, useContext, useState, useEffect, useRef, ReactNode } from 'react';
 import * as SecureStore from 'expo-secure-store';
 import { User } from '../types';
-import { login as apiLogin, getAccount, setImpersonatedOrg } from '../services/api';
+import { login as apiLogin, getAccount, setImpersonatedOrg, registerPushToken, unregisterPushToken } from '../services/api';
 import { connectSocket, disconnectSocket } from '../services/socket';
+import { registerForPushNotifications } from '../services/push';
 
 interface ImpersonatedOrg {
   id: number;
@@ -27,6 +28,21 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [token, setToken] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [impersonatedOrg, setImpersonatedOrgState] = useState<ImpersonatedOrg | null>(null);
+  const pushTokenRef = useRef<string | null>(null);
+
+  // Register this device for push and hand the token to the backend.
+  // Non-fatal: a failure here must never block login/session restore.
+  const setupPush = async () => {
+    try {
+      const result = await registerForPushNotifications();
+      if (result) {
+        pushTokenRef.current = result.token;
+        await registerPushToken(result.token, result.platform);
+      }
+    } catch (err) {
+      console.warn('[push] setup failed', err);
+    }
+  };
 
   // Restore session on app start
   useEffect(() => {
@@ -39,6 +55,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             const { data } = await getAccount();
             setUser(data);
             connectSocket(storedToken);
+            setupPush();
           } catch (err: any) {
             // Access token expired — the response interceptor in api.ts will have
             // already attempted a refresh and stored a new jwt_token if successful.
@@ -50,6 +67,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
                 const { data } = await getAccount();
                 setUser(data);
                 connectSocket(refreshedToken);
+                setupPush();
               } else {
                 throw err; // refresh also failed → clear tokens below
               }
@@ -75,9 +93,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const { data: userData } = await getAccount();
     setUser(userData);
     connectSocket(data.accessToken);
+    setupPush();
   };
 
   const logout = async () => {
+    // Stop push to this device for the current account before dropping the token.
+    if (pushTokenRef.current) {
+      try { await unregisterPushToken(pushTokenRef.current); } catch { /* best-effort */ }
+      pushTokenRef.current = null;
+    }
     disconnectSocket();
     setImpersonatedOrg(null);
     setImpersonatedOrgState(null);

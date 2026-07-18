@@ -39,7 +39,8 @@
           ],
           "bluetoothAlwaysPermission": "Allow $(PRODUCT_NAME) to connect to Bluetooth devices"
         }
-      ]
+      ],
+      "expo-notifications"
     ],
     "extra": {
       "eas": {

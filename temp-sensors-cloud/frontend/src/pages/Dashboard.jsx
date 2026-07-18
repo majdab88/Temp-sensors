@@ -33,6 +33,15 @@ export default function Dashboard() {
       const sensorList = sensorsRes.data
       setSensors(sensorList)
 
+      // Seed already-active breaches so they show on load, not just on the next
+      // live transition. Best-effort — a failure here shouldn't block the grid.
+      try {
+        const activeRes = await api.get('/alerts/active')
+        const seeded = {}
+        activeRes.data.forEach((a) => { seeded[a.sensor_mac] = a })
+        setAlerts(seeded)
+      } catch { /* ignore */ }
+
       // Join socket rooms for each hub
       const hubMacs = devicesRes.data.map((d) => d.mac)
       hubMacs.forEach((mac) => socket.emit('join', mac))

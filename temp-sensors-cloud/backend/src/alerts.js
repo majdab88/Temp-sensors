@@ -160,11 +160,24 @@ function dispatch(ctx, rule, kind) {
 }
 
 function buildMessage(ctx, rule, kind) {
-  const name = ctx.sensorName || ctx.sensorMac;
-  const t = ctx.temp.toFixed(1);
-  if (kind === 'high') return `⚠️ ${name} is ${t}°C — above the ${rule.high_limit}°C limit`;
-  if (kind === 'low')  return `⚠️ ${name} is ${t}°C — below the ${rule.low_limit}°C limit`;
+  return formatAlertMessage({
+    name: ctx.sensorName || ctx.sensorMac,
+    temp: ctx.temp,
+    kind,
+    high: rule.high_limit,
+    low: rule.low_limit,
+  });
+}
+
+/**
+ * Human-readable alert text. Shared by the live dispatcher and the
+ * /api/alerts/active route so the banner wording matches the socket events.
+ */
+function formatAlertMessage({ name, temp, kind, high, low }) {
+  const t = Number(temp).toFixed(1);
+  if (kind === 'high') return `⚠️ ${name} is ${t}°C — above the ${high}°C limit`;
+  if (kind === 'low')  return `⚠️ ${name} is ${t}°C — below the ${low}°C limit`;
   return `✅ ${name} back to normal at ${t}°C`;
 }
 
-module.exports = { initAlerts, evaluateReading, resetSensor, KNOWN_CHANNELS };
+module.exports = { initAlerts, evaluateReading, resetSensor, formatAlertMessage, KNOWN_CHANNELS };

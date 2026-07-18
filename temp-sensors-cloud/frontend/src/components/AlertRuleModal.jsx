@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react'
+import { createPortal } from 'react-dom'
 import api from '../services/api'
 
 /**
@@ -81,7 +82,10 @@ export default function AlertRuleModal({ sensor, onClose }) {
     }
   }
 
-  return (
+  // Rendered into document.body via a portal so the fixed overlay covers the
+  // viewport — otherwise the hovered card's `transform` becomes its containing
+  // block and traps the modal inside the card.
+  return createPortal(
     <div className="modal-overlay" onClick={(e) => { e.stopPropagation(); onClose(false) }}>
       <div className="modal" onClick={(e) => e.stopPropagation()}>
         <div className="modal-header">
@@ -135,6 +139,7 @@ export default function AlertRuleModal({ sensor, onClose }) {
           </>
         )}
       </div>
-    </div>
+    </div>,
+    document.body,
   )
 }

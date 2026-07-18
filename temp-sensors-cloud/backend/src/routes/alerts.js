@@ -4,7 +4,7 @@ const express = require('express');
 const { query } = require('../db');
 const { requireAuth, isSuperadminUnscoped } = require('../middleware/auth');
 const { requirePermission } = require('../middleware/permissions');
-const { resetSensor, KNOWN_CHANNELS } = require('../alerts');
+const { resetSensor, formatAlertMessage, KNOWN_CHANNELS } = require('../alerts');
 const { audit } = require('../audit');
 
 const router = express.Router();
@@ -126,6 +126,56 @@ router.delete('/rules/:sensorId', requirePermission('editor'), async (req, res) 
     resetSensor(sensorId);
     await audit({ req, action: 'alert.rule.delete', targetType: 'sensor', targetId: sensorId });
     res.status(204).end();
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Database error' });
+  }
+});
+
+// GET /api/alerts/active — sensors currently in a breached state, org-scoped.
+// Derived from the latest alert_event per sensor (authoritative, restart-safe).
+// Shape matches the live `alert` socket event so the dashboard can seed from it.
+router.get('/active', async (req, res) => {
+  try {
+    const params = [];
+    let orgFilter = '';
+    if (!isSuperadminUnscoped(req)) {
+      if (!req.orgId) return res.json([]);
+      params.push(req.orgId);
+      orgFilter = `AND d.org_id = $${params.length}`;
+    }
+
+    const result = await query(
+      `SELECT latest.sensor_mac, latest.sensor_name, latest.hub_mac,
+              latest.kind, latest.value, latest.high_limit, latest.low_limit, latest.ts
+       FROM (
+         SELECT DISTINCT ON (e.sensor_id)
+                s.mac AS sensor_mac, s.name AS sensor_name, d.mac AS hub_mac,
+                e.kind, e.value, r.high_limit, r.low_limit,
+                EXTRACT(EPOCH FROM e.created_at)::bigint AS ts
+         FROM alert_events e
+         JOIN sensors s ON s.id = e.sensor_id
+         JOIN devices d ON d.id = s.device_id
+         LEFT JOIN alert_rules r ON r.sensor_id = e.sensor_id
+         WHERE s.active = TRUE ${orgFilter}
+         ORDER BY e.sensor_id, e.created_at DESC
+       ) latest
+       WHERE latest.kind <> 'recovered'`,
+      params
+    );
+
+    const rows = result.rows.map((r) => ({
+      sensor_mac: r.sensor_mac,
+      sensor_name: r.sensor_name,
+      hub_mac: r.hub_mac,
+      kind: r.kind,
+      value: r.value,
+      high_limit: r.high_limit,
+      low_limit: r.low_limit,
+      message: formatAlertMessage({ name: r.sensor_name || r.sensor_mac, temp: r.value, kind: r.kind, high: r.high_limit, low: r.low_limit }),
+      ts: r.ts * 1000,
+    }));
+    res.json(rows);
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'Database error' });

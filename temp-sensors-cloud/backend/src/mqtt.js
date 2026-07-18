@@ -2,6 +2,7 @@
 
 const mqtt = require('mqtt');
 const { query } = require('./db');
+const { evaluateReading } = require('./alerts');
 
 let client;
 let _io;
@@ -103,11 +104,12 @@ async function handleSensorData(hubMac, data) {
      ON CONFLICT (device_id, mac) DO UPDATE
        SET active = TRUE
        WHERE sensors.active = TRUE
-     RETURNING id`,
+     RETURNING id, name`,
     [deviceId, normMac, defaultName]
   );
   if (sensorRes.rows.length === 0) return; // sensor was soft-deleted — ignore data
   const sensorId = sensorRes.rows[0].id;
+  const sensorName = sensorRes.rows[0].name;
 
   // Convert -999 sentinel values to NULL
   const tempVal = (temp === -999 || temp == null) ? null : temp;
@@ -131,6 +133,16 @@ async function handleSensorData(hubMac, data) {
     rssi: rssi ?? null,
     ts: recordedAt.getTime(),
   });
+
+  // Evaluate alert rules — fire-and-forget so alerting never blocks or breaks
+  // reading ingestion.
+  evaluateReading({
+    hubMac: hubMac.toUpperCase(),
+    sensorMac: normMac,
+    sensorName,
+    sensorId,
+    temp: tempVal,
+  }).catch((err) => console.error('Alert eval error:', err.message));
 }
 
 function handleHubStatus(hubMac, data) {

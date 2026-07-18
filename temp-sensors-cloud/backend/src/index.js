@@ -6,6 +6,7 @@ const { Server } = require('socket.io');
 
 const { query } = require('./db');
 const { initMqtt, getHubStatus } = require('./mqtt');
+const { initAlerts } = require('./alerts');
 const authRoutes      = require('./routes/auth');
 const deviceRoutes    = require('./routes/devices');
 const sensorRoutes    = require('./routes/sensors');
@@ -16,6 +17,7 @@ const userRoutes      = require('./routes/users');
 const orgRoutes       = require('./routes/organizations');
 const accountRoutes   = require('./routes/account');
 const auditRoutes     = require('./routes/audit-log');
+const alertRoutes     = require('./routes/alerts');
 
 const app    = express();
 const server = http.createServer(app);
@@ -44,13 +46,14 @@ app.use('/api/users',                userRoutes);
 app.use('/api/organizations',        orgRoutes);
 app.use('/api/account',              accountRoutes);
 app.use('/api/audit-log',            auditRoutes);
+app.use('/api/alerts',               alertRoutes);
 
 // ── 404 fallback ──────────────────────────────────────────────────────────────
 app.use((_req, res) => res.status(404).json({ error: 'Not found' }));
 
 // ── Socket.IO — room per hub MAC ──────────────────────────────────────────────
 // Dashboard / app emits `join` with a hub MAC to receive live events:
-//   sensorData, hubStatus, pairingRequest
+//   sensorData, hubStatus, pairingRequest, alert
 const MAC_RE = /^[0-9A-Fa-f]{2}(:[0-9A-Fa-f]{2}){5}$/;
 
 io.on('connection', (socket) => {
@@ -70,7 +73,8 @@ io.on('connection', (socket) => {
   });
 });
 
-// ── MQTT bridge ───────────────────────────────────────────────────────────────
+// ── Alert engine + MQTT bridge ────────────────────────────────────────────────
+initAlerts(io);
 initMqtt(io);
 
 // ── Seed superadmin on first boot ─────────────────────────────────────────────

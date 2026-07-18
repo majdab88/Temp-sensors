@@ -9,6 +9,7 @@ export default function Dashboard() {
   const canEdit = user?.permissionLevel !== 'viewer'
   const [sensors, setSensors] = useState([])
   const [readings, setReadings] = useState({}) // keyed by sensor MAC
+  const [alerts, setAlerts] = useState({})     // active breaches, keyed by sensor MAC
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
   const [hubsJoined, setHubsJoined] = useState([])
@@ -74,16 +75,28 @@ export default function Dashboard() {
       }))
     }
 
+    // Alert transitions — keep a map of active breaches; a 'recovered' event clears one.
+    function onAlert(a) {
+      setAlerts((prev) => {
+        const next = { ...prev }
+        if (a.kind === 'recovered') delete next[a.sensor_mac]
+        else next[a.sensor_mac] = a
+        return next
+      })
+    }
+
     // Re-join rooms on reconnect so cached hub status is replayed
     function onConnect() {
       hubsJoined.forEach((mac) => socket.emit('join', mac))
     }
 
     socket.on('sensorData', onSensorData)
+    socket.on('alert', onAlert)
     socket.on('connect', onConnect)
 
     return () => {
       socket.off('sensorData', onSensorData)
+      socket.off('alert', onAlert)
       socket.off('connect', onConnect)
       hubsJoined.forEach((mac) => socket.emit('leave', mac))
     }
@@ -93,6 +106,8 @@ export default function Dashboard() {
   if (loading) return <div className="state-loading">Loading sensors...</div>
   if (error)   return <div className="state-error"><h3>Error</h3><p>{error}</p></div>
 
+  const activeAlerts = Object.values(alerts)
+
   return (
     <div>
       <div className="page-header">
@@ -101,6 +116,17 @@ export default function Dashboard() {
           {sensors.length} sensor{sensors.length !== 1 ? 's' : ''} — live updates via Socket.IO
         </p>
       </div>
+
+      {activeAlerts.length > 0 && (
+        <div className="alert-banner">
+          {activeAlerts.map((a) => (
+            <div key={a.sensor_mac} className="alert-banner-item">
+              <span className="alert-banner-icon">⚠️</span>
+              <span>{a.message}</span>
+            </div>
+          ))}
+        </div>
+      )}
 
       {sensors.length === 0 ? (
         <div className="state-empty">
@@ -114,6 +140,7 @@ export default function Dashboard() {
               key={sensor.id}
               sensor={sensor}
               reading={readings[sensor.mac] || null}
+              alert={alerts[sensor.mac] || null}
               onRename={handleRename}
               onDelete={handleDelete}
               canEdit={canEdit}

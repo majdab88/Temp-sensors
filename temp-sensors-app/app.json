@@ -33,10 +33,18 @@
         "react-native-ble-plx",
         {
           "isBackgroundEnabled": false,
-          "modes": ["peripheral", "central"],
+          "modes": [
+            "peripheral",
+            "central"
+          ],
           "bluetoothAlwaysPermission": "Allow $(PRODUCT_NAME) to connect to Bluetooth devices"
         }
       ]
-    ]
+    ],
+    "extra": {
+      "eas": {
+        "projectId": "849f5806-d873-401e-ba26-2338d1c17b14"
+      }
+    }
   }
 }

@@ -12,7 +12,7 @@ import {
   provisionWifi, provisionCloud, subscribeStatus, disconnectHub,
   WiFiNetwork, ProvStatus,
 } from '../services/ble';
-import { registerDevice } from '../services/api';
+import { registerDevice, getProvisionConfig } from '../services/api';
 
 type Step = 'scan' | 'wifi' | 'credentials' | 'provisioning' | 'done';
 
@@ -128,33 +128,42 @@ export default function AddDeviceScreen() {
     setProvError('');
 
     try {
-      // Register hub in cloud → get MQTT credentials
+      // Read hub MAC and register it in cloud
       const hubMac = await readHubMac(connectedHub);
-      const { data } = await registerDevice(hubMac);
-      const { mqttHost, mqttPort, mqttUser, mqttPass } = data;
+      await registerDevice(hubMac);
 
-      // Subscribe status notifications
-      const unsubStatus = subscribeStatus(connectedHub, (status: ProvStatus) => {
-        if (status.state === 'connecting') setProvStep(1);
-        if (status.state === 'connected') setProvStep(2);
-        if (status.state === 'failed') setProvError(status.detail ?? 'Provisioning failed.');
-      });
+      // Get MQTT credentials from cloud
+      const { data: provConfig } = await getProvisionConfig();
+      const { mqttHost, mqttPort, mqttUser, mqttPass } = provConfig;
 
-      // Write WiFi credentials
-      await provisionWifi(connectedHub, selectedNetwork.ssid, wifiPass);
-      // Write cloud credentials
-      await provisionCloud(connectedHub, mqttHost, mqttPort, mqttUser, mqttPass);
-
-      // Wait for connected or failed status (up to 30 s)
+      // Wait for connected or failed using a Promise driven by the status subscription
       await new Promise<void>((resolve, reject) => {
-        const timeout = setTimeout(() => reject(new Error('Timed out waiting for hub connection.')), 30000);
-        const interval = setInterval(() => {
-          if (provStep === 2) { clearTimeout(timeout); clearInterval(interval); resolve(); }
-          if (provError) { clearTimeout(timeout); clearInterval(interval); reject(new Error(provError)); }
-        }, 500);
+        const timeout = setTimeout(() => {
+          unsubStatus();
+          reject(new Error('Timed out waiting for hub connection.'));
+        }, 60000);
+
+        const unsubStatus = subscribeStatus(connectedHub, (status: ProvStatus) => {
+          if (status.state === 'connecting') setProvStep(1);
+          if (status.state === 'connected') {
+            clearTimeout(timeout);
+            unsubStatus();
+            resolve();
+          }
+          if (status.state === 'failed') {
+            clearTimeout(timeout);
+            unsubStatus();
+            reject(new Error(status.detail ?? 'Provisioning failed.'));
+          }
+        });
+
+        // Write WiFi then cloud credentials
+        provisionWifi(connectedHub, selectedNetwork.ssid, wifiPass)
+          .then(() => provisionCloud(connectedHub, mqttHost, mqttPort, mqttUser, mqttPass))
+          .catch((err) => { clearTimeout(timeout); unsubStatus(); reject(err); });
       });
 
-      unsubStatus();
+      setProvStep(2);
       await disconnectHub(connectedHub);
       setStep('done');
     } catch (err: any) {

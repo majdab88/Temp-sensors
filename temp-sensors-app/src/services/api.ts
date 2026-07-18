@@ -112,7 +112,10 @@ export const getDevices = () =>
   api.get<import('../types').Device[]>('/devices');
 
 export const registerDevice = (mac: string) =>
-  api.post<{ device: import('../types').Device; mqttUser: string; mqttPass: string; mqttHost: string; mqttPort: number }>('/devices/register', { mac });
+  api.post<{ device: import('../types').Device }>('/devices/register', { mac });
+
+export const getProvisionConfig = () =>
+  api.get<{ mqttHost: string; mqttPort: number; mqttUser: string; mqttPass: string }>('/provision/config');
 
 // Pairing
 export const getPairingRequests = (status = 'pending') =>

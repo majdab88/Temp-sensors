@@ -18,6 +18,7 @@ const orgRoutes       = require('./routes/organizations');
 const accountRoutes   = require('./routes/account');
 const auditRoutes     = require('./routes/audit-log');
 const alertRoutes     = require('./routes/alerts');
+const pushRoutes      = require('./routes/push');
 
 const app    = express();
 const server = http.createServer(app);
@@ -47,6 +48,7 @@ app.use('/api/organizations',        orgRoutes);
 app.use('/api/account',              accountRoutes);
 app.use('/api/audit-log',            auditRoutes);
 app.use('/api/alerts',               alertRoutes);
+app.use('/api/push',                 pushRoutes);
 
 // ── 404 fallback ──────────────────────────────────────────────────────────────
 app.use((_req, res) => res.status(404).json({ error: 'Not found' }));

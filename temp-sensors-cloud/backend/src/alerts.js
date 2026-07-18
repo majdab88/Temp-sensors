@@ -1,6 +1,7 @@
 'use strict';
 
 const { query } = require('./db');
+const { sendPush } = require('./notify/push');
 
 // Channels the schema/UI knows about. Only 'dashboard' is delivered in phase 1;
 // 'push' and 'whatsapp' are wired in later phases. Rules may already request them
@@ -121,7 +122,7 @@ async function fire(ctx, rule, state, kind) {
     state.lastNotifyMs = Date.now();
   }
 
-  const delivered = dispatch(ctx, rule, kind);
+  const delivered = await dispatch(ctx, rule, kind);
 
   await query(
     `INSERT INTO alert_events (rule_id, sensor_id, kind, value, channels)
@@ -134,11 +135,12 @@ async function fire(ctx, rule, state, kind) {
  * Deliver the alert on every configured channel we can currently handle.
  * Returns the list of channels actually delivered on (recorded on the event).
  */
-function dispatch(ctx, rule, kind) {
+async function dispatch(ctx, rule, kind) {
   const wanted = Array.isArray(rule.channels) && rule.channels.length
     ? rule.channels
     : ['dashboard'];
   const delivered = [];
+  const message = buildMessage(ctx, rule, kind);
 
   if (wanted.includes('dashboard') && _io) {
     _io.to(`hub:${ctx.hubMac}`).emit('alert', {
@@ -148,15 +150,57 @@ function dispatch(ctx, rule, kind) {
       value: ctx.temp,
       high_limit: rule.high_limit,
       low_limit: rule.low_limit,
-      message: buildMessage(ctx, rule, kind),
+      message,
       ts: Date.now(),
     });
     delivered.push('dashboard');
   }
 
-  // 'push' (phase 2) and 'whatsapp' (phase 3) are not delivered yet.
+  if (wanted.includes('push')) {
+    try {
+      const tokens = await getOrgPushTokens(ctx.sensorId);
+      if (tokens.length) {
+        const title = (kind === 'recovered' ? '✅ ' : '⚠️ ') + (ctx.sensorName || ctx.sensorMac);
+        const { invalidTokens } = await sendPush(tokens, {
+          title,
+          body: message,
+          data: { sensor_mac: ctx.sensorMac, kind, value: ctx.temp },
+        });
+        if (invalidTokens.length) {
+          await query('DELETE FROM push_tokens WHERE token = ANY($1)', [invalidTokens]);
+        }
+        delivered.push('push');
+      }
+    } catch (err) {
+      console.error('[push] dispatch error:', err.message);
+    }
+  }
+
+  // 'whatsapp' (phase 3) is not delivered yet.
 
   return delivered;
+}
+
+/**
+ * Collect Expo push tokens for everyone who can see a sensor: the owning org's
+ * owner plus all its members.
+ */
+async function getOrgPushTokens(sensorId) {
+  const res = await query(
+    `SELECT DISTINCT pt.token
+     FROM push_tokens pt
+     WHERE pt.user_id IN (
+       SELECT o.owner_id
+       FROM sensors s JOIN devices d ON d.id = s.device_id JOIN organizations o ON o.id = d.org_id
+       WHERE s.id = $1
+       UNION
+       SELECT m.user_id
+       FROM sensors s JOIN devices d ON d.id = s.device_id JOIN memberships m ON m.org_id = d.org_id
+       WHERE s.id = $1
+     )`,
+    [sensorId]
+  );
+  return res.rows.map((r) => r.token);
 }
 
 function buildMessage(ctx, rule, kind) {

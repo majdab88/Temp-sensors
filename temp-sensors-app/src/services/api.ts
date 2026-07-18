@@ -185,4 +185,11 @@ export const getOrgDevices = (orgId: number) =>
 export const getAuditLog = (page = 1, limit = 50, action?: string) =>
   api.get<import('../types').AuditEntry[]>('/audit-log', { params: { page, limit, ...(action ? { action } : {}) } });
 
+// Push notifications
+export const registerPushToken = (token: string, platform: string) =>
+  api.post('/push/register', { token, platform });
+
+export const unregisterPushToken = (token: string) =>
+  api.delete('/push/register', { data: { token } });
+
 export default api;

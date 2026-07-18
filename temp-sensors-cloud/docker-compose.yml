@@ -129,11 +129,15 @@ services:
   certbot:
     image: certbot/certbot:latest
     container_name: certbot
+    restart: unless-stopped
     volumes:
       - ./certs:/etc/letsencrypt
       - ./nginx/certbot-webroot:/var/www/certbot
-    # Checks for renewal every 12 hours; certbot only renews when < 30 days remain.
-    entrypoint: /bin/sh -c 'trap exit TERM; while :; do certbot renew --quiet; sleep 12h & wait $${!}; done'
+    entrypoint: >
+      /bin/sh -c 'trap exit TERM; while :; do
+        certbot renew --deploy-hook "touch /etc/letsencrypt/.renewed";
+        sleep 12h & wait $${!};
+      done'
 
 # ----------------------------------------------------------
 # Named volumes

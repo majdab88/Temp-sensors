@@ -43,6 +43,10 @@ export default function AlertRuleModal({ sensor, onClose }) {
     return Number.isFinite(n) ? n : NaN
   }
 
+  function toggleChannel(ch) {
+    setChannels((prev) => (prev.includes(ch) ? prev.filter((c) => c !== ch) : [...prev, ch]))
+  }
+
   async function handleSave() {
     setError(null)
     const highVal = parseNum(high)
@@ -53,6 +57,7 @@ export default function AlertRuleModal({ sensor, onClose }) {
     if (highVal == null && lowVal == null) return setError('Set a max and/or a min temperature')
     if (highVal != null && lowVal != null && lowVal >= highVal) return setError('Min must be below max')
     if (hystVal < 0) return setError('Recovery margin can’t be negative')
+    if (channels.length === 0) return setError('Choose at least one notification channel')
 
     setSaving(true)
     try {
@@ -124,6 +129,18 @@ export default function AlertRuleModal({ sensor, onClose }) {
               <input type="number" step="0.1" inputMode="decimal"
                 value={hyst} onChange={(e) => setHyst(e.target.value)} />
               <div className="form-hint">Temp must return this far inside the limit before the alert clears — prevents flapping.</div>
+            </div>
+
+            <div className="form-group">
+              <label>Notify via</label>
+              <label className="modal-toggle">
+                <input type="checkbox" checked={channels.includes('dashboard')} onChange={() => toggleChannel('dashboard')} />
+                <span>Dashboard</span>
+              </label>
+              <label className="modal-toggle" style={{ marginBottom: 0 }}>
+                <input type="checkbox" checked={channels.includes('push')} onChange={() => toggleChannel('push')} />
+                <span>Push notification</span>
+              </label>
             </div>
 
             <div className="modal-actions">

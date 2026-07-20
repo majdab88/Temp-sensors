@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react'
 import api from '../services/api'
+import EditUserModal from '../components/EditUserModal'
 
 function formatDate(isoStr) {
   if (!isoStr) return ''
@@ -16,6 +17,9 @@ export default function Users() {
   const [formData, setFormData] = useState({ email: '', password: '', orgName: '' })
   const [creating, setCreating] = useState(false)
   const [formError, setFormError] = useState(null)
+
+  // Edit user modal
+  const [editingUser, setEditingUser] = useState(null)
 
   function fetchUsers() {
     setLoading(true)
@@ -148,17 +152,35 @@ export default function Users() {
                   {user.role}
                 </span>
                 {user.role !== 'superadmin' && (
-                  <button
-                    className="btn btn-danger btn-sm"
-                    onClick={() => handleDelete(user.id, user.email || user.username)}
-                  >
-                    Delete
-                  </button>
+                  <>
+                    <button
+                      className="btn btn-ghost btn-sm"
+                      onClick={() => setEditingUser(user)}
+                    >
+                      Edit
+                    </button>
+                    <button
+                      className="btn btn-danger btn-sm"
+                      onClick={() => handleDelete(user.id, user.email || user.username)}
+                    >
+                      Delete
+                    </button>
+                  </>
                 )}
               </div>
             </div>
           ))}
         </div>
+      )}
+
+      {editingUser && (
+        <EditUserModal
+          user={editingUser}
+          onClose={(changed) => {
+            setEditingUser(null)
+            if (changed) fetchUsers()
+          }}
+        />
       )}
     </div>
   )

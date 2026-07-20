@@ -124,14 +124,23 @@ export default function DashboardScreen({ navigation }: any) {
       });
     };
 
+    // Re-join rooms on every (re)connect — the socket may connect after this
+    // effect runs, and rooms are dropped server-side on disconnect.
+    const handleConnect = () => {
+      joinedRoomsRef.current.forEach((mac) => socket.emit('join', mac));
+    };
+
     socket.on('sensorData', handleSensorData);
     socket.on('hubStatus', handleHubStatus);
     socket.on('alert', handleAlert);
+    socket.on('connect', handleConnect);
+    if (socket.connected) handleConnect(); // already connected — join now
 
     return () => {
       socket.off('sensorData', handleSensorData);
       socket.off('hubStatus', handleHubStatus);
       socket.off('alert', handleAlert);
+      socket.off('connect', handleConnect);
       // Leave all rooms on unmount
       joinedRoomsRef.current.forEach((mac) => socket.emit('leave', mac));
       joinedRoomsRef.current = [];

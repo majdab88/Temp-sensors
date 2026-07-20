@@ -6,14 +6,16 @@ const BASE_URL = 'https://majdtemp32.duckdns.org';
 let socket: Socket | null = null;
 
 export function connectSocket(token: string): Socket {
-  if (socket?.connected) return socket;
+  // Reuse the existing instance (even while still connecting) so we never spawn
+  // duplicate/orphaned sockets. disconnectSocket() clears it on logout.
+  if (socket) return socket;
 
   socket = io(BASE_URL, {
     auth: { token },
-    transports: ['websocket'],
+    transports: ['websocket', 'polling'],
     reconnection: true,
     reconnectionDelay: 2000,
-    reconnectionAttempts: 10,
+    reconnectionAttempts: Infinity,
   });
 
   return socket;

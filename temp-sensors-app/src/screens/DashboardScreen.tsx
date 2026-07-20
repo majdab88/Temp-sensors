@@ -2,10 +2,11 @@ import React, { useEffect, useState, useCallback } from 'react';
 import {
   View, FlatList, Text, StyleSheet, RefreshControl, ActivityIndicator,
 } from 'react-native';
+import { Ionicons } from '@expo/vector-icons';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { RootStackParamList } from '../navigation/AppNavigator';
 import SensorCard from '../components/SensorCard';
-import { getSensors } from '../services/api';
+import { getSensors, getActiveAlerts, ActiveAlert } from '../services/api';
 import { connectSocket, getSocket } from '../services/socket';
 import { Sensor } from '../types';
 import { useAuth } from '../context/AuthContext';
@@ -15,6 +16,7 @@ type Props = NativeStackScreenProps<RootStackParamList, 'Main'>;
 export default function DashboardScreen({ navigation }: any) {
   const { token } = useAuth();
   const [sensors, setSensors] = useState<Sensor[]>([]);
+  const [alerts, setAlerts] = useState<Record<string, ActiveAlert>>({});
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
 
@@ -27,15 +29,26 @@ export default function DashboardScreen({ navigation }: any) {
     }
   }, []);
 
+  const fetchAlerts = useCallback(async () => {
+    try {
+      const { data } = await getActiveAlerts();
+      const map: Record<string, ActiveAlert> = {};
+      data.forEach((a) => { map[a.sensor_mac] = a; });
+      setAlerts(map);
+    } catch {
+      // non-fatal — breaches will still arrive via the socket
+    }
+  }, []);
+
   // Track which hub rooms we've joined so we can leave on cleanup
   const joinedRoomsRef = React.useRef<string[]>([]);
 
   useEffect(() => {
     (async () => {
-      await fetchSensors();
+      await Promise.all([fetchSensors(), fetchAlerts()]);
       setLoading(false);
     })();
-  }, [fetchSensors]);
+  }, [fetchSensors, fetchAlerts]);
 
   // Join Socket.IO rooms for each hub and subscribe to live events
   useEffect(() => {
@@ -99,12 +112,26 @@ export default function DashboardScreen({ navigation }: any) {
       }
     };
 
+    // Alert transitions — keep a map of active breaches; 'recovered' clears one.
+    const handleAlert = (a: {
+      sensor_mac: string; sensor_name: string; kind: string; value: number; message: string; ts: number;
+    }) => {
+      setAlerts((prev) => {
+        const next = { ...prev };
+        if (a.kind === 'recovered') delete next[a.sensor_mac];
+        else next[a.sensor_mac] = a as ActiveAlert;
+        return next;
+      });
+    };
+
     socket.on('sensorData', handleSensorData);
     socket.on('hubStatus', handleHubStatus);
+    socket.on('alert', handleAlert);
 
     return () => {
       socket.off('sensorData', handleSensorData);
       socket.off('hubStatus', handleHubStatus);
+      socket.off('alert', handleAlert);
       // Leave all rooms on unmount
       joinedRoomsRef.current.forEach((mac) => socket.emit('leave', mac));
       joinedRoomsRef.current = [];
@@ -113,9 +140,11 @@ export default function DashboardScreen({ navigation }: any) {
 
   const onRefresh = async () => {
     setRefreshing(true);
-    await fetchSensors();
+    await Promise.all([fetchSensors(), fetchAlerts()]);
     setRefreshing(false);
   };
+
+  const activeAlerts = Object.values(alerts);
 
   if (loading) {
     return (
@@ -133,6 +162,7 @@ export default function DashboardScreen({ navigation }: any) {
         renderItem={({ item }) => (
           <SensorCard
             sensor={item}
+            alert={alerts[item.mac] || null}
             onPress={() =>
               navigation.navigate('SensorDetail', {
                 sensorId: item.id,
@@ -141,6 +171,18 @@ export default function DashboardScreen({ navigation }: any) {
             }
           />
         )}
+        ListHeaderComponent={
+          activeAlerts.length > 0 ? (
+            <View style={styles.banner}>
+              {activeAlerts.map((a) => (
+                <View key={a.sensor_mac} style={styles.bannerItem}>
+                  <Ionicons name="warning" size={15} color="#fca5a5" />
+                  <Text style={styles.bannerText} numberOfLines={2}>{a.message}</Text>
+                </View>
+              ))}
+            </View>
+          ) : null
+        }
         contentContainerStyle={styles.list}
         refreshControl={
           <RefreshControl
@@ -167,4 +209,17 @@ const styles = StyleSheet.create({
   empty: { alignItems: 'center', marginTop: 80 },
   emptyText: { color: '#94a3b8', fontSize: 16, fontWeight: '600' },
   emptyHint: { color: '#475569', fontSize: 13, marginTop: 8, textAlign: 'center' },
+  banner: { marginBottom: 12, gap: 8 },
+  bannerItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    backgroundColor: '#450a0a',
+    borderWidth: 1,
+    borderColor: '#7f1d1d',
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+  },
+  bannerText: { color: '#fca5a5', fontSize: 13, fontWeight: '600', flex: 1 },
 });

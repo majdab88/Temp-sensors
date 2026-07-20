@@ -2,11 +2,13 @@ import React from 'react';
 import { View, Text, TouchableOpacity, StyleSheet } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { Sensor } from '../types';
+import { ActiveAlert } from '../services/api';
 import BatteryBar from './BatteryBar';
 
 interface Props {
   sensor: Sensor;
   onPress: () => void;
+  alert?: ActiveAlert | null;
 }
 
 function timeAgo(timestamp: number): string {
@@ -35,7 +37,7 @@ const STATUS_CONFIG: Record<SensorStatus, { label: string; bg: string }> = {
   offline: { label: 'OFFLINE', bg: '#450a0a' },
 };
 
-export default function SensorCard({ sensor, onPress }: Props) {
+export default function SensorCard({ sensor, onPress, alert }: Props) {
   const status = getSensorStatus(sensor);
   const isOffline = status === 'offline';
   const cfg = STATUS_CONFIG[status];
@@ -50,7 +52,7 @@ export default function SensorCard({ sensor, onPress }: Props) {
 
   return (
     <TouchableOpacity
-      style={[styles.card, isOffline && styles.cardOffline]}
+      style={[styles.card, isOffline && styles.cardOffline, alert && styles.cardBreached]}
       onPress={onPress}
       activeOpacity={0.8}
     >
@@ -64,6 +66,13 @@ export default function SensorCard({ sensor, onPress }: Props) {
       </View>
 
       <Text style={styles.mac}>{sensor.mac}</Text>
+
+      {alert && (
+        <View style={styles.breachStrip}>
+          <Ionicons name={alert.kind === 'high' ? 'arrow-up' : 'arrow-down'} size={13} color="#fca5a5" />
+          <Text style={styles.breachText} numberOfLines={2}>{alert.message}</Text>
+        </View>
+      )}
 
       <View style={styles.grid}>
         <View style={styles.cell}>
@@ -105,6 +114,20 @@ const styles = StyleSheet.create({
   cardOffline: {
     opacity: 0.5,
   },
+  cardBreached: {
+    borderColor: '#ef4444',
+  },
+  breachStrip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#450a0a',
+    borderRadius: 8,
+    paddingHorizontal: 8,
+    paddingVertical: 5,
+    marginBottom: 10,
+    gap: 6,
+  },
+  breachText: { color: '#fca5a5', fontSize: 12, fontWeight: '600', flex: 1 },
   header: {
     flexDirection: 'row',
     justifyContent: 'space-between',

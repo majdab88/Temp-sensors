@@ -198,6 +198,33 @@ export interface ActiveAlert {
 export const getActiveAlerts = () =>
   api.get<ActiveAlert[]>('/alerts/active');
 
+export interface AlertRule {
+  sensor_id: number;
+  high_limit: number | null;
+  low_limit: number | null;
+  hysteresis: number;
+  channels: string[];
+  cooldown_s: number;
+  enabled: boolean;
+}
+
+export interface AlertRuleInput {
+  high_limit: number | null;
+  low_limit: number | null;
+  hysteresis: number;
+  channels: string[];
+  enabled: boolean;
+}
+
+export const getAlertRule = (sensorId: number) =>
+  api.get<AlertRule | null>(`/alerts/rules/${sensorId}`);
+
+export const saveAlertRule = (sensorId: number, rule: AlertRuleInput) =>
+  api.put<AlertRule>(`/alerts/rules/${sensorId}`, rule);
+
+export const deleteAlertRule = (sensorId: number) =>
+  api.delete(`/alerts/rules/${sensorId}`);
+
 // Push notifications
 export const registerPushToken = (token: string, platform: string) =>
   api.post('/push/register', { token, platform });

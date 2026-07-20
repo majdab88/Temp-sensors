@@ -7,7 +7,8 @@ import { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { Ionicons } from '@expo/vector-icons';
 import { RootStackParamList } from '../navigation/AppNavigator';
 import ReadingChart from '../components/ReadingChart';
-import { getSensorReadings, renameSensor, deleteSensor } from '../services/api';
+import AlertRuleModal from '../components/AlertRuleModal';
+import { getSensorReadings, renameSensor, deleteSensor, getAlertRule, AlertRule } from '../services/api';
 import { Reading, TimeRange } from '../types';
 import { useAuth } from '../context/AuthContext';
 import { canEdit } from '../utils/permissions';
@@ -28,6 +29,8 @@ export default function SensorDetailScreen({ route, navigation }: Props) {
   const [name, setName] = useState(initialName);
   const [nameInput, setNameInput] = useState(initialName);
   const [saving, setSaving] = useState(false);
+  const [rule, setRule] = useState<AlertRule | null>(null);
+  const [showAlertModal, setShowAlertModal] = useState(false);
 
   const fetchReadings = useCallback(async () => {
     try {
@@ -38,10 +41,21 @@ export default function SensorDetailScreen({ route, navigation }: Props) {
     }
   }, [sensorId, range]);
 
+  const fetchRule = useCallback(async () => {
+    try {
+      const { data } = await getAlertRule(sensorId);
+      setRule(data);
+    } catch {
+      // leave existing rule state
+    }
+  }, [sensorId]);
+
   useEffect(() => {
     setLoading(true);
     fetchReadings().finally(() => setLoading(false));
   }, [fetchReadings]);
+
+  useEffect(() => { fetchRule(); }, [fetchRule]);
 
   const onRefresh = async () => {
     setRefreshing(true);
@@ -142,6 +156,42 @@ export default function SensorDetailScreen({ route, navigation }: Props) {
         )}
       </View>
 
+      {/* Alerts */}
+      <View style={styles.alertCard}>
+        <View style={styles.alertHeader}>
+          <View style={styles.alertTitleRow}>
+            <Ionicons name="notifications-outline" size={16} color="#94a3b8" />
+            <Text style={styles.alertTitle}>Alerts</Text>
+          </View>
+          {editor && (
+            <TouchableOpacity onPress={() => setShowAlertModal(true)}>
+              <Text style={styles.alertEdit}>{rule ? 'Edit' : 'Set up'}</Text>
+            </TouchableOpacity>
+          )}
+        </View>
+        {rule && rule.enabled ? (
+          <Text style={styles.alertSummary}>
+            {[
+              rule.high_limit != null ? `Max ${rule.high_limit}°C` : null,
+              rule.low_limit != null ? `Min ${rule.low_limit}°C` : null,
+            ].filter(Boolean).join('   ·   ')}
+            {'    via '}{rule.channels.join(', ')}
+          </Text>
+        ) : (
+          <Text style={styles.alertMuted}>{rule ? 'Disabled' : 'No alerts set'}</Text>
+        )}
+      </View>
+
+      <AlertRuleModal
+        sensorId={sensorId}
+        sensorName={name}
+        visible={showAlertModal}
+        onClose={(changed) => {
+          setShowAlertModal(false);
+          if (changed) fetchRule();
+        }}
+      />
+
       {/* Time range selector */}
       <View style={styles.rangeRow}>
         {TIME_RANGES.map((r) => (
@@ -223,6 +273,20 @@ const styles = StyleSheet.create({
     marginRight: 4,
   },
   iconBtn: { padding: 4, marginLeft: 4 },
+  alertCard: {
+    backgroundColor: '#1e293b',
+    borderRadius: 12,
+    padding: 14,
+    marginBottom: 16,
+    borderWidth: 1,
+    borderColor: '#334155',
+  },
+  alertHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+  alertTitleRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  alertTitle: { color: '#94a3b8', fontSize: 13, fontWeight: '700' },
+  alertEdit: { color: '#38bdf8', fontSize: 14, fontWeight: '600' },
+  alertSummary: { color: '#e2e8f0', fontSize: 14, marginTop: 8 },
+  alertMuted: { color: '#64748b', fontSize: 13, marginTop: 8 },
   rangeRow: {
     flexDirection: 'row',
     backgroundColor: '#1e293b',

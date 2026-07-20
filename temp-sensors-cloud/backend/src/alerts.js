@@ -183,7 +183,8 @@ async function dispatch(ctx, rule, kind) {
 
 /**
  * Collect Expo push tokens for everyone who can see a sensor: the owning org's
- * owner plus all its members.
+ * owner, all its members, and any superadmin (superadmins can see every sensor,
+ * but are not org owners/members so they must be included explicitly).
  */
 async function getOrgPushTokens(sensorId) {
   const res = await query(
@@ -197,6 +198,8 @@ async function getOrgPushTokens(sensorId) {
        SELECT m.user_id
        FROM sensors s JOIN devices d ON d.id = s.device_id JOIN memberships m ON m.org_id = d.org_id
        WHERE s.id = $1
+       UNION
+       SELECT id FROM users WHERE role = 'superadmin'
      )`,
     [sensorId]
   );

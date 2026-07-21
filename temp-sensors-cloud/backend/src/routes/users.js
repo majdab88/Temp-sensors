@@ -14,7 +14,7 @@ router.use(requireSuperadmin);
 router.get('/', async (_req, res) => {
   try {
     const result = await query(
-      `SELECT u.id, u.username, u.email, u.role, u.created_at,
+      `SELECT u.id, u.username, u.email, u.phone, u.role, u.created_at,
               COALESCE(json_agg(
                 json_build_object('org_id', o.id, 'org_name', o.name)
               ) FILTER (WHERE o.id IS NOT NULL), '[]') AS organizations
@@ -59,7 +59,7 @@ router.post('/', async (req, res) => {
     let userRes;
     try {
       userRes = await query(
-        'INSERT INTO users (username, email, password_hash, role) VALUES ($1, $2, $3, $4) RETURNING id, username, email, role, created_at',
+        'INSERT INTO users (username, email, password_hash, role) VALUES ($1, $2, $3, $4) RETURNING id, username, email, phone, role, created_at',
         [username, emailStr, hash, userRole]
       );
     } catch (e) {
@@ -67,7 +67,7 @@ router.post('/', async (req, res) => {
         // Username collision — append random suffix
         const suffix = Math.random().toString(36).slice(2, 6);
         userRes = await query(
-          'INSERT INTO users (username, email, password_hash, role) VALUES ($1, $2, $3, $4) RETURNING id, username, email, role, created_at',
+          'INSERT INTO users (username, email, password_hash, role) VALUES ($1, $2, $3, $4) RETURNING id, username, email, phone, role, created_at',
           [`${username}_${suffix}`, emailStr, hash, userRole]
         );
       } else {
@@ -111,7 +111,7 @@ router.put('/:id', async (req, res) => {
     return res.status(400).json({ error: 'Invalid user id' });
   }
 
-  const { email, username, password, role } = req.body || {};
+  const { email, username, password, role, phone } = req.body || {};
   const updates = [];
   const params = [];
   let paramIdx = 1;
@@ -122,6 +122,14 @@ router.put('/:id', async (req, res) => {
       updates.push(`email = $${paramIdx++}`);
       params.push(emailStr);
     }
+  }
+  if (phone !== undefined) {
+    const phoneStr = String(phone).trim();
+    if (phoneStr !== '' && !/^\+[1-9]\d{6,14}$/.test(phoneStr)) {
+      return res.status(400).json({ error: 'Phone must be in international format, e.g. +972541234567' });
+    }
+    updates.push(`phone = $${paramIdx++}`);
+    params.push(phoneStr === '' ? null : phoneStr);
   }
   if (username && typeof username === 'string' && username.trim().length >= 2) {
     updates.push(`username = $${paramIdx++}`);

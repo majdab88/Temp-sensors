@@ -2,6 +2,7 @@
 
 const { query } = require('./db');
 const { sendPush } = require('./notify/push');
+const { sendWhatsApp } = require('./notify/whatsapp');
 
 // Channels the schema/UI knows about. Only 'dashboard' is delivered in phase 1;
 // 'push' and 'whatsapp' are wired in later phases. Rules may already request them
@@ -176,34 +177,49 @@ async function dispatch(ctx, rule, kind) {
     }
   }
 
-  // 'whatsapp' (phase 3) is not delivered yet.
+  if (wanted.includes('whatsapp')) {
+    try {
+      const phones = await getOrgPhones(ctx.sensorId);
+      if (phones.length) {
+        const { sent } = await sendWhatsApp(phones, message);
+        if (sent > 0) delivered.push('whatsapp');
+      }
+    } catch (err) {
+      console.error('[whatsapp] dispatch error:', err.message);
+    }
+  }
 
   return delivered;
 }
 
-/**
- * Collect Expo push tokens for everyone who can see a sensor: the owning org's
- * owner, all its members, and any superadmin (superadmins can see every sensor,
- * but are not org owners/members so they must be included explicitly).
- */
+// Recipients for a sensor's alerts: the owning org's owner, its members, and any
+// superadmin. Shared by push (tokens) and WhatsApp (phone numbers).
+const RECIPIENT_IDS_SQL = `
+  SELECT o.owner_id
+  FROM sensors s JOIN devices d ON d.id = s.device_id JOIN organizations o ON o.id = d.org_id
+  WHERE s.id = $1
+  UNION
+  SELECT m.user_id
+  FROM sensors s JOIN devices d ON d.id = s.device_id JOIN memberships m ON m.org_id = d.org_id
+  WHERE s.id = $1
+  UNION
+  SELECT id FROM users WHERE role = 'superadmin'`;
+
 async function getOrgPushTokens(sensorId) {
   const res = await query(
-    `SELECT DISTINCT pt.token
-     FROM push_tokens pt
-     WHERE pt.user_id IN (
-       SELECT o.owner_id
-       FROM sensors s JOIN devices d ON d.id = s.device_id JOIN organizations o ON o.id = d.org_id
-       WHERE s.id = $1
-       UNION
-       SELECT m.user_id
-       FROM sensors s JOIN devices d ON d.id = s.device_id JOIN memberships m ON m.org_id = d.org_id
-       WHERE s.id = $1
-       UNION
-       SELECT id FROM users WHERE role = 'superadmin'
-     )`,
+    `SELECT DISTINCT pt.token FROM push_tokens pt WHERE pt.user_id IN (${RECIPIENT_IDS_SQL})`,
     [sensorId]
   );
   return res.rows.map((r) => r.token);
+}
+
+async function getOrgPhones(sensorId) {
+  const res = await query(
+    `SELECT DISTINCT u.phone FROM users u
+     WHERE u.phone IS NOT NULL AND u.phone <> '' AND u.id IN (${RECIPIENT_IDS_SQL})`,
+    [sensorId]
+  );
+  return res.rows.map((r) => r.phone);
 }
 
 function buildMessage(ctx, rule, kind) {

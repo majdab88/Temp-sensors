@@ -151,7 +151,7 @@ router.get('/active', async (req, res) => {
        FROM (
          SELECT DISTINCT ON (e.sensor_id)
                 s.mac AS sensor_mac, s.name AS sensor_name, d.mac AS hub_mac,
-                e.kind, e.value, r.high_limit, r.low_limit,
+                e.kind, e.value, r.high_limit, r.low_limit, r.enabled,
                 EXTRACT(EPOCH FROM e.created_at)::bigint AS ts
          FROM alert_events e
          JOIN sensors s ON s.id = e.sensor_id
@@ -160,7 +160,17 @@ router.get('/active', async (req, res) => {
          WHERE s.active = TRUE ${orgFilter}
          ORDER BY e.sensor_id, e.created_at DESC
        ) latest
-       WHERE latest.kind <> 'recovered'`,
+       -- Only report a breach that is STILL valid under the current rule:
+       -- the stored reading must still violate the (possibly just-changed) limit,
+       -- and the rule must still exist and be enabled. Otherwise the sensor is no
+       -- longer breaching (the engine records 'recovered' on its next reading) and
+       -- we must not emit a stale, self-contradictory message.
+       WHERE latest.kind <> 'recovered'
+         AND latest.enabled IS TRUE
+         AND (
+           (latest.kind = 'high' AND latest.high_limit IS NOT NULL AND latest.value > latest.high_limit)
+           OR (latest.kind = 'low' AND latest.low_limit IS NOT NULL AND latest.value < latest.low_limit)
+         )`,
       params
     );
 

@@ -545,7 +545,7 @@
 
   <use href="#resV" x="2050" y="230"/>
   <text x="2068" y="255" class="ref">R5</text>
-  <text x="2068" y="269" class="val">10 kΩ 1%</text>
+  <text x="2068" y="269" class="val">47 kΩ 1%</text>
 
   <line x1="2050" y1="275" x2="2050" y2="305" class="wire"/>
   <use href="#j" x="2050" y="305"/>
@@ -584,6 +584,10 @@
   <polygon points="1870,510 1880,504 1880,516" class="netBox"/>
   <text x="1820" y="515" text-anchor="middle" class="netS">NTC_EN</text>
   <text x="1770" y="490" class="sub">→ WROOM GPIO22 (GND switch)</text>
+
+  <text x="1735" y="560" class="sub">R5 SIZING: match R5 to the NTC resistance at the MIDDLE of your operating range,</text>
+  <text x="1735" y="574" class="sub">not at 25 °C. 47 kΩ suits a −20 °C cold probe (NTC ≈ 36 k at −5 °C). A 10 kΩ R5</text>
+  <text x="1735" y="588" class="sub">centres at +25 °C and drives this low-side divider into ADC saturation below ~0 °C.</text>
 
   <!-- ============================================================ -->
   <!-- BLOCK 5 — PROGRAMMING HEADER (2×3 IDC)                       -->

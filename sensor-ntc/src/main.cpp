@@ -52,6 +52,23 @@
 #define SERIES_RESISTOR 10000   // Accurate 10kΩ resistor (measured ≈ nominal)
 #define NTC_SAMPLES        20   // ADC readings to average for stable result
 
+// --- NTC DIVIDER TOPOLOGY ---
+// Which leg the NTC sits on sets the R_ntc formula (and the ADC region):
+//   High-side (NTC between 3V3 and the ADC tap, series R from tap to GND):
+//     V_adc = Vcc·R_series/(R_ntc+R_series) → cold (high R_ntc) gives LOW ADC
+//     voltage = the accurate ADC region. This is the v1/XIAO layout.
+//   Low-side  (series R from 3V3 to the tap, NTC from tap to GND):
+//     V_adc = Vcc·R_ntc/(R_ntc+R_series) → cold gives HIGH ADC voltage, toward
+//     ADC saturation. The v2 WROOM PCB is wired this way
+//     (3V3 → R5 → NTC_ADC tap → probe → GND switch).
+#ifndef NTC_ON_LOW_SIDE
+#if BOARD_REV == 2
+#define NTC_ON_LOW_SIDE 1
+#else
+#define NTC_ON_LOW_SIDE 0
+#endif
+#endif
+
 // Full Steinhart-Hart equation: 1/T(K) = A + B·ln(R) + C·(ln(R))³
 // Default coefficients are derived from the simplified beta equation (B=3950, R0=10kΩ, T0=25°C).
 // Replace with probe-measured values for best accuracy.
@@ -464,9 +481,15 @@ float measureNTCResistance(float* outVcc = nullptr, float* outAdcMv = nullptr) {
     return -1.0f;
   }
 
-  // Resolve NTC resistance from voltage divider equation
-  // V_adc = vcc * R_series / (R_ntc + R_series)  =>  R_ntc = R_series * (vcc - V_adc) / V_adc
+  // Resolve NTC resistance from the voltage divider — formula depends on which
+  // leg the NTC sits on (see NTC_ON_LOW_SIDE above).
+#if NTC_ON_LOW_SIDE
+  // NTC on the low side (v2 WROOM): V_adc = vcc·R_ntc/(R_ntc+R_series)
+  return g_series_r * adcV / (vcc - adcV);
+#else
+  // NTC on the high side (v1/XIAO): V_adc = vcc·R_series/(R_ntc+R_series)
   return g_series_r * (vcc - adcV) / adcV;
+#endif
 }
 
 // Convert a resistance to °C via the runtime Steinhart-Hart coefficients.

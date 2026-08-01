@@ -7,6 +7,7 @@ const { Server } = require('socket.io');
 const { query } = require('./db');
 const { initMqtt, getHubStatus } = require('./mqtt');
 const { initAlerts } = require('./alerts');
+const { startHealthMonitor } = require('./health');
 const authRoutes      = require('./routes/auth');
 const deviceRoutes    = require('./routes/devices');
 const sensorRoutes    = require('./routes/sensors');
@@ -75,8 +76,9 @@ io.on('connection', (socket) => {
   });
 });
 
-// ── Alert engine + MQTT bridge ────────────────────────────────────────────────
+// ── Alert engine + health monitor + MQTT bridge ───────────────────────────────
 initAlerts(io);
+startHealthMonitor(io);
 initMqtt(io);
 
 // ── Seed superadmin on first boot ─────────────────────────────────────────────

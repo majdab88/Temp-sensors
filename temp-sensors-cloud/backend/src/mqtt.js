@@ -3,6 +3,7 @@
 const mqtt = require('mqtt');
 const { query } = require('./db');
 const { evaluateReading } = require('./alerts');
+const health = require('./health');
 
 let client;
 let _io;
@@ -143,6 +144,16 @@ async function handleSensorData(hubMac, data) {
     sensorId,
     temp: tempVal,
   }).catch((err) => console.error('Alert eval error:', err.message));
+
+  // Health monitor — last-seen / back-online / low-battery. Fire-and-forget.
+  health.onReading({
+    sensorId,
+    sensorMac: normMac,
+    sensorName,
+    hubMac: hubMac.toUpperCase(),
+    battery: battery ?? null,
+    tsMs: recordedAt.getTime(),
+  }).catch((err) => console.error('Health eval error:', err.message));
 }
 
 function handleHubStatus(hubMac, data) {
@@ -150,6 +161,7 @@ function handleHubStatus(hubMac, data) {
   const payload = { hub_mac: mac, ...data };
   hubStatusCache.set(mac, payload);
   _io.to(`hub:${mac}`).emit('hubStatus', payload);
+  if (typeof data.online === 'boolean') health.onHubStatus(mac, data.online);
 }
 
 function getHubStatus(mac) {

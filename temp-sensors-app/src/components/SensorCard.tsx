@@ -93,7 +93,7 @@ export default function SensorCard({ sensor, onPress, alert }: Props) {
       </View>
 
       <View style={styles.batteryRow}>
-        <Ionicons name="battery-half-outline" size={14} color="#fb923c" style={{ marginRight: 4 }} />
+        <Text style={styles.batteryLabel}>Battery</Text>
         <BatteryBar level={sensor.battery} />
       </View>
 
@@ -158,6 +158,7 @@ const styles = StyleSheet.create({
   cell: { alignItems: 'center', flex: 1 },
   cellValue: { color: '#f1f5f9', fontSize: 15, fontWeight: '700', marginTop: 4 },
   cellLabel: { color: '#64748b', fontSize: 11, marginTop: 2 },
-  batteryRow: { flexDirection: 'row', alignItems: 'center', marginBottom: 8 },
+  batteryRow: { flexDirection: 'row', alignItems: 'center', marginBottom: 8, gap: 8 },
+  batteryLabel: { color: '#64748b', fontSize: 12 },
   lastUpdate: { color: '#475569', fontSize: 11 },
 });

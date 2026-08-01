@@ -1,41 +1,34 @@
 import React from 'react';
-import { View, Text, StyleSheet } from 'react-native';
+import { Text, StyleSheet } from 'react-native';
+import Svg, { Rect } from 'react-native-svg';
 
 interface Props {
-  level: number; // 0-100, or 255 for error
+  level: number; // 0-100, or 255 for error, or null/undefined for unknown
 }
 
+/**
+ * Coarse battery indicator — full / half / low — from the L91 pack % (derived
+ * from true pack voltage). No number shown; the exact % is in the hub logs.
+ *   Full >= 40%  ·  Half 22-40%  ·  Low < 22%
+ */
 export default function BatteryBar({ level }: Props) {
-  if (level === undefined || level === null) {
-    return <Text style={styles.error}>--</Text>;
-  }
-  if (level === 255) {
-    return <Text style={styles.error}>N/A</Text>;
+  if (level == null || level === 255) {
+    return <Text style={styles.muted}>—</Text>;
   }
 
-  const pct = Math.max(0, Math.min(100, level));
-  const color = pct < 20 ? '#ef4444' : pct < 50 ? '#f97316' : '#22c55e';
+  const lvl   = level < 22 ? 'low' : level < 40 ? 'half' : 'full';
+  const color = lvl === 'low' ? '#ef4444' : lvl === 'half' ? '#eab308' : '#22c55e';
+  const fillW = lvl === 'low' ? 4 : lvl === 'half' ? 8.5 : 15;
 
   return (
-    <View style={styles.container}>
-      <View style={styles.track}>
-        <View style={[styles.fill, { width: `${pct}%`, backgroundColor: color }]} />
-      </View>
-      <Text style={[styles.label, { color }]}>{pct}%</Text>
-    </View>
+    <Svg width={24} height={13} viewBox="0 0 22 12">
+      <Rect x={0.75} y={0.75} width={18} height={10.5} rx={2} fill="none" stroke="#64748b" strokeWidth={1} />
+      <Rect x={19.5} y={3.5} width={2} height={5} rx={1} fill="#64748b" />
+      <Rect x={2.25} y={2.25} width={fillW} height={7.5} rx={1} fill={color} />
+    </Svg>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { flexDirection: 'row', alignItems: 'center', gap: 6 },
-  track: {
-    flex: 1,
-    height: 6,
-    backgroundColor: '#334155',
-    borderRadius: 3,
-    overflow: 'hidden',
-  },
-  fill: { height: '100%', borderRadius: 3 },
-  label: { fontSize: 12, fontWeight: '600', minWidth: 36, textAlign: 'right' },
-  error: { color: '#64748b', fontSize: 12 },
+  muted: { color: '#64748b', fontSize: 12 },
 });

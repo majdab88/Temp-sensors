@@ -3,7 +3,7 @@ import { NavLink, Outlet, useNavigate } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
 import socket from '../services/socket'
 
-function IconDashboard({ size = 22 }) {
+function IconDashboard({ size = 20 }) {
   return (
     <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
       <rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/>
@@ -12,7 +12,16 @@ function IconDashboard({ size = 22 }) {
   )
 }
 
-function IconHistory({ size = 22 }) {
+function IconBell({ size = 20 }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/>
+      <path d="M13.73 21a2 2 0 0 1-3.46 0"/>
+    </svg>
+  )
+}
+
+function IconHistory({ size = 20 }) {
   return (
     <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
       <polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/>
@@ -20,7 +29,7 @@ function IconHistory({ size = 22 }) {
   )
 }
 
-function IconDevices({ size = 22 }) {
+function IconDevices({ size = 20 }) {
   return (
     <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
       <rect x="2" y="3" width="20" height="14" rx="2"/>
@@ -30,17 +39,7 @@ function IconDevices({ size = 22 }) {
   )
 }
 
-function IconLogout({ size = 18 }) {
-  return (
-    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-      <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/>
-      <polyline points="16 17 21 12 16 7"/>
-      <line x1="21" y1="12" x2="9" y2="12"/>
-    </svg>
-  )
-}
-
-function IconSetup({ size = 22 }) {
+function IconSetup({ size = 20 }) {
   return (
     <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
       <circle cx="12" cy="12" r="3"/>
@@ -49,15 +48,7 @@ function IconSetup({ size = 22 }) {
   )
 }
 
-function IconThermo({ size = 20 }) {
-  return (
-    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-      <path d="M14 14.76V3.5a2.5 2.5 0 0 0-5 0v11.26a4.5 4.5 0 1 0 5 0z"/>
-    </svg>
-  )
-}
-
-function IconUsers({ size = 22 }) {
+function IconUsers({ size = 20 }) {
   return (
     <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
       <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/>
@@ -68,7 +59,7 @@ function IconUsers({ size = 22 }) {
   )
 }
 
-function IconOrg({ size = 22 }) {
+function IconOrg({ size = 20 }) {
   return (
     <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
       <path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>
@@ -77,7 +68,7 @@ function IconOrg({ size = 22 }) {
   )
 }
 
-function IconAccount({ size = 22 }) {
+function IconAccount({ size = 20 }) {
   return (
     <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
       <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/>
@@ -86,7 +77,7 @@ function IconAccount({ size = 22 }) {
   )
 }
 
-function IconAudit({ size = 22 }) {
+function IconAudit({ size = 20 }) {
   return (
     <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
       <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
@@ -124,6 +115,7 @@ export default function Layout() {
   if (showSensorPages) {
     navLinks.push(
       { to: '/', end: true,  icon: <IconDashboard />, label: 'Dashboard' },
+      { to: '/alerts',       icon: <IconBell />,      label: 'Alerts'    },
       { to: '/history',      icon: <IconHistory />,   label: 'History'   },
     )
     if (!isViewer) {
@@ -156,85 +148,53 @@ export default function Layout() {
   return (
     <div className="layout">
 
-      {/* ── Mobile top header ─────────────────────────────── */}
-      <header className="mobile-header">
-        <div className="mobile-brand">
-          <IconThermo size={18} />
-          <span>TempSensors</span>
-        </div>
-        <button className="mobile-logout-btn" onClick={handleLogout} aria-label="Logout">
-          <IconLogout size={18} />
-        </button>
-      </header>
+      {/* ── Top bar ────────────────────────────────────────── */}
+      <header className="topbar">
+        <NavLink to="/" className="brand">TempSensors<b>.</b></NavLink>
 
-      {/* ── Desktop sidebar ────────────────────────────────── */}
-      <nav className="sidebar">
-        <div className="sidebar-brand">
-          <IconThermo />
-          <span>TempSensors</span>
-        </div>
-        <ul className="nav-list">
-          {navLinks.map(({ to, end, icon, label, onClick, badge }) => (
-            <li key={to}>
-              <NavLink
-                to={to}
-                end={end}
-                className={({ isActive }) => 'nav-link' + (isActive ? ' active' : '')}
-                onClick={onClick}
-              >
-                {icon} {label}
-                {badge > 0 && <span className="nav-badge">{badge}</span>}
-              </NavLink>
-            </li>
+        <nav className="topnav">
+          {navLinks.map(({ to, end, label }) => (
+            <NavLink
+              key={to}
+              to={to}
+              end={end}
+              className={({ isActive }) => 'top-link' + (isActive ? ' active' : '')}
+            >
+              {label}
+            </NavLink>
           ))}
-        </ul>
-        <div className="sidebar-footer">
-          {user && (
-            <div style={{ fontSize: 12, color: 'var(--text-3)', marginBottom: 8, textAlign: 'center' }}>
-              {user.email || user.username} <span style={{ opacity: 0.6 }}>({user.role})</span>
-            </div>
+        </nav>
+
+        <div className="topbar-right">
+          {impersonation && (
+            <button className="imp-chip" onClick={handleStopImpersonating} title="Stop viewing this organization">
+              Viewing: {impersonation.orgName} ✕
+            </button>
           )}
-          <button className="logout-btn" onClick={handleLogout}>
-            <IconLogout /> Logout
-          </button>
+          {user && (
+            <span className="topbar-user">
+              {user.email || user.username} · {user.role}
+            </span>
+          )}
+          <button className="logout-btn" onClick={handleLogout}>Logout</button>
         </div>
-      </nav>
+      </header>
 
       {/* ── Main content ───────────────────────────────────── */}
       <main className="main-content">
-        {impersonation && (
-          <div style={{
-            background: '#fef3c7', color: '#92400e', padding: '8px 16px',
-            display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-            borderRadius: 8, marginBottom: 16, fontSize: 13, fontWeight: 500,
-          }}>
-            <span>Viewing as: <strong>{impersonation.orgName}</strong></span>
-            <button
-              className="btn btn-ghost btn-sm"
-              style={{ color: '#92400e', fontWeight: 600 }}
-              onClick={handleStopImpersonating}
-            >
-              Stop Viewing
-            </button>
-          </div>
-        )}
         <Outlet />
       </main>
 
       {/* ── Mobile bottom tab bar ─────────────────────────── */}
       <nav className="bottom-nav">
-        {navLinks.map(({ to, end, icon, label, onClick, badge }) => (
+        {navLinks.map(({ to, end, icon, label }) => (
           <NavLink
             key={to}
             to={to}
             end={end}
             className={({ isActive }) => 'bottom-nav-link' + (isActive ? ' active' : '')}
-            onClick={onClick}
           >
-            <div className="bottom-nav-icon">
-              {icon}
-              {badge > 0 && <span className="bottom-badge">{badge}</span>}
-            </div>
+            <div className="bottom-nav-icon">{icon}</div>
             <span>{label}</span>
           </NavLink>
         ))}

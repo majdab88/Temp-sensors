@@ -302,6 +302,17 @@ void notifyStatus(const char* state, const char* detail = "") {
   Serial.printf("[BLE] Status: %s\n", json.c_str());
 }
 
+// Persist the "fully provisioned" flag. Boot only enters normal mode when this
+// is set (see setup()), so a provisioning attempt that saved WiFi creds but
+// never fully succeeded (e.g. cloud failed) re-enters BLE provisioning on the
+// next boot instead of getting stuck in normal mode with no BLE.
+void markProvisioned() {
+  Preferences p;
+  p.begin("wifi", false);
+  p.putBool("provisioned", true);
+  p.end();
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // WIFI SCAN (called from provisioning loop when scanRequested flag is set)
 // ─────────────────────────────────────────────────────────────────────────────
@@ -385,6 +396,16 @@ class ProvServerCallbacks : public NimBLEServerCallbacks {
     Serial.printf("[BLE] Client connected: %s\n",
                   connInfo.getAddress().toString().c_str());
     digitalWrite(LED_PIN, HIGH);
+
+    // Fresh provisioning session on every connect: clear stale retry flags from
+    // a previous failed attempt and reset the status to idle. The WiFi radio is
+    // cleaned in the loop before the next WiFi.begin (kept out of this BLE-task
+    // callback). Lets a reconnect-to-retry start clean without a power cycle.
+    wifiProvReceived  = false;
+    cloudProvReceived = false;
+    wifiOkInProv      = false;
+    scanRequested     = false;
+    notifyStatus("idle");
   }
   void onDisconnect(NimBLEServer* s, NimBLEConnInfo& connInfo, int reason) override {
     Serial.printf("[BLE] Client disconnected (reason %d), restarting advertising\n", reason);
@@ -550,6 +571,8 @@ void startBleProvisioning() {
       wifiProvReceived = false;
 
       Serial.printf("Attempting WiFi connection to: %s\n", provSsid);
+      WiFi.disconnect(true);   // clear any half-up STA from a previous attempt
+      delay(100);
       WiFi.begin(provSsid, provPass);
 
       unsigned long start = millis();
@@ -593,6 +616,7 @@ void startBleProvisioning() {
           } else {
             mqttClient.disconnect();
             wifiSecure.stop();
+            markProvisioned();       // WiFi + cloud verified — safe to boot normal mode
             notifyStatus("connected", "");
             delay(1200);
             ESP.restart();
@@ -647,6 +671,7 @@ void startBleProvisioning() {
         } else {
           mqttClient.disconnect();
           wifiSecure.stop();
+          markProvisioned();       // WiFi + cloud verified — safe to boot normal mode
           notifyStatus("connected", "");
           delay(1200);
           ESP.restart();
@@ -1949,10 +1974,15 @@ void setup() {
   wPrefs.begin("wifi", true);
   String storedSsid = wPrefs.getString("ssid", "");
   String storedPass = wPrefs.getString("pass", "");
+  bool   provisioned = wPrefs.getBool("provisioned", false);
   wPrefs.end();
 
-  if (storedSsid.isEmpty()) {
-    // No credentials — enter BLE provisioning (blocks until done, then restarts)
+  // Enter BLE provisioning unless we have creds AND a prior attempt fully
+  // succeeded. Gating on `provisioned` (not just SSID presence) means a failed
+  // attempt — e.g. WiFi saved but cloud auth wrong — re-enters provisioning on
+  // the next boot instead of booting to normal mode with no BLE (which left the
+  // user unable to re-provision without a factory reset).
+  if (storedSsid.isEmpty() || !provisioned) {
     startBleProvisioning();
     return;  // unreachable; startBleProvisioning() calls ESP.restart()
   }

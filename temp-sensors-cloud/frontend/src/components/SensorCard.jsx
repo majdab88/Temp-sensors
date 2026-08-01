@@ -19,10 +19,10 @@ function getStatus(recordedAt) {
 }
 
 function formatAge(recordedAt) {
-  if (!recordedAt) return 'No data'
+  if (!recordedAt) return 'no data'
   const ageMs = Date.now() - new Date(recordedAt).getTime()
   const mins = Math.floor(ageMs / 60_000)
-  if (mins < 1) return 'Just now'
+  if (mins < 1) return 'just now'
   if (mins < 60) return `${mins} min ago`
   const hrs = Math.floor(mins / 60)
   if (hrs < 24) return `${hrs} h ago`
@@ -34,7 +34,32 @@ function fmt(val, decimals = 1) {
   return Number(val).toFixed(decimals)
 }
 
-export default function SensorCard({ sensor, reading, alert, onRename, onDelete, canEdit = true }) {
+/** Inline temperature sparkline. `points` is a chronological array of temps. */
+function Sparkline({ points, alarm }) {
+  if (!points || points.length < 2) return <div className="card-spark" />
+  const min = Math.min(...points)
+  const max = Math.max(...points)
+  const span = max - min || 1
+  const step = 100 / (points.length - 1)
+  const path = points
+    .map((v, i) => `${(i * step).toFixed(2)},${(27 - ((v - min) / span) * 24 + 1.5).toFixed(2)}`)
+    .join(' ')
+  return (
+    <svg className="card-spark" viewBox="0 0 100 30" preserveAspectRatio="none" aria-hidden="true">
+      <polyline
+        points={path}
+        fill="none"
+        stroke={alarm ? 'var(--accent)' : '#a2a3a0'}
+        strokeWidth="1.6"
+        vectorEffect="non-scaling-stroke"
+        strokeLinejoin="round"
+        strokeLinecap="round"
+      />
+    </svg>
+  )
+}
+
+export default function SensorCard({ sensor, reading, alert, rule, spark, onRename, onDelete, canEdit = true }) {
   const navigate = useNavigate()
   const [editing, setEditing] = useState(false)
   const [draft, setDraft] = useState('')
@@ -43,7 +68,21 @@ export default function SensorCard({ sensor, reading, alert, onRename, onDelete,
   const [showAlert, setShowAlert] = useState(false)
 
   const status = getStatus(reading?.recorded_at)
-  const statusLabel = { online: 'Online', stale: 'Stale', offline: 'Offline', unknown: 'No data' }[status]
+
+  // Chip: ALARM wins; otherwise connection status
+  const chip = alert
+    ? { label: 'ALARM', cls: 'alarm' }
+    : status === 'offline' ? { label: 'OFFLINE', cls: 'offline' }
+    : status === 'stale'   ? { label: 'STALE',   cls: 'stale' }
+    : status === 'unknown' ? { label: 'NO DATA', cls: '' }
+    : { label: 'OK', cls: '' }
+
+  // Limit note from the sensor's alert rule
+  const limitParts = []
+  if (rule?.enabled) {
+    if (rule.high_limit != null) limitParts.push(`max ${rule.high_limit}°`)
+    if (rule.low_limit != null) limitParts.push(`min ${rule.low_limit}°`)
+  }
 
   function startEdit(e) {
     e.stopPropagation()
@@ -98,6 +137,11 @@ export default function SensorCard({ sensor, reading, alert, onRename, onDelete,
       onClick={editing ? undefined : () => navigate(`/history?sensor=${sensor.id}`)}
       title={editing ? undefined : 'Click to view history'}
     >
+      <div className="card-eyebrow-row">
+        <span className="card-eyebrow">{sensor.hub_name || sensor.hub_mac || 'Sensor'}</span>
+        <span className={`chip ${chip.cls}`}>{chip.label}</span>
+      </div>
+
       <div className="sensor-card-header">
         <div style={{ flex: 1, minWidth: 0 }}>
           {editing ? (
@@ -123,40 +167,33 @@ export default function SensorCard({ sensor, reading, alert, onRename, onDelete,
           )}
           {!editing && <div className="sensor-mac">{sensor.mac}</div>}
         </div>
-        {alert && (
-          <div className="sensor-alert-badge" title={alert.message}>
-            {alert.kind === 'high' ? '▲' : '▼'} {fmt(alert.value)}°C
-          </div>
-        )}
-        <div className={`status-dot ${status}`} title={statusLabel} />
       </div>
 
-      <div className="sensor-readings">
-        <div className="reading-item">
-          <div className="reading-label">Temp</div>
-          {reading?.temp != null
-            ? <div className="reading-value temp">{fmt(reading.temp)}<span className="reading-unit">°C</span></div>
-            : <div className="reading-value na">--</div>
-          }
-        </div>
-        <div className="reading-item">
-          <div className="reading-label">Humidity</div>
-          {reading?.hum != null
-            ? <div className="reading-value hum">{fmt(reading.hum)}<span className="reading-unit">%</span></div>
-            : <div className="reading-value na">--</div>
-          }
-        </div>
+      <div className="card-reading">
+        {reading?.temp != null ? (
+          <>
+            <span className={`card-temp${alert ? ' alarm' : ''}`}>{fmt(reading.temp)}</span>
+            <span className="card-temp-unit">°C</span>
+          </>
+        ) : (
+          <span className="card-temp na">--</span>
+        )}
+        {reading?.hum != null && (
+          <span className="card-limit">RH {fmt(reading.hum, 0)} %</span>
+        )}
+        {limitParts.length > 0 && (
+          <span className="card-limit">{limitParts.join(' · ')}</span>
+        )}
       </div>
+
+      <Sparkline points={spark} alarm={!!alert} />
 
       <div className="sensor-meta">
         <span className="sensor-meta-item">{formatAge(reading?.recorded_at)}</span>
         {reading?.rssi != null && (
-          <span className="sensor-meta-item">RSSI {reading.rssi} dBm</span>
+          <span className="sensor-meta-item">{reading.rssi} dBm</span>
         )}
         <BatteryIcon level={reading?.battery} />
-        {sensor.hub_name && (
-          <span className="sensor-meta-item">Hub: {sensor.hub_name}</span>
-        )}
       </div>
 
       {showAlert && (

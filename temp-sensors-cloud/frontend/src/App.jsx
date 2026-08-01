@@ -4,6 +4,7 @@ import { AuthProvider, useAuth } from './context/AuthContext'
 import Layout from './components/Layout'
 import Login from './pages/Login'
 import Dashboard from './pages/Dashboard'
+import AlertRules from './pages/AlertRules'
 import History from './pages/History'
 import Devices from './pages/Devices'
 import Provision from './pages/Provision'
@@ -57,6 +58,7 @@ export default function App() {
             }
           >
             <Route index element={<IndexRedirect />} />
+            <Route path="alerts" element={<OrgScopedRoute><AlertRules /></OrgScopedRoute>} />
             <Route path="history" element={<OrgScopedRoute><History /></OrgScopedRoute>} />
             <Route path="devices" element={<OrgScopedRoute><Devices /></OrgScopedRoute>} />
             <Route path="setup" element={<OrgScopedRoute><Provision /></OrgScopedRoute>} />

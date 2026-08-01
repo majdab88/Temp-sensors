@@ -34,15 +34,18 @@ function fmt(val, decimals = 1) {
   return Number(val).toFixed(decimals)
 }
 
-/** Inline temperature sparkline. `points` is a chronological array of temps. */
+/** Inline temperature sparkline. `points` is a chronological array of temps.
+ *  The y-scale has a minimum span of 4 °C so sensor noise (±0.3°) renders as a
+ *  near-flat line instead of filling the full height. */
 function Sparkline({ points, alarm }) {
   if (!points || points.length < 2) return <div className="card-spark" />
   const min = Math.min(...points)
   const max = Math.max(...points)
-  const span = max - min || 1
+  const span = Math.max(max - min, 4)
+  const lo = (max + min) / 2 - span / 2
   const step = 100 / (points.length - 1)
   const path = points
-    .map((v, i) => `${(i * step).toFixed(2)},${(27 - ((v - min) / span) * 24 + 1.5).toFixed(2)}`)
+    .map((v, i) => `${(i * step).toFixed(2)},${(27 - ((v - lo) / span) * 24 + 1.5).toFixed(2)}`)
     .join(' ')
   return (
     <svg className="card-spark" viewBox="0 0 100 30" preserveAspectRatio="none" aria-hidden="true">

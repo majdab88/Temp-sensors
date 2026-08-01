@@ -68,6 +68,21 @@ export default function ReadingChart({ sensorId, from, to }) {
   // Thin points when there are many readings to keep the chart readable
   const pointRadius = readings.length > 80 ? 0 : 3
 
+  // Enforce a minimum 10 °C window on the temperature axis, centered on the
+  // data. Without this, Chart.js auto-fits the axis to the data range and a
+  // ±1° wiggle fills the whole chart height, reading as a dramatic swing.
+  const MIN_TEMP_SPAN = 10
+  const temps = readings.map((r) => r.temp).filter((t) => t != null)
+  let yTempMin, yTempMax
+  if (temps.length > 0) {
+    const lo = Math.min(...temps)
+    const hi = Math.max(...temps)
+    const span = Math.max(hi - lo + 2, MIN_TEMP_SPAN)
+    const mid = (hi + lo) / 2
+    yTempMin = Math.floor(mid - span / 2)
+    yTempMax = Math.ceil(mid + span / 2)
+  }
+
   const labels = readings.map((r) => formatLabel(r.recorded_at))
 
   const data = {
@@ -121,6 +136,8 @@ export default function ReadingChart({ sensorId, from, to }) {
         type: 'linear',
         display: true,
         position: 'left',
+        min: yTempMin,
+        max: yTempMax,
         title: { display: true, text: '°C', color: '#ef4444', font: { size: 12 } },
         ticks: { color: '#ef4444', font: { size: 11 } },
         grid: { color: '#f1f5f9' },

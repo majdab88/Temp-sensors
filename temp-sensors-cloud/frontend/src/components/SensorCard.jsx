@@ -2,6 +2,7 @@ import React, { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import api from '../services/api'
 import AlertRuleModal from './AlertRuleModal'
+import BatteryIcon from './BatteryIcon'
 
 /**
  * Determine online status from the last reading timestamp.
@@ -152,9 +153,7 @@ export default function SensorCard({ sensor, reading, alert, onRename, onDelete,
         {reading?.rssi != null && (
           <span className="sensor-meta-item">RSSI {reading.rssi} dBm</span>
         )}
-        {reading?.battery != null && reading.battery !== 255 && (
-          <span className="sensor-meta-item">Bat {reading.battery}%</span>
-        )}
+        <BatteryIcon level={reading?.battery} />
         {sensor.hub_name && (
           <span className="sensor-meta-item">Hub: {sensor.hub_name}</span>
         )}

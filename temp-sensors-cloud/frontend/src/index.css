@@ -206,7 +206,8 @@ button {
    ============================================================ */
 .sensor-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  /* Wide columns → landscape cards, like the instrument-panel mockup */
+  grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
   gap: 16px;
 }
 

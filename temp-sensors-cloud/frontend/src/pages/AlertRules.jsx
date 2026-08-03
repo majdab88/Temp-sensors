@@ -29,8 +29,15 @@ export default function AlertRules() {
   const [formError, setFormError] = useState(null)
   const [formOk, setFormOk] = useState(null)
 
+  // Device health alert settings (org-wide)
+  const [health, setHealth] = useState(null)
+  const [healthSaving, setHealthSaving] = useState(false)
+  const [healthMsg, setHealthMsg] = useState(null)
+
   const fetchAll = useCallback(async () => {
     try {
+      api.get('/health/settings').then((r) => setHealth(r.data)).catch(() => {})
+
       const sensorsRes = await api.get('/sensors')
       const list = sensorsRes.data
       setSensors(list)
@@ -148,6 +155,29 @@ export default function AlertRules() {
     }
   }
 
+  function setH(patch) { setHealth((h) => ({ ...h, ...patch })); setHealthMsg(null) }
+
+  async function saveHealth() {
+    if (!health) return
+    setHealthSaving(true)
+    setHealthMsg(null)
+    try {
+      const { data } = await api.put('/health/settings', {
+        sensor_offline_enabled: !!health.sensor_offline_enabled,
+        sensor_offline_minutes: parseInt(health.sensor_offline_minutes, 10),
+        hub_offline_enabled: !!health.hub_offline_enabled,
+        hub_offline_minutes: parseInt(health.hub_offline_minutes, 10),
+        low_battery_enabled: !!health.low_battery_enabled,
+      })
+      setHealth(data)
+      setHealthMsg({ ok: true, text: 'Saved' })
+    } catch (err) {
+      setHealthMsg({ ok: false, text: err.response?.data?.error || 'Failed to save' })
+    } finally {
+      setHealthSaving(false)
+    }
+  }
+
   if (loading) return <div className="state-loading">Loading alert rules...</div>
   if (error) return <div className="state-error"><h3>Error</h3><p>{error}</p></div>
 
@@ -177,6 +207,67 @@ export default function AlertRules() {
           {withRules.length} rule{withRules.length !== 1 ? 's' : ''} · {firingCount} firing
         </p>
       </div>
+
+      {/* ── Device health alerts (org-wide) ── */}
+      {health && (
+        <section className="health-panel">
+          <div className="health-panel-head">
+            <span className="rail-title" style={{ marginBottom: 0 }}>Device health alerts</span>
+            {canEdit && (
+              <div className="health-panel-actions">
+                {healthMsg && (
+                  <span className="health-msg" style={{ color: healthMsg.ok ? 'var(--green)' : 'var(--accent)' }}>
+                    {healthMsg.text}
+                  </span>
+                )}
+                <button className="btn btn-primary btn-sm" onClick={saveHealth} disabled={healthSaving}>
+                  {healthSaving ? 'Saving…' : 'Save'}
+                </button>
+              </div>
+            )}
+          </div>
+
+          <div className="health-rows">
+            <div className="health-row">
+              <label className="modal-toggle" style={{ marginBottom: 0 }}>
+                <input type="checkbox" disabled={!canEdit}
+                  checked={!!health.sensor_offline_enabled}
+                  onChange={(e) => setH({ sensor_offline_enabled: e.target.checked })} />
+                <span>Sensor offline</span>
+              </label>
+              <span className="health-inline">no reading for</span>
+              <input type="number" className="health-num" min={5} max={1440} disabled={!canEdit || !health.sensor_offline_enabled}
+                value={health.sensor_offline_minutes}
+                onChange={(e) => setH({ sensor_offline_minutes: e.target.value })} />
+              <span className="health-inline">min</span>
+            </div>
+
+            <div className="health-row">
+              <label className="modal-toggle" style={{ marginBottom: 0 }}>
+                <input type="checkbox" disabled={!canEdit}
+                  checked={!!health.hub_offline_enabled}
+                  onChange={(e) => setH({ hub_offline_enabled: e.target.checked })} />
+                <span>Hub offline</span>
+              </label>
+              <span className="health-inline">grace</span>
+              <input type="number" className="health-num" min={1} max={1440} disabled={!canEdit || !health.hub_offline_enabled}
+                value={health.hub_offline_minutes}
+                onChange={(e) => setH({ hub_offline_minutes: e.target.value })} />
+              <span className="health-inline">min</span>
+            </div>
+
+            <div className="health-row">
+              <label className="modal-toggle" style={{ marginBottom: 0 }}>
+                <input type="checkbox" disabled={!canEdit}
+                  checked={!!health.low_battery_enabled}
+                  onChange={(e) => setH({ low_battery_enabled: e.target.checked })} />
+                <span>Low battery</span>
+              </label>
+              <span className="health-inline">notify when a pack runs low</span>
+            </div>
+          </div>
+        </section>
+      )}
 
       <div className="rules-layout">
         {/* ── Rules table ── */}

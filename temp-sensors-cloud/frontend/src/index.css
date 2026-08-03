@@ -846,8 +846,21 @@ tbody tr:hover td { background: #f8fafc; }
 @media (max-width: 768px) {
   /* Topbar collapses to brand + logout; bottom tab bar takes over navigation */
   .topnav, .topbar-user { display: none; }
-  .topbar { padding: 0 16px; gap: 12px; }
+  .topbar { padding: 0 14px; gap: 10px; }
+  .brand { font-size: 15px; }
+  .topbar-right { gap: 8px; min-width: 0; }
 
+  /* Long org names must truncate, not push Logout off-screen */
+  .imp-chip {
+    display: block;
+    max-width: 38vw;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    padding: 5px 8px;
+  }
+
+  /* Many tabs (superadmin) — keep a usable min width and let the bar scroll */
   .bottom-nav {
     display: flex;
     position: fixed;
@@ -858,6 +871,15 @@ tbody tr:hover td { background: #f8fafc; }
     background: var(--bg-2);
     border-top: 1px solid var(--border);
     z-index: 200;
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+
+  .bottom-nav::-webkit-scrollbar { display: none; }
+
+  .bottom-nav-link {
+    flex: 1 0 64px;
+    white-space: nowrap;
   }
 
   .main-content {
@@ -866,13 +888,13 @@ tbody tr:hover td { background: #f8fafc; }
   }
 
   .alarm-hero { padding: 18px 16px 20px; margin-bottom: 18px; }
+  .alarm-hero h2 { overflow-wrap: anywhere; }
 
-  .sensor-grid {
-    grid-template-columns: 1fr 1fr;
-    gap: 12px;
-  }
+  /* Cards: let the auto-fill grid decide — one column on phones. Forcing
+     1fr 1fr crushed two 340px-designed cards into ~170px columns. */
+  .sensor-grid { gap: 12px; }
 
-  .card-temp { font-size: 28px; }
+  .card-temp { font-size: 30px; }
 
   .history-controls {
     flex-direction: column;
@@ -880,10 +902,6 @@ tbody tr:hover td { background: #f8fafc; }
   }
 
   .history-controls .form-group { min-width: 0; }
-}
-
-@media (max-width: 400px) {
-  .sensor-grid { grid-template-columns: 1fr; }
 }
 
 /* ============================================================
@@ -1622,6 +1640,8 @@ button.perm-pill:hover {
   display: flex;
   align-items: baseline;
   gap: 14px;
+  row-gap: 8px;
+  flex-wrap: wrap;
   margin-bottom: 14px;
 }
 

@@ -147,16 +147,19 @@ router.get('/active', async (req, res) => {
 
     const result = await query(
       `SELECT latest.sensor_mac, latest.sensor_name, latest.hub_mac,
-              latest.kind, latest.value, latest.high_limit, latest.low_limit, latest.ts
+              latest.kind, latest.value, latest.high_limit, latest.low_limit, latest.ts,
+              latest.excursion_id, latest.ack_at, latest.ack_by
        FROM (
          SELECT DISTINCT ON (e.sensor_id)
                 s.mac AS sensor_mac, s.name AS sensor_name, d.mac AS hub_mac,
                 e.kind, e.value, r.high_limit, r.low_limit, r.enabled,
+                ex.id AS excursion_id, ex.ack_at, ex.ack_by,
                 EXTRACT(EPOCH FROM e.created_at)::bigint AS ts
          FROM alert_events e
          JOIN sensors s ON s.id = e.sensor_id
          JOIN devices d ON d.id = s.device_id
          LEFT JOIN alert_rules r ON r.sensor_id = e.sensor_id
+         LEFT JOIN excursions ex ON ex.sensor_id = e.sensor_id AND ex.ended_at IS NULL
          WHERE s.active = TRUE ${orgFilter}
          ORDER BY e.sensor_id, e.created_at DESC
        ) latest
@@ -184,6 +187,9 @@ router.get('/active', async (req, res) => {
       low_limit: r.low_limit,
       message: formatAlertMessage({ name: r.sensor_name || r.sensor_mac, temp: r.value, kind: r.kind, high: r.high_limit, low: r.low_limit }),
       ts: r.ts * 1000,
+      excursion_id: r.excursion_id ?? null,
+      acked: r.ack_at != null,
+      ack_by: r.ack_by ?? null,
     }));
     res.json(rows);
   } catch (err) {

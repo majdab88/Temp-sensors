@@ -47,6 +47,28 @@ export default function Dashboard() {
     setSensors((prev) => prev.filter((s) => s.id !== id))
   }, [])
 
+  const [acking, setAcking] = useState(null) // excursion id in flight
+
+  // Acknowledge the excursion behind an active alarm (compliance sign-off).
+  const acknowledge = useCallback(async (excursionId) => {
+    if (!excursionId) return
+    setAcking(excursionId)
+    try {
+      await api.post(`/excursions/${excursionId}/ack`)
+      const who = user?.email || user?.username || 'you'
+      setAlerts((prev) => {
+        const next = { ...prev }
+        for (const mac in next) {
+          if (next[mac].excursion_id === excursionId) {
+            next[mac] = { ...next[mac], acked: true, ack_by: who }
+          }
+        }
+        return next
+      })
+    } catch { /* toast later (Track 3) */ }
+    finally { setAcking(null) }
+  }, [user])
+
   // Fetch sensors + devices, then latest readings / rules / sparklines / events
   const fetchData = useCallback(async () => {
     try {
@@ -224,6 +246,19 @@ export default function Dashboard() {
           </h2>
           <div className="alarm-hero-actions">
             <button className="btn btn-onred" onClick={() => viewSensor(hero.top.sensor_mac)}>View sensor</button>
+            {canEdit && hero.top.excursion_id && (
+              hero.top.acked ? (
+                <span className="alarm-hero-acked">✓ Acknowledged{hero.top.ack_by ? ` · ${hero.top.ack_by}` : ''}</span>
+              ) : (
+                <button
+                  className="btn btn-onred-ghost"
+                  disabled={acking === hero.top.excursion_id}
+                  onClick={() => acknowledge(hero.top.excursion_id)}
+                >
+                  {acking === hero.top.excursion_id ? 'Acknowledging…' : 'Acknowledge'}
+                </button>
+              )
+            )}
             <button className="btn btn-onred-ghost" onClick={() => navigate('/alerts')}>Alert rules</button>
             {hero.rest.length > 0 && (
               <span className="alarm-hero-more">
@@ -295,7 +330,22 @@ export default function Dashboard() {
                     {a.kind === 'high' && a.high_limit != null && ` vs max ${a.high_limit} °C`}
                     {a.kind === 'low' && a.low_limit != null && ` vs min ${a.low_limit} °C`}
                   </div>
-                  <button className="btn btn-ghost btn-sm" onClick={() => viewSensor(a.sensor_mac)}>Details</button>
+                  <div className="rail-alarm-actions">
+                    <button className="btn btn-ghost btn-sm" onClick={() => viewSensor(a.sensor_mac)}>Details</button>
+                    {canEdit && a.excursion_id && (
+                      a.acked ? (
+                        <span className="rail-acked">✓ Acked{a.ack_by ? ` · ${a.ack_by}` : ''}</span>
+                      ) : (
+                        <button
+                          className="btn btn-sm"
+                          disabled={acking === a.excursion_id}
+                          onClick={() => acknowledge(a.excursion_id)}
+                        >
+                          {acking === a.excursion_id ? '…' : 'Acknowledge'}
+                        </button>
+                      )
+                    )}
+                  </div>
                 </div>
               ))
             )}

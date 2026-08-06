@@ -6,6 +6,7 @@ import Login from './pages/Login'
 import Dashboard from './pages/Dashboard'
 import AlertRules from './pages/AlertRules'
 import History from './pages/History'
+import Reports from './pages/Reports'
 import Devices from './pages/Devices'
 import Provision from './pages/Provision'
 import Users from './pages/Users'
@@ -60,6 +61,7 @@ export default function App() {
             <Route index element={<IndexRedirect />} />
             <Route path="alerts" element={<OrgScopedRoute><AlertRules /></OrgScopedRoute>} />
             <Route path="history" element={<OrgScopedRoute><History /></OrgScopedRoute>} />
+            <Route path="reports" element={<OrgScopedRoute><Reports /></OrgScopedRoute>} />
             <Route path="devices" element={<OrgScopedRoute><Devices /></OrgScopedRoute>} />
             <Route path="setup" element={<OrgScopedRoute><Provision /></OrgScopedRoute>} />
             <Route path="organizations" element={<Organizations />} />

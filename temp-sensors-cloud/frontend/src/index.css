@@ -1995,6 +1995,77 @@ button.perm-pill:hover {
   .report-actions { margin-left: 0; width: 100%; }
 }
 
+/* ============================================================
+   History chart — stats strip + custom range
+   ============================================================ */
+.chart-stats {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-bottom: 18px;
+}
+
+.chart-stat {
+  border: 1px solid var(--border);
+  background: var(--bg-2);
+  padding: 8px 14px;
+  min-width: 78px;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.chart-stat.warn { border-color: var(--yellow); }
+.chart-stat.ok   { border-color: var(--green); }
+
+.chart-stat-label {
+  font-family: var(--font-mono);
+  font-size: 9.5px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--text-3);
+}
+
+.chart-stat-val {
+  font-family: var(--font-mono);
+  font-size: 17px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-1);
+}
+
+.chart-stat.warn .chart-stat-val { color: var(--yellow); }
+.chart-stat.ok   .chart-stat-val { color: var(--green); }
+
+.custom-range {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.custom-range-label {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--text-3);
+}
+
+.custom-range-sep { color: var(--text-3); }
+
+.custom-range input[type="date"] {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--text-1);
+}
+
+@media (max-width: 640px) {
+  .custom-range { flex-wrap: wrap; }
+}
+
 /* Print — clean paper output for the excursion log (Print / PDF button) */
 @media print {
   .topbar, .bottom-nav, .no-print { display: none !important; }

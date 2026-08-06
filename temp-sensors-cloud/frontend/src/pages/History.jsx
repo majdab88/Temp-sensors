@@ -24,19 +24,39 @@ export default function History() {
       .finally(() => setLoadingSensors(false))
   }, [])
 
+  const customFrom = searchParams.get('from') || ''
+  const customTo   = searchParams.get('to')   || ''
+  const isCustom   = !!(customFrom && customTo)
+
   function selectSensor(id) {
-    setSearchParams({ sensor: id, range: rangeHours })
+    const params = { sensor: id }
+    if (isCustom) { params.from = customFrom; params.to = customTo }
+    else params.range = rangeHours
+    setSearchParams(params)
   }
 
   function selectRange(hours) {
     const params = { range: hours }
     if (sensorId) params.sensor = sensorId
+    setSearchParams(params) // drops any custom from/to
+  }
+
+  function setCustom(key, value) {
+    const params = { from: customFrom, to: customTo, [key]: value }
+    if (sensorId) params.sensor = sensorId
+    // Only commit once both ends are set; otherwise stash the partial value
     setSearchParams(params)
   }
 
-  // Compute from/to for the selected range
-  const to   = new Date().toISOString()
-  const from = new Date(Date.now() - rangeHours * 60 * 60 * 1000).toISOString()
+  // Compute from/to: an explicit custom range wins over the preset buttons.
+  let from, to
+  if (isCustom) {
+    from = new Date(`${customFrom}T00:00:00`).toISOString()
+    to   = new Date(`${customTo}T23:59:59`).toISOString()
+  } else {
+    to   = new Date().toISOString()
+    from = new Date(Date.now() - rangeHours * 60 * 60 * 1000).toISOString()
+  }
 
   const selectedSensor = sensors.find((s) => s.id === sensorId)
 
@@ -70,12 +90,29 @@ export default function History() {
           {RANGES.map((r) => (
             <button
               key={r.hours}
-              className={`btn btn-ghost${rangeHours === r.hours ? ' active' : ''}`}
+              className={`btn btn-ghost${!isCustom && rangeHours === r.hours ? ' active' : ''}`}
               onClick={() => selectRange(r.hours)}
             >
               {r.label}
             </button>
           ))}
+        </div>
+
+        <div className="custom-range">
+          <span className="custom-range-label">Custom</span>
+          <input
+            type="date"
+            value={customFrom}
+            max={customTo || undefined}
+            onChange={(e) => setCustom('from', e.target.value)}
+          />
+          <span className="custom-range-sep">→</span>
+          <input
+            type="date"
+            value={customTo}
+            min={customFrom || undefined}
+            onChange={(e) => setCustom('to', e.target.value)}
+          />
         </div>
       </div>
 

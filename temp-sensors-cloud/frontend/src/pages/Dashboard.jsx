@@ -4,6 +4,8 @@ import SensorCard from '../components/SensorCard'
 import api from '../services/api'
 import socket from '../services/socket'
 import { useAuth } from '../context/AuthContext'
+import { useToast } from '../context/ToastContext'
+import { smartTime } from '../utils/time'
 
 const DAY_MS = 24 * 60 * 60 * 1000
 
@@ -27,6 +29,7 @@ function eventText(e) {
 
 export default function Dashboard() {
   const { user } = useAuth()
+  const toast = useToast()
   const navigate = useNavigate()
   const canEdit = user?.permissionLevel !== 'viewer'
   const [sensors, setSensors] = useState([])
@@ -65,9 +68,12 @@ export default function Dashboard() {
         }
         return next
       })
-    } catch { /* toast later (Track 3) */ }
+      toast.success('Excursion acknowledged')
+    } catch {
+      toast.error('Failed to acknowledge — try again')
+    }
     finally { setAcking(null) }
-  }, [user])
+  }, [user, toast])
 
   // Fetch sensors + devices, then latest readings / rules / sparklines / events
   const fetchData = useCallback(async () => {
@@ -202,7 +208,14 @@ export default function Dashboard() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [fetchData])
 
-  if (loading) return <div className="state-loading">Loading sensors...</div>
+  if (loading) return (
+    <div>
+      <div className="ok-strip skeleton-strip"><span className="ok-dot" />Loading sensors…</div>
+      <div className="sensor-grid">
+        {Array.from({ length: 6 }).map((_, i) => <div key={i} className="skeleton-card" />)}
+      </div>
+    </div>
+  )
   if (error)   return <div className="state-error"><h3>Error</h3><p>{error}</p></div>
 
   const activeAlerts = Object.values(alerts)
@@ -359,7 +372,7 @@ export default function Dashboard() {
               events.map((e) => (
                 <div className="rail-event" key={e.id}>
                   <span className="rail-event-time">
-                    {new Date(e.ts * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                    {smartTime(new Date(e.ts * 1000))}
                   </span>
                   <span className="rail-event-text">{eventText(e)}</span>
                 </div>

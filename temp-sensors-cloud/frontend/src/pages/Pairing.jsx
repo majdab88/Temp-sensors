@@ -2,10 +2,12 @@ import React, { useEffect, useState, useCallback } from 'react'
 import PairingPanel from '../components/PairingPanel'
 import api from '../services/api'
 import socket from '../services/socket'
+import { useToast } from '../context/ToastContext'
 
 const TABS = ['pending', 'approved', 'rejected']
 
 export default function Pairing() {
+  const toast = useToast()
   const [tab, setTab] = useState('pending')
   const [requests, setRequests] = useState([])
   const [loading, setLoading] = useState(true)
@@ -39,8 +41,9 @@ export default function Pairing() {
     try {
       await api.post(`/pairing/requests/${id}/approve`)
       setRequests((prev) => prev.filter((r) => r.id !== id))
+      toast.success('Sensor approved')
     } catch {
-      alert('Failed to approve. Please try again.')
+      toast.error('Failed to approve. Please try again.')
     } finally {
       setProcessing(null)
     }
@@ -51,8 +54,9 @@ export default function Pairing() {
     try {
       await api.post(`/pairing/requests/${id}/reject`)
       setRequests((prev) => prev.filter((r) => r.id !== id))
+      toast.info('Pairing request rejected')
     } catch {
-      alert('Failed to reject. Please try again.')
+      toast.error('Failed to reject. Please try again.')
     } finally {
       setProcessing(null)
     }

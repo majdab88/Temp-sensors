@@ -1996,6 +1996,111 @@ button.perm-pill:hover {
 }
 
 /* ============================================================
+   Skeleton loaders
+   ============================================================ */
+.skeleton-strip { opacity: 0.6; }
+
+.skeleton-card {
+  height: 168px;
+  border: 1px solid var(--border);
+  background: linear-gradient(90deg, var(--bg-2) 25%, var(--border) 37%, var(--bg-2) 63%);
+  background-size: 400% 100%;
+  animation: shimmer 1.3s ease-in-out infinite;
+}
+
+@keyframes shimmer {
+  0%   { background-position: 100% 50%; }
+  100% { background-position: 0 50%; }
+}
+
+/* ============================================================
+   Toasts + confirm dialog
+   ============================================================ */
+.toast-host {
+  position: fixed;
+  bottom: 20px;
+  right: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  z-index: 1000;
+  max-width: min(360px, calc(100vw - 40px));
+}
+
+.toast {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 11px 14px;
+  border: 1px solid var(--border);
+  border-left-width: 3px;
+  background: var(--bg);
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.12);
+  font-family: var(--font-ui);
+  font-size: 13.5px;
+  line-height: 1.35;
+  text-align: left;
+  color: var(--text-1);
+  cursor: pointer;
+  animation: toastIn 0.18s ease-out;
+}
+
+.toast-msg { flex: 1; }
+
+.toast-icon {
+  flex-shrink: 0;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  font-size: 11px;
+  font-weight: 700;
+  color: #fff;
+  margin-top: 1px;
+}
+
+.toast-success { border-left-color: var(--green); }
+.toast-success .toast-icon { background: var(--green); }
+.toast-error   { border-left-color: var(--accent); }
+.toast-error   .toast-icon { background: var(--accent); }
+.toast-info    { border-left-color: var(--blue); }
+.toast-info    .toast-icon { background: var(--blue); }
+
+@keyframes toastIn {
+  from { opacity: 0; transform: translateY(8px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+.confirm-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(19, 19, 19, 0.45);
+  display: grid;
+  place-items: center;
+  z-index: 1100;
+  padding: 20px;
+}
+
+.confirm-box {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  padding: 24px;
+  max-width: 420px;
+  width: 100%;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.2);
+}
+
+.confirm-title { font-size: 17px; font-weight: 800; margin-bottom: 8px; }
+.confirm-msg   { font-size: 14px; color: var(--text-2); line-height: 1.45; margin-bottom: 20px; }
+
+.confirm-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+/* ============================================================
    History chart — stats strip + custom range
    ============================================================ */
 .chart-stats {

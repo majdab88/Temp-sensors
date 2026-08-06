@@ -49,11 +49,41 @@ async function getState(sensorId) {
     [sensorId]
   );
   const last = res.rows[0];
-  const state = last && last.kind !== 'recovered'
-    ? { breached: true, kind: last.kind, lastNotifyMs: Date.now() }
-    : { breached: false, kind: null, lastNotifyMs: 0 };
+  const breached = !!(last && last.kind !== 'recovered');
+
+  // Re-attach to the open excursion so a restart keeps tracking the same episode.
+  let excursionId = null;
+  if (breached) {
+    const ex = await query(
+      'SELECT id FROM excursions WHERE sensor_id = $1 AND ended_at IS NULL ORDER BY started_at DESC LIMIT 1',
+      [sensorId]
+    );
+    excursionId = ex.rows[0]?.id ?? null;
+  }
+
+  const state = breached
+    ? { breached: true, kind: last.kind, lastNotifyMs: Date.now(), excursionId }
+    : { breached: false, kind: null, lastNotifyMs: 0, excursionId: null };
   alertState.set(sensorId, state);
   return state;
+}
+
+// ── Excursion records (open on breach, track peak, close on recovery) ────────
+async function openExcursion(sensorId, kind, temp, limit) {
+  const r = await query(
+    'INSERT INTO excursions (sensor_id, kind, peak_value, limit_value) VALUES ($1, $2, $3, $4) RETURNING id',
+    [sensorId, kind, temp, limit]
+  );
+  return r.rows[0].id;
+}
+
+async function updateExcursionPeak(id, kind, temp) {
+  const worse = kind === 'high' ? 'GREATEST' : 'LEAST';
+  await query(`UPDATE excursions SET peak_value = ${worse}(peak_value, $2) WHERE id = $1`, [id, temp]);
+}
+
+async function closeExcursion(id) {
+  await query('UPDATE excursions SET ended_at = NOW() WHERE id = $1 AND ended_at IS NULL', [id]);
 }
 
 /**
@@ -104,10 +134,14 @@ async function evaluateReading(ctx) {
 
   if (clearedHigh || clearedLow) {
     await fire(ctx, rule, state, 'recovered');
-  } else if (breachKind && rule.cooldown_s > 0) {
-    const sinceMs = Date.now() - state.lastNotifyMs;
-    if (sinceMs >= rule.cooldown_s * 1000) {
-      await fire(ctx, rule, state, breachKind); // still breached — re-notify
+  } else {
+    // Still breached — keep the excursion's peak up to date.
+    if (state.excursionId != null) await updateExcursionPeak(state.excursionId, state.kind, temp);
+    if (breachKind && rule.cooldown_s > 0) {
+      const sinceMs = Date.now() - state.lastNotifyMs;
+      if (sinceMs >= rule.cooldown_s * 1000) {
+        await fire(ctx, rule, state, breachKind); // still breached — re-notify
+      }
     }
   }
 }
@@ -116,12 +150,22 @@ async function fire(ctx, rule, state, kind) {
   if (kind === 'recovered') {
     state.breached = false;
     state.kind = null;
+    if (state.excursionId != null) {
+      await closeExcursion(state.excursionId);
+      state.excursionId = null;
+    }
   } else {
     state.breached = true;
     state.kind = kind;
     state.lastNotifyMs = Date.now();
+    // Open a new excursion only on a fresh breach, not on a cooldown re-notify.
+    if (state.excursionId == null) {
+      const limit = kind === 'high' ? rule.high_limit : rule.low_limit;
+      state.excursionId = await openExcursion(ctx.sensorId, kind, ctx.temp, limit);
+    }
   }
 
+  ctx.excursionId = state.excursionId; // for the dashboard socket payload
   const delivered = await dispatch(ctx, rule, kind);
 
   await query(

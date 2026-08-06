@@ -65,6 +65,44 @@ router.get('/', requirePermission('viewer'), async (req, res) => {
   }
 });
 
+// GET /api/sensors/:id/readings/export.csv — full readings as CSV for the range
+router.get('/export.csv', requirePermission('viewer'), async (req, res) => {
+  const sensorId = parseInt(req.params.id, 10);
+  if (!Number.isInteger(sensorId) || sensorId <= 0) return res.status(400).json({ error: 'Invalid sensor id' });
+  if (!(await checkSensorAccess(req, sensorId))) return res.status(404).json({ error: 'Sensor not found' });
+
+  const { from, to } = req.query;
+  const params = [sensorId];
+  let where = 'WHERE r.sensor_id = $1';
+  if (from) { params.push(from); where += ` AND r.recorded_at >= $${params.length}`; }
+  if (to)   { params.push(to);   where += ` AND r.recorded_at <= $${params.length}`; }
+
+  try {
+    const nameRes = await query('SELECT name, mac FROM sensors WHERE id = $1', [sensorId]);
+    const label = (nameRes.rows[0]?.name || nameRes.rows[0]?.mac || `sensor-${sensorId}`).replace(/[^\w.-]+/g, '_');
+    const result = await query(
+      `SELECT r.recorded_at, r.temp, r.hum, r.battery, r.rssi
+       FROM readings r ${where} ORDER BY r.recorded_at ASC LIMIT 50000`,
+      params
+    );
+    const lines = ['recorded_at,temp_c,humidity_pct,battery_pct,rssi_dbm'];
+    for (const r of result.rows) {
+      lines.push([
+        r.recorded_at.toISOString(),
+        r.temp ?? '', r.hum ?? '',
+        r.battery != null && r.battery !== 255 ? r.battery : '',
+        r.rssi ?? '',
+      ].join(','));
+    }
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    res.setHeader('Content-Disposition', `attachment; filename="${label}-readings-${new Date().toISOString().slice(0, 10)}.csv"`);
+    res.send(lines.join('\n'));
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Database error' });
+  }
+});
+
 // GET /api/sensors/:id/readings/latest
 router.get('/latest', requirePermission('viewer'), async (req, res) => {
   const sensorId = parseInt(req.params.id, 10);

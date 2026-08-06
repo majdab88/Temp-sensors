@@ -1539,6 +1539,16 @@ button.perm-pill:hover {
 
 .alarm-hero-more { font-size: 13px; opacity: 0.95; }
 
+.alarm-hero-acked {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  color: #fff;
+  opacity: 0.95;
+  padding: 0 4px;
+}
+
 @keyframes heroPulse {
   0%, 100% { opacity: 1; }
   50%      { opacity: 0.3; }
@@ -1606,6 +1616,20 @@ button.perm-pill:hover {
   font-size: 10.5px;
   color: var(--text-2);
   margin: 4px 0 10px;
+}
+
+.rail-alarm-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.rail-acked {
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  font-weight: 600;
+  color: var(--green);
 }
 
 .rail-empty {
@@ -1884,4 +1908,98 @@ button.perm-pill:hover {
   align-items: center;
   gap: 8px;
   margin-top: 4px;
+}
+
+/* ============================================================
+   Reports — excursion log
+   ============================================================ */
+.report-stats {
+  display: flex;
+  gap: 14px;
+  margin-bottom: 22px;
+  flex-wrap: wrap;
+}
+
+.report-stat {
+  border: 1px solid var(--border);
+  background: var(--bg-2);
+  padding: 14px 20px;
+  min-width: 120px;
+}
+
+.report-stat.alarm { border-color: var(--accent); background: var(--accent-tint); }
+.report-stat.warn  { border-color: var(--yellow); }
+
+.report-stat-num {
+  font-family: var(--font-mono);
+  font-size: 26px;
+  font-weight: 700;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+}
+
+.report-stat.alarm .report-stat-num { color: var(--accent); }
+.report-stat.warn  .report-stat-num { color: var(--yellow); }
+
+.report-stat-label {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--text-3);
+  margin-top: 7px;
+}
+
+.report-controls {
+  display: flex;
+  align-items: flex-end;
+  gap: 16px;
+  flex-wrap: wrap;
+  margin-bottom: 20px;
+}
+
+.report-controls .form-group { min-width: 150px; margin-bottom: 0; }
+
+.report-actions {
+  display: flex;
+  gap: 8px;
+  margin-left: auto;
+}
+
+.ex-kind {
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  padding: 2px 7px;
+  border: 1px solid currentColor;
+}
+
+.ex-kind-high { color: var(--accent); }
+.ex-kind-low  { color: var(--blue); }
+
+.ex-ongoing {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--accent);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.ex-acked   { font-size: 12.5px; font-weight: 600; color: var(--green); }
+.ex-unacked { font-size: 12.5px; color: var(--text-3); }
+
+@media (max-width: 640px) {
+  .report-actions { margin-left: 0; width: 100%; }
+}
+
+/* Print — clean paper output for the excursion log (Print / PDF button) */
+@media print {
+  .topbar, .bottom-nav, .no-print { display: none !important; }
+  .main-content { padding: 0 !important; }
+  .report-stat, .rules-table th, .rules-table td { border-color: #ccc !important; }
+  .firing td { background: #f4f4f4 !important; }
+  body { background: #fff !important; }
 }

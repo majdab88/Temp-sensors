@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react'
 import { createPortal } from 'react-dom'
 import api from '../services/api'
+import { useToast } from '../context/ToastContext'
 
 /**
  * Per-sensor temperature alert editor.
@@ -10,6 +11,7 @@ import api from '../services/api'
  * onClose(changed) — changed=true if a rule was saved or removed.
  */
 export default function AlertRuleModal({ sensor, onClose }) {
+  const toast = useToast()
   const [loading, setLoading] = useState(true)
   const [saving, setSaving]   = useState(false)
   const [error, setError]     = useState(null)
@@ -76,7 +78,13 @@ export default function AlertRuleModal({ sensor, onClose }) {
   }
 
   async function handleDelete() {
-    if (!window.confirm('Remove the alert rule for this sensor?')) return
+    const ok = await toast.confirm({
+      title: 'Remove alert rule?',
+      message: 'This sensor will no longer trigger temperature alerts.',
+      confirmLabel: 'Remove',
+      danger: true,
+    })
+    if (!ok) return
     setSaving(true)
     try {
       await api.delete(`/alerts/rules/${sensor.id}`)

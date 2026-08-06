@@ -2,6 +2,7 @@ import React, { useEffect, useState, useCallback } from 'react'
 import api from '../services/api'
 import { downloadFile } from '../services/download'
 import { useAuth } from '../context/AuthContext'
+import { useToast } from '../context/ToastContext'
 
 const RANGES = [
   { label: '7 d',  days: 7 },
@@ -29,6 +30,7 @@ function fmtDuration(sec) {
 
 export default function Reports() {
   const { user } = useAuth()
+  const toast = useToast()
   const canEdit = user?.permissionLevel !== 'viewer'
 
   const [sensors, setSensors] = useState([])
@@ -76,7 +78,10 @@ export default function Reports() {
       const res = await api.post(`/excursions/${id}/ack`)
       setRows((prev) => prev.map((r) =>
         r.id === id ? { ...r, ack_at: res.data.ack_at, ack_by: res.data.ack_by } : r))
-    } catch { /* toast later (Track 3) */ }
+      toast.success('Excursion acknowledged')
+    } catch {
+      toast.error('Failed to acknowledge — try again')
+    }
     finally { setAcking(null) }
   }
 
@@ -84,7 +89,9 @@ export default function Reports() {
     setDownloading(true)
     try {
       await downloadFile('/excursions/export.csv', filterParams(), 'excursions.csv')
-    } catch { /* toast later */ }
+    } catch {
+      toast.error('Export failed — try again')
+    }
     finally { setDownloading(false) }
   }
 

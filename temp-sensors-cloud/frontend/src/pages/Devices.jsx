@@ -2,6 +2,7 @@ import React, { useEffect, useState, useRef, useCallback } from 'react'
 import api from '../services/api'
 import socket from '../services/socket'
 import { useAuth } from '../context/AuthContext'
+import { useToast } from '../context/ToastContext'
 
 function formatDate(isoStr) {
   if (!isoStr) return ''
@@ -12,6 +13,7 @@ const PAIRING_DURATION = 120 // seconds
 
 export default function Devices() {
   const { user } = useAuth()
+  const toast = useToast()
   const canEdit = user?.permissionLevel !== 'viewer'
   const [devices, setDevices] = useState([])
   const [loading, setLoading] = useState(true)
@@ -120,7 +122,7 @@ export default function Devices() {
       setPairingCountdown(PAIRING_DURATION)
       setPairingRequests([])
     } catch {
-      alert('Failed to enable pairing mode. Is the hub online?')
+      toast.error('Failed to enable pairing mode. Is the hub online?')
     } finally {
       setPairingEnabling(false)
     }
@@ -140,8 +142,9 @@ export default function Devices() {
       await api.post(`/pairing/requests/${id}/approve`)
       setPairingRequests((prev) => prev.filter((r) => r.id !== id))
       handleDisablePairing()
+      toast.success('Sensor paired')
     } catch {
-      alert('Failed to approve pairing request')
+      toast.error('Failed to approve pairing request')
     } finally {
       setProcessingRequest(null)
     }
@@ -153,7 +156,7 @@ export default function Devices() {
       await api.post(`/pairing/requests/${id}/reject`)
       setPairingRequests((prev) => prev.filter((r) => r.id !== id))
     } catch {
-      alert('Failed to reject pairing request')
+      toast.error('Failed to reject pairing request')
     } finally {
       setProcessingRequest(null)
     }
@@ -167,7 +170,7 @@ export default function Devices() {
       setDevices((prev) => prev.map(d => d.id === deviceId ? { ...d, name: res.data.name } : d))
       setEditingId(null)
     } catch {
-      alert('Failed to rename device')
+      toast.error('Failed to rename device')
     }
   }
 

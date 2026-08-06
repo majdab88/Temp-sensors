@@ -1,6 +1,7 @@
 import React, { useEffect, useState, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
+import { useToast } from '../context/ToastContext'
 import api from '../services/api'
 
 function formatDate(isoStr) {
@@ -16,6 +17,7 @@ const PERM_LEVELS = [
 
 export default function Organizations() {
   const { user, startImpersonating } = useAuth()
+  const toast = useToast()
   const navigate = useNavigate()
   const isSuperadmin = user?.role === 'superadmin'
 
@@ -100,12 +102,19 @@ export default function Organizations() {
   }
 
   async function handleRemoveMember(orgId, userId, displayName) {
-    if (!window.confirm(`Remove "${displayName}" from this organization?`)) return
+    const ok = await toast.confirm({
+      title: 'Remove member?',
+      message: `"${displayName}" will lose access to this organization.`,
+      confirmLabel: 'Remove',
+      danger: true,
+    })
+    if (!ok) return
     try {
       await api.delete(`/organizations/${orgId}/members/${userId}`)
       setMembers((prev) => prev.filter((m) => m.id !== userId))
+      toast.success('Member removed')
     } catch {
-      alert('Failed to remove member')
+      toast.error('Failed to remove member')
     }
   }
 
@@ -118,8 +127,9 @@ export default function Organizations() {
       setMembers((prev) => prev.map((m) =>
         m.id === userId ? { ...m, permission_level: newLevel } : m
       ))
+      toast.success('Permission updated')
     } catch {
-      alert('Failed to update permission level')
+      toast.error('Failed to update permission level')
     } finally {
       setPermSaving(null)
     }
@@ -133,7 +143,7 @@ export default function Organizations() {
       setDevices((prev) => prev.map(d => d.id === deviceId ? { ...d, name: res.data.name } : d))
       setEditingDeviceId(null)
     } catch {
-      alert('Failed to rename device')
+      toast.error('Failed to rename device')
     }
   }
 

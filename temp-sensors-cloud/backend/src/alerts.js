@@ -195,6 +195,7 @@ async function dispatch(ctx, rule, kind) {
       high_limit: rule.high_limit,
       low_limit: rule.low_limit,
       message,
+      excursion_id: ctx.excursionId ?? null, // lets the dashboard acknowledge a live alarm without a refresh
       ts: Date.now(),
     });
     delivered.push('dashboard');

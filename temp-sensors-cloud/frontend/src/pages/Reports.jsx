@@ -1,4 +1,5 @@
 import React, { useEffect, useState, useCallback } from 'react'
+import { useNavigate } from 'react-router-dom'
 import api from '../services/api'
 import { downloadFile } from '../services/download'
 import { useAuth } from '../context/AuthContext'
@@ -31,6 +32,7 @@ function fmtDuration(sec) {
 export default function Reports() {
   const { user } = useAuth()
   const toast = useToast()
+  const navigate = useNavigate()
   const canEdit = user?.permissionLevel !== 'viewer'
 
   const [sensors, setSensors] = useState([])
@@ -193,8 +195,10 @@ export default function Reports() {
                 return (
                   <tr key={r.id} className={ongoing ? 'firing' : ''}>
                     <td>
-                      <div className="rule-name">{r.sensor_name || r.sensor_mac}</div>
-                      <div className="rule-sub">{r.hub_name || r.hub_mac}</div>
+                      <button className="ex-row-link" onClick={() => navigate(`/reports/${r.id}`)} title="View excursion detail">
+                        <div className="rule-name">{r.sensor_name || r.sensor_mac}</div>
+                        <div className="rule-sub">{r.hub_name || r.hub_mac}</div>
+                      </button>
                     </td>
                     <td>
                       <span className={`ex-kind ex-kind-${r.kind}`}>

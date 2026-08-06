@@ -24,6 +24,8 @@ const DEFAULTS = {
   hub_offline_enabled: true,
   hub_offline_minutes: 10,
   low_battery_enabled: true,
+  escalation_enabled: true,
+  escalation_minutes: 30,   // re-notify an unacknowledged open excursion this often
 };
 
 let _io;
@@ -216,14 +218,78 @@ async function seedHealth() {
   }
 }
 
+// ── Unacknowledged-alarm escalation ────────────────────────────────────────
+// Re-notify while a breach stays open AND unacknowledged. The first reminder
+// fires escalation_minutes after the excursion started; then again every
+// escalation_minutes until someone acknowledges or the temperature recovers.
+async function checkEscalations() {
+  let rows;
+  try {
+    const r = await query(
+      `SELECT e.id, e.kind, e.peak_value, e.limit_value, e.started_at, e.escalated_at,
+              s.id AS sensor_id, s.name AS sensor_name, s.mac AS sensor_mac,
+              d.mac AS hub_mac, d.org_id
+       FROM excursions e
+       JOIN sensors s ON s.id = e.sensor_id
+       JOIN devices d ON d.id = s.device_id
+       WHERE e.ended_at IS NULL AND e.ack_at IS NULL`
+    );
+    rows = r.rows;
+  } catch (err) {
+    console.error('[escalation] query error:', err.message);
+    return;
+  }
+
+  const now = Date.now();
+  for (const ex of rows) {
+    const cfg = settingsForOrg(ex.org_id);
+    if (!cfg.escalation_enabled) continue;
+    const minutes = cfg.escalation_minutes ?? DEFAULTS.escalation_minutes;
+    const refMs = Math.max(
+      new Date(ex.started_at).getTime(),
+      ex.escalated_at ? new Date(ex.escalated_at).getTime() : 0
+    );
+    if ((now - refMs) / 60000 < minutes) continue;
+
+    const openMin = Math.round((now - new Date(ex.started_at).getTime()) / 60000);
+    const name = ex.sensor_name || ex.sensor_mac;
+    const dir = ex.kind === 'high' ? 'above' : 'below';
+    const body = `Still unacknowledged: ${name} ${dir} limit for ${openMin} min — please acknowledge.`;
+
+    if (_io && ex.hub_mac) {
+      _io.to(`hub:${ex.hub_mac.toUpperCase()}`).emit('alert', {
+        sensor_mac: ex.sensor_mac,
+        sensor_name: ex.sensor_name,
+        kind: ex.kind,
+        value: ex.peak_value,
+        high_limit: ex.kind === 'high' ? ex.limit_value : null,
+        low_limit: ex.kind === 'low' ? ex.limit_value : null,
+        message: `⏰ ${body}`,
+        excursion_id: ex.id,
+        escalated: true,
+        ts: now,
+      });
+    }
+    await pushTo(pushTokensForSensor, ex.sensor_id, `⏰ ${name} — unacknowledged`, body,
+      { scope: 'excursion', excursion_id: ex.id, kind: ex.kind });
+
+    try {
+      await query('UPDATE excursions SET escalated_at = NOW() WHERE id = $1', [ex.id]);
+    } catch (err) {
+      console.error('[escalation] update error:', err.message);
+    }
+  }
+}
+
 function startHealthMonitor(io) {
   initHealth(io);
   reloadSettings()
     .then(seedHealth)
     .finally(() => {
       setInterval(checkOffline, CHECK_INTERVAL_MS);
+      setInterval(checkEscalations, CHECK_INTERVAL_MS);
       setInterval(reloadSettings, SETTINGS_REFRESH_MS);
     });
 }
 
-module.exports = { startHealthMonitor, onReading, onHubStatus, initHealth, checkOffline, reloadSettings };
+module.exports = { startHealthMonitor, onReading, onHubStatus, initHealth, checkOffline, checkEscalations, reloadSettings };

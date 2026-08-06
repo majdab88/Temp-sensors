@@ -16,6 +16,8 @@ const DEFAULTS = {
   hub_offline_enabled: true,
   hub_offline_minutes: 10,
   low_battery_enabled: true,
+  escalation_enabled: true,
+  escalation_minutes: 30,
 };
 
 // GET /api/health/settings — the caller's org health-alert settings (or defaults)
@@ -45,21 +47,27 @@ router.put('/settings', requirePermission('editor'), async (req, res) => {
   if (!Number.isInteger(hMin) || hMin < 1 || hMin > 1440) {
     return res.status(400).json({ error: 'hub_offline_minutes must be between 1 and 1440' });
   }
+  const eMin = parseInt(b.escalation_minutes, 10);
+  if (!Number.isInteger(eMin) || eMin < 5 || eMin > 1440) {
+    return res.status(400).json({ error: 'escalation_minutes must be between 5 and 1440' });
+  }
 
   try {
     const r = await query(
       `INSERT INTO health_settings
-         (org_id, sensor_offline_enabled, sensor_offline_minutes, hub_offline_enabled, hub_offline_minutes, low_battery_enabled)
-       VALUES ($1, $2, $3, $4, $5, $6)
+         (org_id, sensor_offline_enabled, sensor_offline_minutes, hub_offline_enabled, hub_offline_minutes, low_battery_enabled, escalation_enabled, escalation_minutes)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
        ON CONFLICT (org_id) DO UPDATE SET
          sensor_offline_enabled = EXCLUDED.sensor_offline_enabled,
          sensor_offline_minutes = EXCLUDED.sensor_offline_minutes,
          hub_offline_enabled    = EXCLUDED.hub_offline_enabled,
          hub_offline_minutes    = EXCLUDED.hub_offline_minutes,
          low_battery_enabled    = EXCLUDED.low_battery_enabled,
+         escalation_enabled     = EXCLUDED.escalation_enabled,
+         escalation_minutes     = EXCLUDED.escalation_minutes,
          updated_at             = NOW()
        RETURNING *`,
-      [req.orgId, !!b.sensor_offline_enabled, sMin, !!b.hub_offline_enabled, hMin, !!b.low_battery_enabled]
+      [req.orgId, !!b.sensor_offline_enabled, sMin, !!b.hub_offline_enabled, hMin, !!b.low_battery_enabled, !!b.escalation_enabled, eMin]
     );
     await reloadSettings(); // apply immediately
     await audit({ req, action: 'health.settings.set', targetType: 'org', targetId: req.orgId });

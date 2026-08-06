@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react'
 import api from '../services/api'
 import EditUserModal from '../components/EditUserModal'
+import { useToast } from '../context/ToastContext'
 
 function formatDate(isoStr) {
   if (!isoStr) return ''
@@ -8,6 +9,7 @@ function formatDate(isoStr) {
 }
 
 export default function Users() {
+  const toast = useToast()
   const [users, setUsers] = useState([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
@@ -53,12 +55,19 @@ export default function Users() {
   }
 
   async function handleDelete(userId, displayName) {
-    if (!window.confirm(`Delete user "${displayName}"? Their devices will become unassigned.`)) return
+    const ok = await toast.confirm({
+      title: 'Delete user?',
+      message: `"${displayName}" will be deleted and their devices left unassigned.`,
+      confirmLabel: 'Delete',
+      danger: true,
+    })
+    if (!ok) return
     try {
       await api.delete(`/users/${userId}`)
       setUsers((prev) => prev.filter((u) => u.id !== userId))
+      toast.success('User deleted')
     } catch {
-      alert('Failed to delete user')
+      toast.error('Failed to delete user')
     }
   }
 

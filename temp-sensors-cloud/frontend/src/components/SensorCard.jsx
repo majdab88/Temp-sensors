@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import api from '../services/api'
 import AlertRuleModal from './AlertRuleModal'
 import BatteryIcon from './BatteryIcon'
+import { useToast } from '../context/ToastContext'
 
 /**
  * Determine online status from the last reading timestamp.
@@ -64,6 +65,7 @@ function Sparkline({ points, alarm }) {
 
 export default function SensorCard({ sensor, reading, alert, rule, spark, onRename, onDelete, canEdit = true }) {
   const navigate = useNavigate()
+  const toast = useToast()
   const [editing, setEditing] = useState(false)
   const [draft, setDraft] = useState('')
   const [saving, setSaving] = useState(false)
@@ -119,11 +121,20 @@ export default function SensorCard({ sensor, reading, alert, rule, spark, onRena
 
   async function handleDelete(e) {
     e.stopPropagation()
-    if (!window.confirm(`Remove sensor "${sensor.name || sensor.mac}"? This also deletes all its readings.`)) return
+    const ok = await toast.confirm({
+      title: 'Remove sensor?',
+      message: `"${sensor.name || sensor.mac}" and all its readings will be permanently deleted.`,
+      confirmLabel: 'Remove',
+      danger: true,
+    })
+    if (!ok) return
     setDeleting(true)
     try {
       await api.delete(`/sensors/${sensor.id}`)
       onDelete(sensor.id)
+      toast.success('Sensor removed')
+    } catch {
+      toast.error('Failed to remove sensor')
     } finally {
       setDeleting(false)
     }

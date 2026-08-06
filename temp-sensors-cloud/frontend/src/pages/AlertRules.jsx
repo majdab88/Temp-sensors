@@ -1,6 +1,7 @@
 import React, { useEffect, useState, useCallback } from 'react'
 import api from '../services/api'
 import { useAuth } from '../context/AuthContext'
+import { useToast } from '../context/ToastContext'
 
 /**
  * Alert rules — one place to see and edit every sensor's temperature rule.
@@ -11,6 +12,7 @@ import { useAuth } from '../context/AuthContext'
  */
 export default function AlertRules() {
   const { user } = useAuth()
+  const toast = useToast()
   const canEdit = user?.permissionLevel !== 'viewer'
   const [sensors, setSensors] = useState([])
   const [rules, setRules] = useState({})     // sensorId -> rule
@@ -140,18 +142,25 @@ export default function AlertRules() {
       })
       fetchAll()
     } catch {
-      alert('Failed to update rule')
+      toast.error('Failed to update rule')
     }
   }
 
   async function removeRule(sensor) {
-    if (!window.confirm(`Remove the alert rule for "${sensor.name || sensor.mac}"?`)) return
+    const ok = await toast.confirm({
+      title: 'Remove alert rule?',
+      message: `"${sensor.name || sensor.mac}" will no longer trigger temperature alerts.`,
+      confirmLabel: 'Remove',
+      danger: true,
+    })
+    if (!ok) return
     try {
       await api.delete(`/alerts/rules/${sensor.id}`)
       if (String(sensor.id) === formSensorId) resetForm()
       fetchAll()
+      toast.success('Alert rule removed')
     } catch {
-      alert('Failed to remove rule')
+      toast.error('Failed to remove rule')
     }
   }
 

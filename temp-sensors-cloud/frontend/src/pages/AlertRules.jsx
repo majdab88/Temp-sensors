@@ -177,6 +177,8 @@ export default function AlertRules() {
         hub_offline_enabled: !!health.hub_offline_enabled,
         hub_offline_minutes: parseInt(health.hub_offline_minutes, 10),
         low_battery_enabled: !!health.low_battery_enabled,
+        escalation_enabled: !!health.escalation_enabled,
+        escalation_minutes: parseInt(health.escalation_minutes, 10),
       })
       setHealth(data)
       setHealthMsg({ ok: true, text: 'Saved' })
@@ -273,6 +275,20 @@ export default function AlertRules() {
                 <span>Low battery</span>
               </label>
               <span className="health-inline">notify when a pack runs low</span>
+            </div>
+
+            <div className="health-row">
+              <label className="modal-toggle" style={{ marginBottom: 0 }}>
+                <input type="checkbox" disabled={!canEdit}
+                  checked={!!health.escalation_enabled}
+                  onChange={(e) => setH({ escalation_enabled: e.target.checked })} />
+                <span>Unacknowledged alarm</span>
+              </label>
+              <span className="health-inline">re-notify every</span>
+              <input type="number" className="health-num" disabled={!canEdit} min="5" max="1440"
+                value={health.escalation_minutes ?? 30}
+                onChange={(e) => setH({ escalation_minutes: e.target.value })} />
+              <span className="health-inline">min until acknowledged</span>
             </div>
           </div>
         </section>

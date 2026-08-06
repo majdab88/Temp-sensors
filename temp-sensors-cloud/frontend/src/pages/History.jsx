@@ -59,6 +59,9 @@ export default function History() {
   }
 
   const selectedSensor = sensors.find((s) => s.id === sensorId)
+  const rangeText = isCustom
+    ? `${customFrom} → ${customTo}`
+    : (RANGES.find((r) => r.hours === rangeHours)?.label || `${rangeHours} h`)
 
   return (
     <div>
@@ -67,7 +70,16 @@ export default function History() {
         <p className="page-subtitle">Temperature and humidity over time</p>
       </div>
 
-      <div className="history-controls">
+      {/* Print-only report header (shown on the PDF/printout) */}
+      {sensorId && selectedSensor && (
+        <div className="print-only print-report-head">
+          <h2>Temperature History Report</h2>
+          <div>{selectedSensor.name || selectedSensor.mac} · {selectedSensor.mac}{selectedSensor.hub_name ? ` · Hub: ${selectedSensor.hub_name}` : ''}</div>
+          <div>Range: {rangeText} · Generated {new Date().toLocaleString()}</div>
+        </div>
+      )}
+
+      <div className="history-controls no-print">
         <div className="form-group">
           <label htmlFor="sensor-select">Sensor</label>
           <select
@@ -114,6 +126,15 @@ export default function History() {
             onChange={(e) => setCustom('to', e.target.value)}
           />
         </div>
+
+        <button
+          className="btn btn-ghost history-pdf-btn"
+          disabled={!sensorId}
+          onClick={() => window.print()}
+          title="Save this chart + readings as a PDF"
+        >
+          PDF report
+        </button>
       </div>
 
       <div className="chart-wrap">

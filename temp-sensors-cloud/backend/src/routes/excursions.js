@@ -96,6 +96,38 @@ router.get('/export.csv', async (req, res) => {
   }
 });
 
+// GET /api/excursions/:id — one excursion + the readings spanning its window
+// (padded 30 min either side) so the UI can chart the breach in context.
+router.get('/:id', async (req, res) => {
+  const id = parseInt(req.params.id, 10);
+  if (!Number.isInteger(id) || id <= 0) return res.status(400).json({ error: 'Invalid excursion id' });
+
+  const orgFilter = isSuperadminUnscoped(req) ? '' : 'AND d.org_id = $2';
+  const params = isSuperadminUnscoped(req) ? [id] : [id, req.orgId];
+  if (!isSuperadminUnscoped(req) && !req.orgId) return res.status(403).json({ error: 'No organization context' });
+
+  try {
+    const exRes = await query(`${SELECT} WHERE e.id = $1 ${orgFilter}`, params);
+    const ex = exRes.rows[0];
+    if (!ex) return res.status(404).json({ error: 'Excursion not found' });
+
+    const PAD_MS = 30 * 60 * 1000;
+    const from = new Date(new Date(ex.started_at).getTime() - PAD_MS);
+    const to   = new Date((ex.ended_at ? new Date(ex.ended_at).getTime() : Date.now()) + PAD_MS);
+    const rdRes = await query(
+      `SELECT recorded_at, temp, hum FROM readings
+       WHERE sensor_id = $1 AND recorded_at >= $2 AND recorded_at <= $3
+       ORDER BY recorded_at ASC LIMIT 2000`,
+      [ex.sensor_id, from, to]
+    );
+
+    res.json({ excursion: ex, readings: rdRes.rows });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Database error' });
+  }
+});
+
 // POST /api/excursions/:id/ack — acknowledge an excursion
 router.post('/:id/ack', requirePermission('editor'), async (req, res) => {
   const id = parseInt(req.params.id, 10);

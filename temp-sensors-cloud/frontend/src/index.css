@@ -1995,6 +1995,61 @@ button.perm-pill:hover {
   .report-actions { margin-left: 0; width: 100%; }
 }
 
+/* Clickable sensor cell → excursion detail */
+.ex-row-link {
+  background: none;
+  border: none;
+  padding: 0;
+  text-align: left;
+  cursor: pointer;
+}
+.ex-row-link:hover .rule-name { text-decoration: underline; color: var(--accent); }
+
+/* ── Excursion detail ── */
+.ex-detail-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 28px;
+  font-size: 13.5px;
+  color: var(--text-2);
+  margin-bottom: 18px;
+}
+.ex-meta-k {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--text-3);
+  margin-right: 6px;
+}
+.ex-detail-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 22px;
+}
+.ex-detail-chart {
+  border: 1px solid var(--border);
+  background: var(--bg);
+  padding: 16px;
+}
+.breach-chart { width: 100%; height: auto; }
+.breach-band { fill: var(--accent-tint); }
+.breach-grid { stroke: var(--border); stroke-width: 1; }
+.breach-line { stroke: var(--accent); stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; }
+.breach-limit { stroke: var(--text-2); stroke-width: 1.5; stroke-dasharray: 5 4; }
+.breach-peak { fill: var(--accent); }
+.breach-ylabel, .breach-xlabel {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  fill: var(--text-3);
+}
+.breach-limit-label, .breach-peak-label {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  fill: var(--text-2);
+}
+
 /* ============================================================
    Skeleton loaders
    ============================================================ */
@@ -2171,11 +2226,25 @@ button.perm-pill:hover {
   .custom-range { flex-wrap: wrap; }
 }
 
-/* Print — clean paper output for the excursion log (Print / PDF button) */
+/* Print-only blocks (report headers) — hidden on screen, shown on paper */
+.print-only { display: none; }
+
+.print-report-head { margin-bottom: 16px; }
+.print-report-head h2 { font-size: 20px; font-weight: 800; margin-bottom: 4px; }
+.print-report-head div { font-size: 12px; color: var(--text-2); }
+
+.history-pdf-btn { margin-left: auto; }
+
+/* Print — clean paper output for the excursion log + history report */
 @media print {
   .topbar, .bottom-nav, .no-print { display: none !important; }
   .main-content { padding: 0 !important; }
   .report-stat, .rules-table th, .rules-table td { border-color: #ccc !important; }
   .firing td { background: #f4f4f4 !important; }
   body { background: #fff !important; }
+  .print-only { display: block !important; }
+  /* Expand the scrollable readings table so every row prints */
+  .table-wrap { max-height: none !important; overflow: visible !important; }
+  /* Keep chart + detail chart from overflowing a page column */
+  canvas, .breach-chart { max-width: 100% !important; }
 }

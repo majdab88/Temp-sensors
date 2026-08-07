@@ -52,6 +52,23 @@
 #define SERIES_RESISTOR 10000   // Accurate 10kΩ resistor (measured ≈ nominal)
 #define NTC_SAMPLES        20   // ADC readings to average for stable result
 
+// --- NTC DIVIDER TOPOLOGY ---
+// Which leg the NTC sits on sets the R_ntc formula (and the ADC region):
+//   High-side (NTC between 3V3 and the ADC tap, series R from tap to GND):
+//     V_adc = Vcc·R_series/(R_ntc+R_series) → cold (high R_ntc) gives LOW ADC
+//     voltage = the accurate ADC region. This is the v1/XIAO layout.
+//   Low-side  (series R from 3V3 to the tap, NTC from tap to GND):
+//     V_adc = Vcc·R_ntc/(R_ntc+R_series) → cold gives HIGH ADC voltage, toward
+//     ADC saturation. The v2 WROOM PCB is wired this way
+//     (3V3 → R5 → NTC_ADC tap → probe → GND switch).
+#ifndef NTC_ON_LOW_SIDE
+#if BOARD_REV == 2
+#define NTC_ON_LOW_SIDE 1
+#else
+#define NTC_ON_LOW_SIDE 0
+#endif
+#endif
+
 // Full Steinhart-Hart equation: 1/T(K) = A + B·ln(R) + C·(ln(R))³
 // Default coefficients are derived from the simplified beta equation (B=3950, R0=10kΩ, T0=25°C).
 // Replace with probe-measured values for best accuracy.
@@ -71,6 +88,15 @@
 #define NTC_SH_B  3.01e-5f     // Steinhart-Hart B (K⁻¹) — (-18.2°C/81911Ω, -7.2°C/47214Ω, +4°C/26811Ω)
 #define NTC_SH_C  7.23e-7f     // Steinhart-Hart C (K⁻¹) — SHT40 reference, cold-board operation
                                // All 3 anchors inside fridge/freezer range → tight interpolation in deployment
+
+// Per-board runtime calibration. Loaded from NVS namespace "ntccal" at boot;
+// if unset, the compiled defaults above are used. Set/updated over serial via
+// the calibration mode (power-on + press 'c'), so each manufactured board is
+// calibrated without editing or reflashing firmware. See enterCalibrationMode().
+static float g_series_r = SERIES_RESISTOR;
+static float g_sh_a     = NTC_SH_A;
+static float g_sh_b     = NTC_SH_B;
+static float g_sh_c     = NTC_SH_C;
 
 
 // PCB circuit (for reference):
@@ -406,7 +432,10 @@ void checkFactoryReset() {
 // NTC_ENABLE_PIN is driven LOW to complete the divider; Hi-Z during sleep cuts quiescent current.
 // Temperature is derived via the Steinhart-Hart simplified (Beta) equation:
 //   1/T = 1/T0 + (1/B) * ln(R_ntc / R0)
-float readNTC() {
+// Measure NTC resistance (Ω) from the ADC divider. Returns -1 on a saturated /
+// open / shorted read. Optionally reports the VCC and averaged ADC mV used.
+// Shared by readNTC() (applies Steinhart-Hart) and the calibration mode.
+float measureNTCResistance(float* outVcc = nullptr, float* outAdcMv = nullptr) {
   // Enable divider by driving GND switch LOW
   pinMode(NTC_ENABLE_PIN, OUTPUT);
   digitalWrite(NTC_ENABLE_PIN, LOW);
@@ -435,44 +464,55 @@ float readNTC() {
 
   // VCC reference for the NTC divider math — see the "NTC VCC reference"
   // comment block in the BATTERY MONITOR section above for the full rationale.
-  //
-  //   HAS_REGULATOR=1 (external TPS63802 or onboard buck-boost):
-  //     VCC is constant 3.3 V regardless of bat_v. Using bat_v here would
-  //     make readings drift as the cell drains, because the 3V3 rail stays
-  //     at 3.3 V while bat_v can swing from 3.6 V → 1.8 V.
-  //
-  //   HAS_REGULATOR=0 (battery direct to 3V3 pin, no regulator):
-  //     VCC = bat_v (the C6 is fed straight from the battery). The constrain()
-  //     clamps to the ESP32-C6 valid supply range (≈ 2.5 V brownout to 3.6 V).
-  //     On USB power, the XIAO's onboard LDO holds VCC at 3.3 V; bat_v won't
-  //     reflect that, so USB-only debugging reads warmer than calibration —
-  //     fine for bench work.
+  //   HAS_REGULATOR=1: VCC is a constant 3.3 V (buck-boost).
+  //   HAS_REGULATOR=0: VCC = bat_v, clamped to the C6 valid supply range.
 #if NTC_VCC_REGULATED
   float vcc = NTC_VCC_FIXED;
 #else
   float vcc = constrain(g_bat_v - LDO_DROPOUT_V, 2.5f, 3.6f);
 #endif
 
+  if (outVcc)   *outVcc = vcc;
+  if (outAdcMv) *outAdcMv = adcMv;
+
   if (adcV <= 0.01f || adcV >= (vcc - 0.01f)) {
     // Saturated ADC almost certainly means open or shorted probe
     ulog("✗ NTC read failed — probe open or shorted (check wiring)\n");
-    return -999;
+    return -1.0f;
   }
 
-  // Resolve NTC resistance from voltage divider equation
-  // V_adc = vcc * R_series / (R_ntc + R_series)  =>  R_ntc = R_series * (vcc - V_adc) / V_adc
-  float r_ntc = SERIES_RESISTOR * (vcc - adcV) / adcV;
+  // Resolve NTC resistance from the voltage divider — formula depends on which
+  // leg the NTC sits on (see NTC_ON_LOW_SIDE above).
+#if NTC_ON_LOW_SIDE
+  // NTC on the low side (v2 WROOM): V_adc = vcc·R_ntc/(R_ntc+R_series)
+  return g_series_r * adcV / (vcc - adcV);
+#else
+  // NTC on the high side (v1/XIAO): V_adc = vcc·R_series/(R_ntc+R_series)
+  return g_series_r * (vcc - adcV) / adcV;
+#endif
+}
 
-  // Full Steinhart-Hart equation: 1/T(K) = A + B·ln(R) + C·(ln(R))³
-  float lnR   = log(r_ntc);
-  float tempC = 1.0f / (NTC_SH_A + NTC_SH_B * lnR + NTC_SH_C * lnR * lnR * lnR) - 273.15f;
+// Convert a resistance to °C via the runtime Steinhart-Hart coefficients.
+float ntcResistanceToC(float r_ntc) {
+  float lnR = log(r_ntc);
+  return 1.0f / (g_sh_a + g_sh_b * lnR + g_sh_c * lnR * lnR * lnR) - 273.15f;
+}
+
+// --- READ NTC PROBE ---
+// Circuit: 3.3V → NTC probe → NTC_PIN (ADC) → SERIES_RESISTOR → NTC_ENABLE_PIN (GND switch)
+// NTC on the high side: cold (high R_ntc) → LOW ADC voltage (the accurate ADC region).
+float readNTC() {
+  float vcc = 0, adcMv = 0;
+  float r_ntc = measureNTCResistance(&vcc, &adcMv);
+  if (r_ntc < 0) return -999;
+
+  float tempC = ntcResistanceToC(r_ntc);
   ulog("[NTC] vcc=%.3fV  adc=%.0fmV  R_ntc=%.0fΩ  T=%.2f°C\n", vcc, adcMv, r_ntc, tempC);
 
   if (tempC < -55.0f || tempC > 125.0f) {
     ulog("✗ NTC temperature out of valid range\n");
     return -999;
   }
-
   return tempC;
 }
 
@@ -490,6 +530,140 @@ bool readSensor() {
   myData.temp = temp;
   ulog("✓ Temp: %.2f°C  Hum: N/A\n", myData.temp);
   return true;
+}
+
+// ===========================================================================
+// NTC CALIBRATION (per-board, stored in NVS "ntccal")
+// ===========================================================================
+
+// Load per-board calibration from NVS, falling back to the compiled defaults.
+void loadCalibration() {
+  preferences.begin("ntccal", true);
+  g_series_r = preferences.getFloat("series_r", SERIES_RESISTOR);
+  g_sh_a     = preferences.getFloat("sh_a", NTC_SH_A);
+  g_sh_b     = preferences.getFloat("sh_b", NTC_SH_B);
+  g_sh_c     = preferences.getFloat("sh_c", NTC_SH_C);
+  preferences.end();
+}
+
+void printCalibration() {
+  Serial.printf("  series_r = %.1f ohm\n  A = %.6e\n  B = %.6e\n  C = %.6e\n",
+                g_series_r, g_sh_a, g_sh_b, g_sh_c);
+}
+
+// Solve Steinhart-Hart A/B/C from three (T[°C], R[ohm]) points.
+// 1/T(K) = A + B·ln(R) + C·ln(R)³. Returns false if the points are too close.
+bool solveSteinhartHart(const float T[3], const float R[3], float& A, float& B, float& C) {
+  float L1 = logf(R[0]), L2 = logf(R[1]), L3 = logf(R[2]);
+  float Y1 = 1.0f / (T[0] + 273.15f), Y2 = 1.0f / (T[1] + 273.15f), Y3 = 1.0f / (T[2] + 273.15f);
+  if (fabsf(L2 - L1) < 1e-6f || fabsf(L3 - L1) < 1e-6f || fabsf(L2 - L3) < 1e-6f) return false;
+  float g21 = (Y2 - Y1) / (L2 - L1);
+  float g31 = (Y3 - Y1) / (L3 - L1);
+  float denom = (L2 - L3) * (L1 + L2 + L3);
+  if (fabsf(denom) < 1e-12f) return false;
+  C = (g21 - g31) / denom;
+  B = g21 - C * (L2 * L2 + L1 * L2 + L1 * L1);
+  A = Y1 - L1 * (B + C * L1 * L1);
+  return true;
+}
+
+// Blocking serial calibration REPL. Entered on power-on when the user presses
+// 'c'. Never returns — 'exit' reboots to normal operation. Calibrate on battery
+// (ESP-PROG GND/TX/RX only, 3V3 pin left off) so the fit captures real VDD.
+void enterCalibrationMode() {
+  Serial.println("\n=== NTC CALIBRATION MODE ===");
+  Serial.println("Tip: calibrate on battery power for accurate results.");
+  printCalibration();
+  Serial.println("Commands:");
+  Serial.println("  read              one measurement (R + T)");
+  Serial.println("  live              stream measurements (any key stops)");
+  Serial.println("  series <ohms>     set measured series resistor");
+  Serial.println("  point <degC>      capture R at a known true temp (need 3)");
+  Serial.println("  points | clear    list / clear captured points");
+  Serial.println("  fit               solve A/B/C from the 3 points");
+  Serial.println("  show              print current calibration");
+  Serial.println("  save | reset      persist to NVS / revert to defaults");
+  Serial.println("  exit              reboot to normal operation");
+
+  float calT[3], calR[3];
+  int nPoints = 0;
+
+  for (;;) {
+    Serial.print("\ncal> ");
+    while (!Serial.available()) delay(20);
+    String line = Serial.readStringUntil('\n');
+    line.trim();
+    if (line.length() == 0) continue;
+    Serial.println(line); // echo
+
+    int sp = line.indexOf(' ');
+    String cmd = (sp < 0) ? line : line.substring(0, sp);
+    String arg = (sp < 0) ? String("") : line.substring(sp + 1);
+    cmd.toLowerCase();
+
+    if (cmd == "read") {
+      float r = measureNTCResistance();
+      if (r > 0) Serial.printf("R_ntc = %.1f ohm   T = %.2f C\n", r, ntcResistanceToC(r));
+    } else if (cmd == "live") {
+      Serial.println("Streaming — press any key to stop.");
+      while (!Serial.available()) {
+        float r = measureNTCResistance();
+        if (r > 0) Serial.printf("R_ntc = %.1f ohm   T = %.2f C\n", r, ntcResistanceToC(r));
+        delay(1000);
+      }
+      while (Serial.available()) Serial.read();
+    } else if (cmd == "series") {
+      float v = arg.toFloat();
+      if (v > 100.0f && v < 1000000.0f) { g_series_r = v; Serial.printf("series_r = %.1f ohm (not saved)\n", g_series_r); }
+      else Serial.println("Usage: series <ohms>  e.g. series 10230");
+    } else if (cmd == "point") {
+      if (nPoints >= 3) { Serial.println("Already have 3 points — 'clear' to redo."); continue; }
+      if (arg.length() == 0) { Serial.println("Usage: point <trueTempC>  e.g. point 0.0"); continue; }
+      float r = measureNTCResistance();
+      if (r <= 0) { Serial.println("NTC read failed — check probe."); continue; }
+      calT[nPoints] = arg.toFloat();
+      calR[nPoints] = r;
+      nPoints++;
+      Serial.printf("Point %d: T=%.2f C  R=%.1f ohm  (%d/3)\n", nPoints, calT[nPoints - 1], r, nPoints);
+    } else if (cmd == "points") {
+      if (nPoints == 0) Serial.println("  (none)");
+      for (int i = 0; i < nPoints; i++) Serial.printf("  %d: T=%.2f C  R=%.1f ohm\n", i + 1, calT[i], calR[i]);
+    } else if (cmd == "clear") {
+      nPoints = 0; Serial.println("Points cleared.");
+    } else if (cmd == "fit") {
+      if (nPoints != 3) { Serial.println("Need exactly 3 points at 3 different temps."); continue; }
+      float A, B, C;
+      if (solveSteinhartHart(calT, calR, A, B, C)) {
+        g_sh_a = A; g_sh_b = B; g_sh_c = C;
+        Serial.println("Fitted (not saved):");
+        printCalibration();
+      } else {
+        Serial.println("Fit failed — points too close; use a wider temp spread.");
+      }
+    } else if (cmd == "show") {
+      printCalibration();
+    } else if (cmd == "save") {
+      preferences.begin("ntccal", false);
+      preferences.putFloat("series_r", g_series_r);
+      preferences.putFloat("sh_a", g_sh_a);
+      preferences.putFloat("sh_b", g_sh_b);
+      preferences.putFloat("sh_c", g_sh_c);
+      preferences.end();
+      Serial.println("Saved to NVS (persists across reboots and factory-reset).");
+    } else if (cmd == "reset") {
+      preferences.begin("ntccal", false);
+      preferences.clear();
+      preferences.end();
+      g_series_r = SERIES_RESISTOR; g_sh_a = NTC_SH_A; g_sh_b = NTC_SH_B; g_sh_c = NTC_SH_C;
+      Serial.println("Calibration cleared — reverted to compiled defaults.");
+    } else if (cmd == "exit") {
+      Serial.println("Rebooting to normal operation...");
+      delay(200);
+      ESP.restart();
+    } else {
+      Serial.println("Unknown command. Type one of: read live series point points clear fit show save reset exit");
+    }
+  }
 }
 
 // --- BATTERY MONITOR ---
@@ -702,6 +876,24 @@ void setup() {
   pinMode(RESET_PIN, INPUT_PULLUP);
   pinMode(LED_PIN, OUTPUT);
   digitalWrite(LED_PIN, LOW);
+
+  // Load per-board NTC calibration (NVS, else compiled defaults) before any read.
+  loadCalibration();
+
+  // Offer serial calibration only on a fresh power-on (battery insert / bench
+  // power via ESP-PROG). Timer/button deep-sleep wakes skip this entirely, so
+  // deployed battery life is unaffected.
+  if (reset_reason == ESP_RST_POWERON) {
+    Serial.println("[CAL] Press 'c' within 2 s for calibration mode...");
+    uint32_t t0 = millis();
+    while (millis() - t0 < 2000) {
+      if (Serial.available()) {
+        int ch = Serial.read();
+        if (ch == 'c' || ch == 'C') enterCalibrationMode(); // never returns (reboots)
+      }
+      delay(10);
+    }
+  }
 
   checkFactoryReset();
 

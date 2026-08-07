@@ -13,7 +13,7 @@ router.use(requireAuth);
 router.get('/', async (req, res) => {
   try {
     const userRes = await query(
-      'SELECT id, username, email, role, created_at FROM users WHERE id = $1',
+      'SELECT id, username, email, phone, role, created_at FROM users WHERE id = $1',
       [req.user.sub]
     );
     if (userRes.rows.length === 0) return res.status(404).json({ error: 'User not found' });
@@ -35,9 +35,9 @@ router.get('/', async (req, res) => {
   }
 });
 
-// PUT /api/account — update own profile (username, email)
+// PUT /api/account — update own profile (username, email, phone)
 router.put('/', async (req, res) => {
-  const { username, email } = req.body || {};
+  const { username, email, phone } = req.body || {};
   const updates = [];
   const params = [];
   let idx = 1;
@@ -54,9 +54,18 @@ router.put('/', async (req, res) => {
     updates.push(`email = $${idx++}`);
     params.push(emailStr);
   }
+  // phone: E.164 (e.g. +972541234567), or empty string to clear it
+  if (phone !== undefined) {
+    const phoneStr = String(phone).trim();
+    if (phoneStr !== '' && !/^\+[1-9]\d{6,14}$/.test(phoneStr)) {
+      return res.status(400).json({ error: 'Phone must be in international format, e.g. +972541234567' });
+    }
+    updates.push(`phone = $${idx++}`);
+    params.push(phoneStr === '' ? null : phoneStr);
+  }
 
   if (updates.length === 0) {
-    return res.status(400).json({ error: 'Provide username or email to update' });
+    return res.status(400).json({ error: 'Provide username, email, or phone to update' });
   }
 
   params.push(req.user.sub);
@@ -64,7 +73,7 @@ router.put('/', async (req, res) => {
   try {
     const result = await query(
       `UPDATE users SET ${updates.join(', ')} WHERE id = $${idx}
-       RETURNING id, username, email, role, created_at`,
+       RETURNING id, username, email, phone, role, created_at`,
       params
     );
     if (result.rows.length === 0) return res.status(404).json({ error: 'User not found' });

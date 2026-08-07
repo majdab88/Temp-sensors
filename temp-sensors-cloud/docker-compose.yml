@@ -98,6 +98,9 @@ services:
       JWT_REFRESH_SECRET: ${JWT_REFRESH_SECRET}
       ADMIN_USERNAME: ${ADMIN_USERNAME}
       ADMIN_PASSWORD_HASH: ${ADMIN_PASSWORD_HASH}
+      TWILIO_ACCOUNT_SID: ${TWILIO_ACCOUNT_SID:-}      # WhatsApp alerts (optional; blank = disabled)
+      TWILIO_AUTH_TOKEN: ${TWILIO_AUTH_TOKEN:-}
+      TWILIO_WHATSAPP_FROM: ${TWILIO_WHATSAPP_FROM:-}  # e.g. whatsapp:+14155238886 (Twilio sandbox)
       PORT: 3000
       NODE_ENV: production
     networks:

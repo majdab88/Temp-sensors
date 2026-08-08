@@ -175,9 +175,13 @@ export default function Devices() {
   }
 
   async function handleDelete(device) {
-    if (!window.confirm(
-      `Remove "${device.name || 'this hub'}"? This deletes the hub and all its sensors and readings. This cannot be undone.`
-    )) return
+    const ok = await toast.confirm({
+      title: `Remove "${device.name || 'this hub'}"?`,
+      message: 'This deletes the hub and all its sensors and readings. This cannot be undone.',
+      danger: true,
+      confirmLabel: 'Remove',
+    })
+    if (!ok) return
     try {
       await api.delete(`/devices/${device.id}`)
       setDevices((prev) => prev.filter(d => d.id !== device.id))

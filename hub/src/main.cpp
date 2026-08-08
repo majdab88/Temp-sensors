@@ -1951,6 +1951,36 @@ void onWiFiEvent(WiFiEvent_t event, WiFiEventInfo_t info) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// RE-PROVISION BUTTON
+// ─────────────────────────────────────────────────────────────────────────────
+
+// Poll the BOOT button; if held ~3 s, erase WiFi credentials and reboot into
+// BLE provisioning. No-op when the button isn't held. Safe to call from any
+// blocking wait loop (boot-time connect, maintainWiFi reconnect, main loop) so
+// the user can always escape a dead or unreachable saved network — otherwise
+// those blocking waits starve the button and it appears unresponsive.
+void checkReprovisionButton() {
+  if (digitalRead(TRIGGER_PIN) != LOW) return;
+  delay(50);  // debounce
+  unsigned long startPress = millis();
+  Serial.println("Button pressed... (hold 3 s to reset WiFi and re-provision)");
+  while (digitalRead(TRIGGER_PIN) == LOW) {
+    if (millis() - startPress > 3000) {
+      Serial.println("\n=== ERASING WiFi CREDENTIALS ===");
+      Preferences wPrefs;
+      wPrefs.begin("wifi", false);
+      wPrefs.clear();
+      wPrefs.end();
+      Serial.println("Credentials erased. Restarting into BLE provisioning mode...");
+      delay(500);
+      ESP.restart();
+    }
+    delay(10);
+  }
+  Serial.println("Button released.");
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // SETUP
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -2007,6 +2037,11 @@ void setup() {
 
   unsigned long wifiStart = millis();
   while (WiFi.status() != WL_CONNECTED) {
+    // Escape hatch for an unreachable saved network. Without this, a bad/gone
+    // WiFi makes the 30 s timeout → ESP.restart() cycle repeat forever and
+    // loop() (where the BOOT-button reset lives) is never reached, so the
+    // button appears dead. A 3 s hold here erases creds and re-provisions.
+    checkReprovisionButton();
     if (millis() - wifiStart > WIFI_CONNECT_TIMEOUT_MS) {
       // Network outage / router down — keep credentials and restart so the
       // boot logic tries again. Wiping NVS here would force the user to
@@ -2108,6 +2143,10 @@ void maintainWiFi() {
 
   unsigned long start = millis();
   while (WiFi.status() != WL_CONNECTED && millis() - start < WIFI_TRY_MS) {
+    // Keep the re-provision button responsive during the 4 s reconnect wait —
+    // this wait is longer than the 3 s hold, so without polling here a press
+    // that overlaps a reconnect attempt would be swallowed.
+    checkReprovisionButton();
     delay(50);
   }
 
@@ -2157,26 +2196,7 @@ void loop() {
   if (timeConfigured) resyncNTP();
 
   // BOOT button: hold 3 s to erase WiFi credentials → restart into BLE provisioning
-  if (digitalRead(TRIGGER_PIN) == LOW) {
-    delay(50);
-    unsigned long startPress = millis();
-    Serial.println("Button pressed... (hold 3 s to reset WiFi and re-provision)");
-
-    while (digitalRead(TRIGGER_PIN) == LOW) {
-      if (millis() - startPress > 3000) {
-        Serial.println("\n=== ERASING WiFi CREDENTIALS ===");
-        Preferences wPrefs;
-        wPrefs.begin("wifi", false);
-        wPrefs.clear();
-        wPrefs.end();
-        Serial.println("Credentials erased. Restarting into BLE provisioning mode...");
-        delay(500);
-        ESP.restart();
-      }
-      delay(10);
-    }
-    Serial.println("Button released.");
-  }
+  checkReprovisionButton();
 
   delay(10);
 }

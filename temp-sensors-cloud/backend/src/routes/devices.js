@@ -61,18 +61,29 @@ router.post('/register', async (req, res) => {
   const apiKey  = crypto.randomBytes(32).toString('hex'); // 64-char hex string
   const orgId   = req.orgId || null;
 
+  // Name the client actually supplied (may be blank/omitted).
+  const clientName = (typeof name === 'string' && name.trim()) ? name.trim().slice(0, 64) : null;
+  // Fallback for a brand-new hub when the client sends no name: derive
+  // "TempHub-XXXXXX" from the last 3 MAC octets, matching the firmware's BLE
+  // advertising name. Applied only to the initial INSERT — on re-provisioning
+  // an existing custom name is preserved (see ON CONFLICT below).
+  const defaultName = 'TempHub-' + normMac.replace(/:/g, '').slice(-6);
+  const insertName  = clientName || defaultName;
+
   try {
     // On re-provisioning (hub BOOT-reset), update api_key so old credentials are invalidated.
-    // Only set org_id on new devices or if previously unowned.
+    // Only set org_id on new devices or if previously unowned. The name is only
+    // overwritten when the client explicitly sent one ($5), so the auto-default
+    // never clobbers a user's custom hub name on re-provision.
     const result = await query(
       `INSERT INTO devices (mac, name, api_key, org_id)
        VALUES ($1, $2, $3, $4)
        ON CONFLICT (mac) DO UPDATE
-         SET name    = COALESCE(EXCLUDED.name, devices.name),
+         SET name    = COALESCE($5, devices.name),
              api_key = EXCLUDED.api_key,
              org_id  = COALESCE(devices.org_id, EXCLUDED.org_id)
        RETURNING id, mac, name, api_key, org_id, registered_at`,
-      [normMac, name || null, apiKey, orgId]
+      [normMac, insertName, apiKey, orgId, clientName]
     );
     await audit({ req, action: 'device.register', targetType: 'device', targetId: result.rows[0].id, details: { mac: normMac } });
     res.status(201).json(result.rows[0]);
@@ -110,6 +121,39 @@ router.put('/:id', requirePermission('editor'), async (req, res) => {
     if (result.rows.length === 0) return res.status(404).json({ error: 'Device not found' });
     await audit({ req, action: 'device.rename', targetType: 'device', targetId: id, details: { name: name.trim() } });
     res.json(result.rows[0]);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Database error' });
+  }
+});
+
+// DELETE /api/devices/:id — remove a hub and everything under it.
+// The devices→sensors→readings/alerts/excursions foreign keys are ON DELETE
+// CASCADE, so a single delete removes the hub, its paired sensors, and all
+// their history in one shot.
+router.delete('/:id', requirePermission('editor'), async (req, res) => {
+  const id = parseInt(req.params.id, 10);
+  if (!Number.isInteger(id) || id <= 0) {
+    return res.status(400).json({ error: 'Invalid device id' });
+  }
+
+  // Ownership check for non-superadmin
+  if (!isSuperadminUnscoped(req) && req.orgId) {
+    const check = await query(
+      'SELECT 1 FROM devices WHERE id = $1 AND org_id = $2',
+      [id, req.orgId]
+    );
+    if (check.rows.length === 0) return res.status(404).json({ error: 'Device not found' });
+  }
+
+  try {
+    const result = await query(
+      'DELETE FROM devices WHERE id = $1 RETURNING mac',
+      [id]
+    );
+    if (result.rows.length === 0) return res.status(404).json({ error: 'Device not found' });
+    await audit({ req, action: 'device.delete', targetType: 'device', targetId: id, details: { mac: result.rows[0].mac } });
+    res.json({ ok: true });
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'Database error' });

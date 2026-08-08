@@ -2213,20 +2213,54 @@ button.perm-pill:hover {
 
 .custom-range-sep { color: var(--text-3); }
 
-.custom-range input {
+.custom-range input[type="text"] {
   font-family: var(--font-mono);
   font-size: 12px;
-  padding: 6px 8px;
+  padding: 6px 26px 6px 8px;
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
   background: var(--bg);
   color: var(--text-1);
-  width: 8.5em;
+  width: 9.5em;
   outline: none;
 }
 
-.custom-range input:focus {
+.custom-range input[type="text"]:focus {
   border-color: var(--accent);
+}
+
+/* Day-first date field: text input + overlaid calendar button, with a hidden
+   native date input used only as the calendar popup source. */
+.dmy-field {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+}
+
+.dmy-cal {
+  position: absolute;
+  right: 4px;
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-size: 13px;
+  line-height: 1;
+  padding: 2px;
+  opacity: 0.75;
+}
+
+.dmy-cal:hover { opacity: 1; }
+
+.dmy-native {
+  position: absolute;
+  left: 8px;
+  bottom: 0;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  border: 0;
+  opacity: 0;
+  pointer-events: none;
 }
 
 @media (max-width: 640px) {

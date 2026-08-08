@@ -32,14 +32,17 @@ function maskDmy(v) {
   return parts.join('/')
 }
 
-// Day-first text date field. Emits ISO yyyy-mm-dd (or '') via onChange, so the
-// rest of History keeps working with ISO dates. Replaces the native
-// <input type="date">, whose display format can't be forced to day-first.
+// Day-first date field: a dd/mm/yyyy text input plus a calendar button.
+// The text input controls the display format (which a native <input type=date>
+// can't be forced to in Chrome); a hidden native date input is kept only as the
+// calendar source so point-and-click picking still works. Emits ISO yyyy-mm-dd
+// (or '') via onChange so the rest of History keeps working with ISO dates.
 function DateFieldDMY({ value, onChange }) {
   const [text, setText] = React.useState(isoToDmy(value))
+  const nativeRef = React.useRef(null)
   React.useEffect(() => { setText(isoToDmy(value)) }, [value])
 
-  function handle(e) {
+  function handleText(e) {
     const masked = maskDmy(e.target.value)
     setText(masked)
     if (masked === '') onChange('')
@@ -48,15 +51,42 @@ function DateFieldDMY({ value, onChange }) {
       if (iso) onChange(iso)
     }
   }
+
+  function openCalendar() {
+    const el = nativeRef.current
+    if (!el) return
+    if (typeof el.showPicker === 'function') el.showPicker()
+    else el.click()
+  }
+
+  function handleNative(e) {
+    const iso = e.target.value // yyyy-mm-dd or ''
+    setText(isoToDmy(iso))
+    onChange(iso || '')
+  }
+
   return (
-    <input
-      type="text"
-      inputMode="numeric"
-      placeholder="dd/mm/yyyy"
-      value={text}
-      onChange={handle}
-      aria-label="date"
-    />
+    <span className="dmy-field">
+      <input
+        type="text"
+        inputMode="numeric"
+        placeholder="dd/mm/yyyy"
+        value={text}
+        onChange={handleText}
+        aria-label="date"
+      />
+      <button type="button" className="dmy-cal" onClick={openCalendar}
+              aria-label="Pick from calendar" title="Pick from calendar">📅</button>
+      <input
+        ref={nativeRef}
+        type="date"
+        className="dmy-native"
+        value={value || ''}
+        onChange={handleNative}
+        tabIndex={-1}
+        aria-hidden="true"
+      />
+    </span>
   )
 }
 

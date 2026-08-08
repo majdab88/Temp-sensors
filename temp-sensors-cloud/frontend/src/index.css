@@ -2213,13 +2213,20 @@ button.perm-pill:hover {
 
 .custom-range-sep { color: var(--text-3); }
 
-.custom-range input[type="date"] {
+.custom-range input {
   font-family: var(--font-mono);
   font-size: 12px;
   padding: 6px 8px;
   border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
   background: var(--bg);
   color: var(--text-1);
+  width: 8.5em;
+  outline: none;
+}
+
+.custom-range input:focus {
+  border-color: var(--accent);
 }
 
 @media (max-width: 640px) {

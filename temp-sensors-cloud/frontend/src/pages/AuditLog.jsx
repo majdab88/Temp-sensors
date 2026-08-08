@@ -35,7 +35,7 @@ const ACTION_COLORS = {
 
 function formatDate(isoStr) {
   if (!isoStr) return ''
-  return new Date(isoStr).toLocaleString()
+  return new Date(isoStr).toLocaleString('en-GB')
 }
 
 export default function AuditLog() {

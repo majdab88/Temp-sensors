@@ -9,6 +9,57 @@ const RANGES = [
   { label: '30 d', hours: 24 * 30 },
 ]
 
+// The URL/state stores dates as ISO yyyy-mm-dd; the UI shows them day-first.
+function isoToDmy(iso) {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(iso || '')
+  return m ? `${m[3]}/${m[2]}/${m[1]}` : ''
+}
+// Parse a complete "dd/mm/yyyy" string to ISO yyyy-mm-dd; '' if incomplete/invalid.
+function dmyToIso(dmy) {
+  const m = /^(\d{2})\/(\d{2})\/(\d{4})$/.exec((dmy || '').trim())
+  if (!m) return ''
+  const [, dd, mm, yyyy] = m
+  const d = new Date(`${yyyy}-${mm}-${dd}T00:00:00`)
+  if (isNaN(d.getTime()) || +mm < 1 || +mm > 12 || +dd < 1 || +dd > 31) return ''
+  return `${yyyy}-${mm}-${dd}`
+}
+// Progressive dd/mm/yyyy mask so typing auto-inserts the slashes.
+function maskDmy(v) {
+  const g = v.replace(/\D/g, '').slice(0, 8)
+  const parts = [g.slice(0, 2)]
+  if (g.length >= 3) parts.push(g.slice(2, 4))
+  if (g.length >= 5) parts.push(g.slice(4, 8))
+  return parts.join('/')
+}
+
+// Day-first text date field. Emits ISO yyyy-mm-dd (or '') via onChange, so the
+// rest of History keeps working with ISO dates. Replaces the native
+// <input type="date">, whose display format can't be forced to day-first.
+function DateFieldDMY({ value, onChange }) {
+  const [text, setText] = React.useState(isoToDmy(value))
+  React.useEffect(() => { setText(isoToDmy(value)) }, [value])
+
+  function handle(e) {
+    const masked = maskDmy(e.target.value)
+    setText(masked)
+    if (masked === '') onChange('')
+    else {
+      const iso = dmyToIso(masked)
+      if (iso) onChange(iso)
+    }
+  }
+  return (
+    <input
+      type="text"
+      inputMode="numeric"
+      placeholder="dd/mm/yyyy"
+      value={text}
+      onChange={handle}
+      aria-label="date"
+    />
+  )
+}
+
 export default function History() {
   const [searchParams, setSearchParams] = useSearchParams()
   const sensorId = searchParams.get('sensor') ? parseInt(searchParams.get('sensor'), 10) : null
@@ -60,7 +111,7 @@ export default function History() {
 
   const selectedSensor = sensors.find((s) => s.id === sensorId)
   const rangeText = isCustom
-    ? `${customFrom} → ${customTo}`
+    ? `${isoToDmy(customFrom)} → ${isoToDmy(customTo)}`
     : (RANGES.find((r) => r.hours === rangeHours)?.label || `${rangeHours} h`)
 
   return (
@@ -75,7 +126,7 @@ export default function History() {
         <div className="print-only print-report-head">
           <h2>Temperature History Report</h2>
           <div>{selectedSensor.name || selectedSensor.mac} · {selectedSensor.mac}{selectedSensor.hub_name ? ` · Hub: ${selectedSensor.hub_name}` : ''}</div>
-          <div>Range: {rangeText} · Generated {new Date().toLocaleString()}</div>
+          <div>Range: {rangeText} · Generated {new Date().toLocaleString('en-GB')}</div>
         </div>
       )}
 
@@ -112,19 +163,9 @@ export default function History() {
 
         <div className="custom-range">
           <span className="custom-range-label">Custom</span>
-          <input
-            type="date"
-            value={customFrom}
-            max={customTo || undefined}
-            onChange={(e) => setCustom('from', e.target.value)}
-          />
+          <DateFieldDMY value={customFrom} onChange={(v) => setCustom('from', v)} />
           <span className="custom-range-sep">→</span>
-          <input
-            type="date"
-            value={customTo}
-            min={customFrom || undefined}
-            onChange={(e) => setCustom('to', e.target.value)}
-          />
+          <DateFieldDMY value={customTo} onChange={(v) => setCustom('to', v)} />
         </div>
 
         <button

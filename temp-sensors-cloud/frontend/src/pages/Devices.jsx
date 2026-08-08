@@ -19,6 +19,7 @@ export default function Devices() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
   const [hubStatus, setHubStatus] = useState({})
+  const [pairedSensors, setPairedSensors] = useState([]) // active sensors + their current hub, for the "already paired" warning
 
   // Device rename
   const [editingId, setEditingId] = useState(null)
@@ -45,6 +46,12 @@ export default function Devices() {
       })
       .catch(() => setError('Failed to load devices'))
       .finally(() => setLoading(false))
+
+    // Load active sensors so we can warn when approving a sensor that is
+    // already paired to another hub (approving migrates it).
+    api.get('/sensors')
+      .then((res) => setPairedSensors(res.data))
+      .catch(() => { /* non-fatal — warning just won't show */ })
 
     function onHubStatus(data) {
       setHubStatus((prev) => ({
@@ -136,11 +143,33 @@ export default function Devices() {
     stopPairingMode()
   }
 
-  async function handleApprove(id) {
-    setProcessingRequest(id)
+  // The sensor row for this MAC if it is already paired to a *different* hub.
+  function existingPairing(sensorMac) {
+    const mac = (sensorMac || '').toUpperCase()
+    return pairedSensors.find(
+      (s) => (s.mac || '').toUpperCase() === mac &&
+             (s.hub_mac || '').toUpperCase() !== (pairingHub || '').toUpperCase()
+    )
+  }
+
+  async function handleApprove(req) {
+    // Warn if this sensor is already paired to another hub — approving migrates
+    // it (and its history) over to this one.
+    const existing = existingPairing(req.sensor_mac)
+    if (existing) {
+      const ok = await toast.confirm({
+        title: 'Sensor already paired',
+        message: `${existing.name || 'This sensor'} is currently paired to "${existing.hub_name || existing.hub_mac}". Approving will move it — and its reading history — to this hub. Continue?`,
+        confirmLabel: 'Move sensor',
+        danger: true,
+      })
+      if (!ok) return
+    }
+
+    setProcessingRequest(req.id)
     try {
-      await api.post(`/pairing/requests/${id}/approve`)
-      setPairingRequests((prev) => prev.filter((r) => r.id !== id))
+      await api.post(`/pairing/requests/${req.id}/approve`)
+      setPairingRequests((prev) => prev.filter((r) => r.id !== req.id))
       handleDisablePairing()
       toast.success('Sensor paired')
     } catch {
@@ -354,7 +383,7 @@ export default function Devices() {
                                   className="btn btn-primary btn-sm"
                                   style={{ fontSize: 11, padding: '3px 10px' }}
                                   disabled={processingRequest === req.id}
-                                  onClick={() => handleApprove(req.id)}
+                                  onClick={() => handleApprove(req)}
                                 >
                                   {processingRequest === req.id ? '...' : 'Approve'}
                                 </button>

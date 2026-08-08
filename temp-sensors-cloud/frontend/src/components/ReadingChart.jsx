@@ -20,24 +20,26 @@ const HUM_COLOR  = '#2563eb'
 
 function formatLabel(isoStr) {
   const d = new Date(isoStr)
-  return d.toLocaleString(undefined, {
-    month: 'short',
+  return d.toLocaleString('en-GB', {
     day: 'numeric',
+    month: 'short',
     hour: '2-digit',
     minute: '2-digit',
   })
 }
 
-// Full timestamp with seconds for the table so drift is immediately visible
+// Full timestamp with seconds for the table so drift is immediately visible.
+// Day-first numeric (dd/mm/yyyy, 24 h) regardless of browser locale.
 function formatTimestamp(isoStr) {
   if (!isoStr) return '—'
-  return new Date(isoStr).toLocaleString(undefined, {
+  return new Date(isoStr).toLocaleString('en-GB', {
+    day:    '2-digit',
+    month:  '2-digit',
     year:   'numeric',
-    month:  'short',
-    day:    'numeric',
     hour:   '2-digit',
     minute: '2-digit',
     second: '2-digit',
+    hour12: false,
   })
 }
 

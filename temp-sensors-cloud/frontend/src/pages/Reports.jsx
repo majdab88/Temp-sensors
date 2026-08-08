@@ -14,8 +14,8 @@ const RANGES = [
 
 function fmtDateTime(iso) {
   if (!iso) return '—'
-  return new Date(iso).toLocaleString([], {
-    month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit',
+  return new Date(iso).toLocaleString('en-GB', {
+    day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit',
   })
 }
 

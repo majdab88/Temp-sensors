@@ -2,7 +2,7 @@ import React from 'react'
 
 function formatTime(isoStr) {
   if (!isoStr) return ''
-  return new Date(isoStr).toLocaleString()
+  return new Date(isoStr).toLocaleString('en-GB')
 }
 
 export default function PairingPanel({ requests, onApprove, onReject, processing }) {

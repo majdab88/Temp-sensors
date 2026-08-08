@@ -6,7 +6,7 @@ import api from '../services/api'
 
 function formatDate(isoStr) {
   if (!isoStr) return ''
-  return new Date(isoStr).toLocaleString()
+  return new Date(isoStr).toLocaleString('en-GB')
 }
 
 const PERM_LEVELS = [

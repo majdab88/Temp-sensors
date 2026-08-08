@@ -6,7 +6,7 @@ import { useToast } from '../context/ToastContext'
 
 function formatDate(isoStr) {
   if (!isoStr) return ''
-  return new Date(isoStr).toLocaleString()
+  return new Date(isoStr).toLocaleString('en-GB')
 }
 
 const PAIRING_DURATION = 120 // seconds

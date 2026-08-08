@@ -174,6 +174,20 @@ export default function Devices() {
     }
   }
 
+  async function handleDelete(device) {
+    if (!window.confirm(
+      `Remove "${device.name || 'this hub'}"? This deletes the hub and all its sensors and readings. This cannot be undone.`
+    )) return
+    try {
+      await api.delete(`/devices/${device.id}`)
+      setDevices((prev) => prev.filter(d => d.id !== device.id))
+      if (pairingHub === device.mac) stopPairingMode()
+      toast.success('Hub removed')
+    } catch {
+      toast.error('Failed to remove hub')
+    }
+  }
+
   function formatCountdown(sec) {
     const m = Math.floor(sec / 60)
     const s = sec % 60
@@ -253,6 +267,16 @@ export default function Devices() {
                         style={{ fontSize: 12, padding: '4px 12px', whiteSpace: 'nowrap' }}
                       >
                         {pairingEnabling ? '...' : '+ Add Sensor'}
+                      </button>
+                    )}
+                    {canEdit && !isPairingThis && (
+                      <button
+                        className="btn btn-danger btn-sm"
+                        onClick={() => handleDelete(device)}
+                        style={{ fontSize: 12, padding: '4px 12px', whiteSpace: 'nowrap' }}
+                        title="Remove this hub and all its sensors"
+                      >
+                        Remove
                       </button>
                     )}
                     <div className={`device-status ${isOnline ? 'online' : isOffline ? 'offline' : ''}`}>

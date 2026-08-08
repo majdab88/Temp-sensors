@@ -106,60 +106,53 @@ async function resolveRequest(req, res, approved) {
 
       // A physical sensor talks to exactly one hub, so it must be active under
       // exactly one device — otherwise it shows up duplicated on the dashboard.
-      // If this sensor was already paired to a different hub in the same org,
-      // migrate it here instead of creating a second row.
+      // Consolidate any existing rows for this MAC (across hubs in the same org,
+      // active OR soft-deleted) down to a single row under the new hub, keeping
+      // the one carrying the most reading history.
       const newOrgRes = await query('SELECT org_id FROM devices WHERE id = $1', [newDeviceId]);
       const newOrgId  = newOrgRes.rows[0]?.org_id ?? null;
 
-      // Any active rows for this MAC under a *different* hub.
-      const priorRes = await query(
-        `SELECT s.id, d.mac AS hub_mac, d.org_id
+      // Every row for this MAC we're allowed to touch (same org as the new hub),
+      // richest history first so [0] is the keeper.
+      const allRows = await query(
+        `SELECT s.id, s.device_id, d.mac AS hub_mac, d.org_id,
+                (SELECT COUNT(*) FROM readings r WHERE r.sensor_id = s.id) AS n
          FROM sensors s JOIN devices d ON d.id = s.device_id
-         WHERE s.mac = $1 AND s.device_id <> $2 AND s.active = TRUE`,
-        [normMac, newDeviceId]
+         WHERE s.mac = $1 AND ($2::int IS NULL OR d.org_id = $2)
+         ORDER BY n DESC, s.id ASC`,
+        [normMac, newOrgId]
       );
 
-      // Does a row already exist under the new hub (e.g. from an earlier data frame)?
-      const existingNew = await query(
-        'SELECT id FROM sensors WHERE device_id = $1 AND mac = $2',
-        [newDeviceId, normMac]
-      );
-
-      let migrated = false;
-      for (const prior of priorRes.rows) {
-        // Never touch a sensor owned by a different org.
-        if (newOrgId !== null && prior.org_id !== newOrgId) continue;
-
-        // Tell the old hub to drop it from its NVS/peer table immediately.
-        // (Its next sync would remove it too, but this is prompt.)
-        try { publishSensorRemove(prior.hub_mac, normMac); } catch { /* offline — sync handles it */ }
-
-        if (existingNew.rows.length === 0 && !migrated) {
-          // Preserve reading history: reassign the prior row to the new hub.
-          // Safe from the UNIQUE(device_id, mac) constraint because no row
-          // exists under the new hub yet.
-          await query(
-            'UPDATE sensors SET device_id = $1, active = TRUE WHERE id = $2',
-            [newDeviceId, prior.id]
-          );
-          migrated = true;
-        } else {
-          // A row already exists under the new hub (or we already migrated one)
-          // — retire the leftover so it stops showing as a duplicate.
-          await query('UPDATE sensors SET active = FALSE WHERE id = $1', [prior.id]);
-        }
-      }
-
-      if (migrated) {
-        await audit({ req, action: 'sensor.migrate', targetType: 'sensor', targetId: id, details: { slave_mac: normMac, to_device_id: newDeviceId } });
-      } else {
-        // Brand-new sensor, or its prior hub is in another org: insert if new,
-        // re-activate if it was previously soft-deleted.
+      if (allRows.rows.length === 0) {
+        // Brand-new sensor (or prior rows all belong to another org): create it.
         await query(
           `INSERT INTO sensors (device_id, mac, name, active)
            VALUES ($1, $2, $3, TRUE)
            ON CONFLICT (device_id, mac) DO UPDATE SET active = TRUE, name = COALESCE(sensors.name, EXCLUDED.name)`,
           [newDeviceId, normMac, defaultName]
+        );
+      } else {
+        const keeper = allRows.rows[0];
+        const losers = allRows.rows.slice(1);
+
+        // Drop redundant rows first so migrating the keeper can't collide with
+        // the UNIQUE(device_id, mac) constraint. Deleting the fewer-reading rows
+        // keeps history loss minimal.
+        for (const loser of losers) {
+          await query('DELETE FROM sensors WHERE id = $1', [loser.id]);
+          if (loser.device_id !== newDeviceId) {
+            try { publishSensorRemove(loser.hub_mac, normMac); } catch { /* offline — sync handles it */ }
+          }
+        }
+
+        // Move the keeper to the new hub (preserving its readings) and re-activate.
+        if (keeper.device_id !== newDeviceId) {
+          try { publishSensorRemove(keeper.hub_mac, normMac); } catch { /* offline — sync handles it */ }
+          await audit({ req, action: 'sensor.migrate', targetType: 'sensor', targetId: id, details: { slave_mac: normMac, from_device_id: keeper.device_id, to_device_id: newDeviceId } });
+        }
+        await query(
+          'UPDATE sensors SET device_id = $1, active = TRUE, name = COALESCE(name, $2) WHERE id = $3',
+          [newDeviceId, defaultName, keeper.id]
         );
       }
     }

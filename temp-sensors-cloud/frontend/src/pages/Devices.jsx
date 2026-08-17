@@ -56,7 +56,7 @@ export default function Devices() {
     function onHubStatus(data) {
       setHubStatus((prev) => ({
         ...prev,
-        [data.hub_mac]: { online: data.online, ip: data.ip, ts: data.ts },
+        [data.hub_mac]: { online: data.online, ip: data.ip, ts: data.ts, fw: data.fw },
       }))
     }
 
@@ -288,6 +288,11 @@ export default function Devices() {
                     <div className="device-meta">Registered: {formatDate(device.registered_at)}</div>
                     {status?.ip && (
                       <div className="device-meta">IP: {status.ip}</div>
+                    )}
+                    {/* Live status wins over the stored value: it is refreshed on
+                        every MQTT connect, so it reflects a just-completed update. */}
+                    {(status?.fw || device.fw_version) && (
+                      <div className="device-meta">Firmware: {status?.fw || device.fw_version}</div>
                     )}
                   </div>
                   <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>

@@ -85,7 +85,7 @@ async function handleMessage(topic, payload) {
 }
 
 async function handleSensorData(hubMac, data) {
-  const { sensor_mac, temp, hum, battery, rssi, ts } = data;
+  const { sensor_mac, temp, hum, battery, rssi, ts, fw, cfg_ver } = data;
   if (!sensor_mac) return;
 
   // Hub must be registered
@@ -126,6 +126,20 @@ async function handleSensorData(hubMac, data) {
     [sensorId, tempVal, humVal, battery ?? null, rssi ?? null, recordedAt]
   );
 
+  // Firmware / config version. A pre-1.0 sensor does not send these, and the
+  // hub zero-fills the missing fields — "0.0.0" therefore means "not reported"
+  // and is stored as NULL rather than as a real version.
+  const fwVal  = (typeof fw === 'string' && fw !== '0.0.0') ? fw : null;
+  const cfgVal = Number.isInteger(cfg_ver) ? cfg_ver : 0;
+
+  // Only writes when something actually changed — this runs on every reading.
+  query(
+    `UPDATE sensors SET fw_version = $1, cfg_ver = $2, fw_reported_at = NOW()
+      WHERE id = $3
+        AND (fw_version IS DISTINCT FROM $1 OR cfg_ver IS DISTINCT FROM $2)`,
+    [fwVal, cfgVal, sensorId]
+  ).catch((err) => console.error('Version update error:', err.message));
+
   _io.to(`hub:${hubMac.toUpperCase()}`).emit('sensorData', {
     sensor_mac: sensor_mac.toUpperCase(),
     temp: tempVal,
@@ -133,6 +147,8 @@ async function handleSensorData(hubMac, data) {
     battery: battery ?? null,
     rssi: rssi ?? null,
     ts: recordedAt.getTime(),
+    fw: fwVal,
+    cfg_ver: cfgVal,
   });
 
   // Evaluate alert rules — fire-and-forget so alerting never blocks or breaks
@@ -162,6 +178,17 @@ function handleHubStatus(hubMac, data) {
   hubStatusCache.set(mac, payload);
   _io.to(`hub:${mac}`).emit('hubStatus', payload);
   if (typeof data.online === 'boolean') health.onHubStatus(mac, data.online);
+
+  // Hub firmware version, sent on every MQTT connect. Absent on hubs still
+  // running pre-1.0 firmware — leave the stored value untouched in that case
+  // rather than overwriting a known version with NULL.
+  if (typeof data.fw === 'string' && data.fw) {
+    query(
+      `UPDATE devices SET fw_version = $1, fw_reported_at = NOW()
+        WHERE mac = $2 AND fw_version IS DISTINCT FROM $1`,
+      [data.fw, mac]
+    ).catch((err) => console.error('Hub version update error:', err.message));
+  }
 }
 
 function getHubStatus(mac) {

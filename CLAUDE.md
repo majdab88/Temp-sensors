@@ -307,7 +307,7 @@ Set the **ESP-PROG VDD jumper to 3.3 V** before connecting; 5 V will damage the 
 | Arduino core | ESP32 Arduino core (Espressif) |
 | Build system | **PlatformIO** (`hub/platformio.ini`, `sensor/platformio.ini`) |
 | Board ID | `seeed_xiao_esp32c6` |
-| **Partition scheme** | **`huge_app.csv`** (hub only) — required for NimBLE-Arduino; set via `board_build.partitions` in `platformio.ini` |
+| **Partition scheme** | **`min_spiffs.csv`** (hub only) — two 1920 KiB OTA slots (`app0`/`app1`), required for firmware OTA; set via `board_build.partitions` in `platformio.ini`. Replaced `huge_app.csv`, which had a single app slot and could not support OTA. `nvs` is at the same offset in both, so reflashing preserves credentials — **do not `erase_flash`** when migrating a provisioned hub. Sensors use the default table, which already has `app0`/`app1`. |
 | Optimize | `-Os` (Smallest Code) — set via `build_flags` in `platformio.ini` |
 
 ### Required Libraries

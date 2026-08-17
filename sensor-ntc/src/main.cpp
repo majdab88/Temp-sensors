@@ -81,6 +81,13 @@
 // Cfn low-pass filters the ADC input (RC ≈ 0.5 ms with ~5 kΩ source impedance).
 // The existing 10 ms settling delay after enabling the divider covers the filter-cap charge-up.
 
+// --- FIRMWARE VERSION ---
+// Sent to the hub in every data frame and forwarded to the cloud. Bump on every
+// release; the cloud uses it to tell which nodes still need updating.
+#define FW_MAJOR 1
+#define FW_MINOR 0
+#define FW_PATCH 0
+
 // --- SLEEP SETTINGS ---
 #define SLEEP_TIME 900  // Seconds
 
@@ -210,10 +217,14 @@ struct BatteryInfo {
 // IMPORTANT: must be byte-for-byte identical on hub and all sensors
 // hum is sent as -999 — the hub should display "N/A" for NTC-only nodes
 typedef struct struct_message {
-  uint8_t msgType;
-  float temp;
-  float hum;
-  uint8_t battery;   // 0–100 %; 255 = read error
+  uint8_t  msgType;
+  float    temp;
+  float    hum;
+  uint8_t  battery;   // 0–100 %; 255 = read error
+  uint8_t  fw_major;  // firmware version of this node
+  uint8_t  fw_minor;
+  uint8_t  fw_patch;
+  uint16_t cfg_ver;   // config version currently applied; 0 = compiled defaults
 } struct_message;
 
 // --- LOG MESSAGE STRUCTURE ---
@@ -241,6 +252,26 @@ volatile bool tx_success  = false;
 volatile bool tx_complete = false;
 
 static float g_bat_v = 3.3f; // Set by getBatteryInfo(); used in readNTC() for VCC estimation
+
+// Config version applied on this node. Bumped by the hub-pushed config handler;
+// 0 means no config has ever been applied and the compiled defaults are in use.
+// Reported to the hub every cycle so the dashboard can tell whether a pending
+// change has actually landed.
+static uint16_t g_cfg_ver = 0;
+
+// Stamp the fields that identify this node into the outgoing message. Must run
+// before any send — pairing broadcasts carry them too, so the hub learns a
+// node's firmware version at pairing time rather than one cycle later.
+void loadIdentity() {
+  preferences.begin("config", true);
+  g_cfg_ver = preferences.getUShort("cfg_ver", 0);
+  preferences.end();
+
+  myData.fw_major = FW_MAJOR;
+  myData.fw_minor = FW_MINOR;
+  myData.fw_patch = FW_PATCH;
+  myData.cfg_ver  = g_cfg_ver;
+}
 
 // --- LOG BUFFER ---
 static char s_logBuf[LOG_BUF_SIZE];
@@ -383,6 +414,14 @@ void checkFactoryReset() {
       preferences.clear();
       preferences.end();
       Serial.println("✓ Pairing data erased");
+
+      // Also drop any cloud-pushed config so the node returns to compiled
+      // defaults. This is the recovery path for a bad remote config, and it
+      // needs no tooling — the customer can do it over the phone.
+      preferences.begin("config", false);
+      preferences.clear();
+      preferences.end();
+      Serial.println("✓ Config reset to defaults");
 
       for (int i = 0; i < 15; i++) {
         digitalWrite(LED_PIN, HIGH); delay(80);
@@ -743,6 +782,9 @@ void setup() {
   }
   //read ntc before radio init since it can cause brownout at low battery levels, leading to failed reads
   readSensor();
+
+  loadIdentity();
+  ulog("FW %d.%d.%d  cfg_ver %u\n", FW_MAJOR, FW_MINOR, FW_PATCH, g_cfg_ver);
 
   // Load pairing
   preferences.begin("network", true);

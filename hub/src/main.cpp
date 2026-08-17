@@ -26,6 +26,16 @@ struct log_message;
 void handleLogChunk(const uint8_t* mac, const log_message* msg);
 int  findSensor(const uint8_t* mac);
 
+// --- FIRMWARE VERSION ---
+// Reported to the cloud in the retained status payload. Bump on every release;
+// the cloud uses it to decide whether an OTA image should be offered.
+#define FW_MAJOR 1
+#define FW_MINOR 0
+#define FW_PATCH 0
+#define STR_(x) #x
+#define STR(x)  STR_(x)
+#define FW_VERSION STR(FW_MAJOR) "." STR(FW_MINOR) "." STR(FW_PATCH)
+
 // --- XIAO ESP32-C6 PIN DEFINITIONS ---
 #define TRIGGER_PIN 9   // BOOT button
 #define LED_PIN     15  // Built-in LED
@@ -72,12 +82,36 @@ bool          timeConfigured = false;
 unsigned long lastNtpSync    = 0;
 
 // --- MESSAGE STRUCTURE (must be byte-for-byte identical on hub and all sensors) ---
+// New fields are appended only. Sensors running pre-1.0 firmware send just the
+// legacy prefix, so OnDataRecv accepts either length and zero-fills the rest —
+// a sensor that reports fw 0.0.0 / cfg_ver 0 simply has not been updated yet.
 typedef struct struct_message {
+  uint8_t  msgType;
+  float    temp;
+  float    hum;
+  uint8_t  battery;   // 0–100 %; 255 = read error
+  uint8_t  fw_major;  // sensor firmware version; 0.0.0 = pre-1.0 sensor
+  uint8_t  fw_minor;
+  uint8_t  fw_patch;
+  uint16_t cfg_ver;   // config version currently applied on the sensor; 0 = defaults
+} struct_message;
+
+// Wire layout of the pre-1.0 message, kept only to compute the minimum
+// acceptable packet length. Do not use for anything else.
+// Verified sizes on riscv32: legacy = 16 bytes, current = 20 bytes.
+typedef struct legacy_message {
   uint8_t msgType;
   float   temp;
   float   hum;
-  uint8_t battery;  // 0–100 %; 255 = read error
-} struct_message;
+  uint8_t battery;
+} legacy_message;
+
+// Appending must never disturb the legacy prefix — if this fires, the wire
+// format has silently broken compatibility with deployed sensors.
+static_assert(offsetof(struct_message, temp)    == offsetof(legacy_message, temp),    "wire format changed");
+static_assert(offsetof(struct_message, hum)     == offsetof(legacy_message, hum),     "wire format changed");
+static_assert(offsetof(struct_message, battery) == offsetof(legacy_message, battery), "wire format changed");
+static_assert(sizeof(struct_message) > sizeof(legacy_message), "new fields must change the length");
 
 // --- LOG MESSAGE STRUCTURE (must match sensor) ---
 // Sensor-ntc sends its wake-cycle serial log to the hub in 240-byte chunks
@@ -106,6 +140,13 @@ struct SensorData {
   bool          active;
   char          name[20];
   uint8_t       battery;
+
+  // Reported by the sensor in every data frame. All zero until the sensor has
+  // been updated to firmware that sends them.
+  uint8_t       fw_major;
+  uint8_t       fw_minor;
+  uint8_t       fw_patch;
+  uint16_t      cfg_ver;
 
   // Latest remote log received from this sensor (filled by handleLogChunk).
   // logExpectedTotal/logChunksRcvd track the in-progress assembly so we know
@@ -1279,8 +1320,11 @@ bool connectCloud() {
   mqttClient.subscribe(topicSensorRename);
   mqttClient.subscribe(topicPairEnable);
 
-  // Publish retained online status so the dashboard sees us immediately
-  String status = "{\"online\":true,\"ip\":\"" + WiFi.localIP().toString() + "\"}";
+  // Publish retained online status so the dashboard sees us immediately.
+  // fw is what the cloud compares against the firmware registry to decide
+  // whether this hub has an OTA update pending.
+  String status = "{\"online\":true,\"ip\":\"" + WiFi.localIP().toString() +
+                  "\",\"fw\":\"" FW_VERSION "\"}";
   mqttClient.publish(topicStatus, status.c_str(), /*retain=*/true);
   return true;
 }
@@ -1426,11 +1470,13 @@ void publishSensorData(int idx) {
   snprintf(sensorMacStr, sizeof(sensorMacStr), "%02X:%02X:%02X:%02X:%02X:%02X",
            s.mac[0], s.mac[1], s.mac[2], s.mac[3], s.mac[4], s.mac[5]);
 
-  char payload[220];
+  char payload[256];
   snprintf(payload, sizeof(payload),
     "{\"sensor_mac\":\"%s\",\"temp\":%.2f,\"hum\":%.2f,"
-    "\"battery\":%d,\"rssi\":%d,\"ts\":\"%s\"}",
-    sensorMacStr, s.temp, s.hum, s.battery, s.rssi, ts);
+    "\"battery\":%d,\"rssi\":%d,\"ts\":\"%s\","
+    "\"fw\":\"%u.%u.%u\",\"cfg_ver\":%u}",
+    sensorMacStr, s.temp, s.hum, s.battery, s.rssi, ts,
+    s.fw_major, s.fw_minor, s.fw_patch, s.cfg_ver);
 
   mqttClient.publish(topicData, payload);
 }
@@ -1844,8 +1890,13 @@ void OnDataRecv(const esp_now_recv_info_t* esp_now_info,
     return;
   }
 
-  if (len < (int)sizeof(incomingData)) return;
-  memcpy(&incomingData, incomingDataBytes, sizeof(incomingData));
+  // Accept both the legacy (pre-1.0) and current message lengths. Anything the
+  // sender did not include stays zero, so an un-updated sensor reads as
+  // fw 0.0.0 / cfg_ver 0 rather than being dropped.
+  if (len < (int)sizeof(legacy_message)) return;
+  int copyLen = len < (int)sizeof(incomingData) ? len : (int)sizeof(incomingData);
+  memset(&incomingData, 0, sizeof(incomingData));
+  memcpy(&incomingData, incomingDataBytes, copyLen);
   incomingRSSI = esp_now_info->rx_ctrl->rssi;
 
   if (incomingData.msgType == MSG_PAIRING) {
@@ -1918,6 +1969,14 @@ void OnDataRecv(const esp_now_recv_info_t* esp_now_info,
       Serial.println(" | Unknown sensor — ignoring. Re-pair to register.");
       return;
     }
+
+    // Record the reported versions before updateSensor(), so they are kept even
+    // when the reading itself is discarded as a duplicate retry.
+    sensors[index].fw_major = incomingData.fw_major;
+    sensors[index].fw_minor = incomingData.fw_minor;
+    sensors[index].fw_patch = incomingData.fw_patch;
+    sensors[index].cfg_ver  = incomingData.cfg_ver;
+
     updateSensor(index, incomingData.temp, incomingData.hum,
                  incomingRSSI, incomingData.battery);
   }

@@ -207,6 +207,12 @@ export default function SensorCard({ sensor, reading, alert, rule, spark, onRena
         {reading?.rssi != null && (
           <span className="sensor-meta-item">{reading.rssi} dBm</span>
         )}
+        {/* Absent on nodes still running pre-1.0 firmware, which do not report it. */}
+        {sensor.fw_version && (
+          <span className="sensor-meta-item" title="Sensor firmware version">
+            v{sensor.fw_version}
+          </span>
+        )}
         <BatteryIcon level={reading?.battery} />
       </div>
 

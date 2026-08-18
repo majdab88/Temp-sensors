@@ -14,3 +14,6 @@ sensor/.vscode/extensions.json
 sensor-ntc/.vscode/extensions.json
 sensor-ntc/.gitignore
 .gitignore
+
+# Publish helper config — contains a superadmin password.
+publish.env

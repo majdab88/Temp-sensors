@@ -26,6 +26,31 @@ shared. The droplet only ever stores signatures, never the key.
 Back the key up offline. A hub only accepts images signed by the key it was
 flashed with, so losing it means every hub needs a USB visit to trust a new one.
 
+## One-command release
+
+`publish.sh` does build → sign → upload → install in one step. Set it up once:
+
+```bash
+cp publish.env.example publish.env   # then fill in ADMIN_PASS
+```
+
+`publish.env` is gitignored — it holds a superadmin password.
+
+```bash
+./publish.sh                                  # build, sign, upload
+./publish.sh --install 58:E6:C5:15:40:F4      # ...and install on that hub
+./publish.sh --install all                    # ...and install on every hub
+./publish.sh --no-build                       # use the existing firmware.bin
+./publish.sh --list                           # what is on the server
+```
+
+The version is read from `FW_MAJOR`/`FW_MINOR`/`FW_PATCH` in `hub/src/main.cpp`,
+so there is no second place to keep in sync — but you must still bump it before
+publishing, or the hub will report `uptodate` and do nothing.
+
+Run it on the dev machine. It needs the private key, which must never reach the
+droplet.
+
 ## Signing a release
 
 ```bash
@@ -34,7 +59,12 @@ node sign.js sign fw-signing-key.pem ../../hub/.pio/build/xiao_esp32c6_hub/firmw
 
 Prints the size, SHA-256, and base64 signature. Upload the `.bin` through the
 dashboard's firmware page and paste in the signature; the backend stores it and
-sends it to the hub with the OTA command.
+sends it to the hub with the OTA command. `publish.sh` above automates this.
+
+**If you call the API by hand, URL-encode the signature.** Base64 contains `+`,
+`/` and `=`; a raw `+` in a query string decodes to a space, silently corrupting
+it. The hub then downloads the whole image before reporting `signature invalid`,
+which looks like a key problem rather than a shell-quoting one.
 
 ## Key rotation
 

@@ -1,6 +1,12 @@
 # PlatformIO build artifacts and downloaded libraries
 .pio/
 
+# Firmware signing keys — a leaked private key lets anyone flash the fleet.
+# Never commit these; they belong on a dev machine, not in git or on the droplet.
+*.pem
+fw-signing-key*
+
+
 # VS Code workspace file (optional — remove this line if you want to commit it)
 *.code-workspace
 sensor/.gitignore

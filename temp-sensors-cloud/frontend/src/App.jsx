@@ -15,6 +15,7 @@ import Users from './pages/Users'
 import Organizations from './pages/Organizations'
 import Account from './pages/Account'
 import AuditLog from './pages/AuditLog'
+import Firmware from './pages/Firmware'
 
 function ProtectedRoute({ children }) {
   const { isAuthenticated } = useAuth()
@@ -72,6 +73,7 @@ export default function App() {
             <Route path="account" element={<Account />} />
             <Route path="audit-log" element={<AuditLog />} />
             <Route path="users" element={<SuperadminRoute><Users /></SuperadminRoute>} />
+            <Route path="firmware" element={<SuperadminRoute><Firmware /></SuperadminRoute>} />
           </Route>
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>

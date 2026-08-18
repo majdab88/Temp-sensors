@@ -1,7 +1,11 @@
 # Remote Management Plan — Temp-sensors
 
 Hub firmware OTA, and remote sensor configuration from the dashboard.
-Status: **proposal, nothing implemented.**
+
+Status: **Phase 0 and Phase 1 implemented.** Version reporting is live; hub OTA
+is built and builds clean, but has not yet been exercised against real hardware —
+see the bench tests in §7 before trusting it on a hub you cannot reach.
+Phase 2 (sensor config) is still a proposal.
 
 ---
 
@@ -37,7 +41,10 @@ That makes the field round the expensive, non-repeatable part. And it means:
 The marginal cost of including the OTA receiver *during that same round* is a few
 hundred lines. The cost of adding it later is opening every enclosure again.
 
-This is worth a deliberate decision rather than a default. Two defensible answers:
+**Decided: option 2** — the sensor field round will carry both the config handler
+and the OTA receiver, so the fleet never needs opening again.
+
+The two options, for the record:
 
 1. **Config only now.** Cheapest to build, and correct if you are confident the
    config protocol is right the first time and will not need to grow.
@@ -57,8 +64,8 @@ The XIAO envs are bench/prototype only.
 
 | Device | Image size | Partition table in the shipped build | OTA slots? |
 |--------|-----------|--------------------------------------|-----------|
-| Hub (`xiao_esp32c6_hub`) | 1,601,824 B (1.53 MiB) | `huge_app.csv` → `otadata, app0, spiffs, coredump` | **No — one app slot** |
-| Sensor (`wroom_v2_sensor_ntc`) | 1,050,768 B (1026 KiB) | default → `otadata, app0, app1, spiffs, coredump` | Yes |
+| Hub (`xiao_esp32c6_hub`) | 1,585,514 B, 80.6% of slot | **now `min_spiffs.csv`** → `otadata, app0, app1, spiffs, coredump` (was `huge_app.csv`, single slot) | Yes, as of Phase 0 |
+| Sensor (`wroom_v2_sensor_ntc`) | 1,014,746 B, 77.4% of slot | default → `otadata, app0, app1, spiffs, coredump` | Yes |
 
 **Hubs need one physical USB visit before OTA works.** The partition table lives
 at `0x8000` and cannot be replaced by an OTA image, so the first OTA-capable hub
@@ -76,8 +83,9 @@ Existing infrastructure this builds on:
 
 ## 2. Hub firmware OTA
 
-Standard HTTPS pull into the inactive OTA slot. Nothing exotic — the hub is
-mains-powered, always awake, already speaks TLS.
+A plain-HTTP pull into the inactive OTA slot, with authenticity provided by an
+ECDSA signature checked on-device. Nothing exotic — the hub is mains-powered and
+always awake. See the transport note below for why HTTP rather than HTTPS.
 
 **Partition change.** Switch to the stock `min_spiffs.csv`
 (`board_build.partitions = min_spiffs.csv`): app0/app1 of 1920 KiB each, 81% full
@@ -104,9 +112,29 @@ successful publish. Not at the top of `setup()`.
 **Rollout.** Canary one hub, confirm it reports the new version and stays
 connected for 24 h, then the rest. A kill switch that clears pending stages.
 
-**Transport.** nginx serves `/firmware/<id>.bin`. The hub has MQTT credentials but
-no HTTP session, so issue a **short-lived signed URL token** in the MQTT command
-rather than adding HTTP auth to the hub.
+**Transport — implemented differently to this plan's first draft.** That draft
+called for HTTPS plus a short-lived signed URL token. Both were dropped, for
+reasons that only became clear once the hub code existed:
+
+- **Plain HTTP, not HTTPS.** The hub calls `WiFiClientSecure.setInsecure()`
+  ([hub/src/main.cpp](hub/src/main.cpp)), so it never authenticated the server anyway — TLS here
+  proves nothing about where an image came from. What it *would* cost is a second
+  concurrent TLS session competing with the MQTT socket for the C6's heap. The
+  ECDSA signature does the entire job, on-device, before the slot is made
+  bootable.
+- **No URL token.** Images are content-addressed as `/firmware/<sha256>.bin`, so
+  paths are unguessable, immutable, and cacheable. Firmware binaries are not
+  secret, and a token would have added an auth path to the hub to protect
+  something the signature already protects.
+
+The upshot: authenticity lives entirely in the signature, and the transport is
+deliberately dumb. `tools/firmware-signing/` holds the key handling.
+
+**Belt and braces at upload.** The backend computes the SHA-256 itself from the
+uploaded bytes rather than accepting one from the client, which removes "pasted
+the wrong hash" as a failure mode. If `FW_PUBLIC_KEY_PEM` is set it also verifies
+the signature at upload time, so a mismatch surfaces in the dashboard instead of
+on a hub that then refuses to install.
 
 ---
 
@@ -229,7 +257,7 @@ pending state obvious or it will look broken.
   applied_at, last_rejected_reason.
 
 **MQTT topics**, matching the existing `sensors/<hubmac>/...` convention:
-- `sensors/<hubmac>/ota/command` / `ota/status` — hub firmware
+- `sensors/<hubmac>/ota/command` / `ota/status` — hub firmware (implemented)
 - `sensors/<hubmac>/config/set` — cloud → hub: desired config for a sensor MAC
 - `sensors/<hubmac>/config/state` — hub → cloud: applied `cfg_ver` + values, rejections
 - Add `fw` to the hub's `status` payload and `cfg_ver` to per-sensor `data`.
@@ -249,7 +277,7 @@ tracks up to 10 sensors by MAC, so this is an extra field on an existing record.
 | Phase | Scope |
 |---|---|
 | **0. Plumbing + field round** | `FW_VERSION` on hub, `cfg_ver` on sensor, both reported to cloud/dashboard. Hub repartitioned to `min_spiffs.csv`, flashed via USB. Sensors flashed by hand with the config handler — **and the OTA receiver too, if you take option 2 in §0.** |
-| **1. Hub OTA** | HTTPS pull, signature, bootloader rollback, MQTT stage/status, canary rollout. |
+| **1. Hub OTA** ✅ | HTTP pull, ECDSA signature, bootloader rollback, MQTT stage/status, firmware registry + dashboard. **Implemented.** Still to do: bench-test rollback with a deliberately crashing image before trusting it in the field. |
 | **2. Sensor config** | Config downlink, NVS storage, clamping, echo, superadmin route, dashboard UI. |
 | **3. Sensor firmware OTA** | Deferred — Appendix A. |
 

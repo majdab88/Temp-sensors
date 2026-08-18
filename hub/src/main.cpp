@@ -47,7 +47,7 @@ void confirmFirmwareValid();
 #define FW_MINOR 0
 #endif
 #ifndef FW_PATCH
-#define FW_PATCH 7
+#define FW_PATCH 8
 #endif
 #define STR_(x) #x
 #define STR(x)  STR_(x)
@@ -114,6 +114,11 @@ static unsigned long otaVerifyDeadline = 0;
 // status payload so whether rollback is actually armed is visible from the
 // dashboard rather than only over a serial cable.
 static char  otaBootStateName[16] = "unknown";
+
+// Version this hub last gave up on and rolled back from. Persisted in NVS so
+// "I already tried this and it failed" survives a reboot, and so a retained
+// command cannot hand the same bad image straight back after a rollback.
+static char  otaRejectedVersion[16] = "";
 
 #define OTA_HTTP_TIMEOUT_MS 20000
 #define OTA_BUF_SIZE        1024
@@ -1062,11 +1067,33 @@ void mqttCallback(char* topic, byte* payload, unsigned int length) {
       return;
     }
 
+    if (otaRejectedVersion[0] && ver == otaRejectedVersion) {
+      // We already installed this version, it could not reach the cloud, and we
+      // rolled back. A retained command delivers it again on the next connect,
+      // so without this the hub reinstalls it and loops every ~20 minutes while
+      // looking perfectly healthy from the outside.
+      Serial.printf("[OTA] %s was rolled back before — refusing to reinstall\n",
+                    otaRejectedVersion);
+      ver.toCharArray(otaVersion, sizeof(otaVersion));
+      publishOtaStatus("failed", 0, "version previously rolled back on this hub");
+      return;
+    }
+
     url.toCharArray(otaUrl,     sizeof(otaUrl));
     ver.toCharArray(otaVersion, sizeof(otaVersion));
     sha.toCharArray(otaSha256,  sizeof(otaSha256));
     sig.toCharArray(otaSigB64,  sizeof(otaSigB64));
     otaRequested = true;
+
+    // A different version supersedes the old verdict — clear it so a genuine
+    // fix is never blocked by a stale record.
+    if (otaRejectedVersion[0]) {
+      otaRejectedVersion[0] = 0;
+      Preferences clr;
+      clr.begin("ota", false);
+      clr.remove("rejected");
+      clr.end();
+    }
     Serial.printf("[OTA] Queued update to %s\n", otaVersion);
     publishOtaStatus("accepted", 0, nullptr);
     return;
@@ -1832,6 +1859,11 @@ void checkOtaPendingVerify() {
   otaPrefs.begin("ota", false);
   bool    unconfirmed = otaPrefs.getBool("unconf", false);
   uint8_t tries       = otaPrefs.getUChar("tries", 0);
+  otaPrefs.getString("rejected", otaRejectedVersion, sizeof(otaRejectedVersion));
+  if (otaRejectedVersion[0]) {
+    Serial.printf("[OTA] Version %s previously rolled back — will not reinstall\n",
+                  otaRejectedVersion);
+  }
 
   if (unconfirmed) {
     tries++;
@@ -1845,6 +1877,10 @@ void checkOtaPendingVerify() {
       const esp_partition_t* previous = esp_ota_get_next_update_partition(NULL);
       otaPrefs.putBool("unconf", false);
       otaPrefs.putUChar("tries", 0);
+      // Remember what we are abandoning. Without this, the retained command that
+      // delivered this image is handed back on the very next reconnect and the
+      // hub reinstalls it — a rollback loop that looks healthy from outside.
+      otaPrefs.putString("rejected", FW_VERSION);
       otaPrefs.end();
 
       if (previous && esp_ota_set_boot_partition(previous) == ESP_OK) {

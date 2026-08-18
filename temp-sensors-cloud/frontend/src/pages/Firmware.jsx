@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import api from '../services/api'
 import socket from '../services/socket'
 
@@ -18,6 +18,8 @@ export default function Firmware() {
   const [error, setError] = useState('')
   const [notice, setNotice] = useState('')
 
+  const hubMacsRef = useRef([])
+
   const [file, setFile] = useState(null)
   const [version, setVersion] = useState('')
   const [signature, setSignature] = useState('')
@@ -31,6 +33,7 @@ export default function Firmware() {
       ])
       setImages(fwRes.data)
       setHubs(devRes.data)
+      hubMacsRef.current = devRes.data.map((d) => d.mac)
 
       // Seed from stored state so a refresh mid-update still shows progress.
       const seeded = {}
@@ -47,6 +50,10 @@ export default function Firmware() {
   }
 
   useEffect(() => {
+    // The shared socket is autoConnect:false — a page reached without passing
+    // through Dashboard/Devices would otherwise never receive OTA progress.
+    if (!socket.connected) socket.connect()
+
     load()
 
     function onOtaStatus(data) {
@@ -54,8 +61,19 @@ export default function Firmware() {
       // A confirmed update changes the hub's reported version — refresh the list.
       if (data.state === 'confirmed') load()
     }
+
+    // Re-join after a reconnect. This matters more here than elsewhere: the hub
+    // reboots mid-update, and the final "confirmed" arrives minutes later.
+    function onConnect() {
+      hubMacsRef.current.forEach((mac) => socket.emit('join', mac))
+    }
+
     socket.on('otaStatus', onOtaStatus)
-    return () => socket.off('otaStatus', onOtaStatus)
+    socket.on('connect', onConnect)
+    return () => {
+      socket.off('otaStatus', onOtaStatus)
+      socket.off('connect', onConnect)
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 

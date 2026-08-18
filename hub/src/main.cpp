@@ -40,7 +40,7 @@ void confirmFirmwareValid();
 // the cloud uses it to decide whether an OTA image should be offered.
 #define FW_MAJOR 1
 #define FW_MINOR 0
-#define FW_PATCH 2
+#define FW_PATCH 3
 #define STR_(x) #x
 #define STR(x)  STR_(x)
 #define FW_VERSION STR(FW_MAJOR) "." STR(FW_MINOR) "." STR(FW_PATCH)
@@ -79,6 +79,10 @@ static bool  otaInProgress  = false;
 // True when this boot is running an image the bootloader has not yet been told
 // is good. If we reboot again without confirming, it rolls back automatically.
 static bool  otaPendingVerify = false;
+
+// Ensures the terminal OTA status is published once per boot, not on every
+// MQTT reconnect.
+static bool  otaStatusSettled = false;
 
 #define OTA_HTTP_TIMEOUT_MS 20000
 #define OTA_BUF_SIZE        1024
@@ -1721,12 +1725,29 @@ void performOtaUpdate() {
 void checkOtaPendingVerify() {
   const esp_partition_t* running = esp_ota_get_running_partition();
   esp_ota_img_states_t state;
-  if (esp_ota_get_state_partition(running, &state) != ESP_OK) return;
+  esp_err_t err = esp_ota_get_state_partition(running, &state);
 
-  if (state == ESP_OTA_IMG_PENDING_VERIFY) {
+  // Always log the state. Whether the bootloader actually arms rollback is the
+  // single assumption the whole safety story rests on, and it is invisible
+  // otherwise — an image that is VALID on first boot never had a rollback net.
+  const char* name = "?";
+  if (err == ESP_OK) {
+    switch (state) {
+      case ESP_OTA_IMG_NEW:            name = "NEW";            break;
+      case ESP_OTA_IMG_PENDING_VERIFY: name = "PENDING_VERIFY"; break;
+      case ESP_OTA_IMG_VALID:          name = "VALID";          break;
+      case ESP_OTA_IMG_INVALID:        name = "INVALID";        break;
+      case ESP_OTA_IMG_ABORTED:        name = "ABORTED";        break;
+      default:                         name = "UNDEFINED";      break;
+    }
+  }
+  Serial.printf("[OTA] Booted from '%s', image state: %s\n",
+                running ? running->label : "?",
+                (err == ESP_OK) ? name : "unavailable");
+
+  if (err == ESP_OK && state == ESP_OTA_IMG_PENDING_VERIFY) {
     otaPendingVerify = true;
-    Serial.println("[OTA] Running a NEW image pending verification — "
-                   "will confirm after WiFi + MQTT come up");
+    Serial.println("[OTA] Rollback is armed — must confirm before the next reboot");
   }
 }
 
@@ -1736,14 +1757,25 @@ void checkOtaPendingVerify() {
 // the failure we need to recover from, and a hub we cannot reach is a hub we
 // cannot fix remotely.
 void confirmFirmwareValid() {
-  if (!otaPendingVerify) return;
-  otaPendingVerify = false;
-  if (esp_ota_mark_app_valid_cancel_rollback() == ESP_OK) {
-    Serial.println("[OTA] Image confirmed good — rollback cancelled");
-    publishOtaStatus("confirmed", 100, nullptr);
-  } else {
-    Serial.println("[OTA] Failed to mark image valid");
+  if (otaStatusSettled) return;   // once per boot, not per MQTT reconnect
+  otaStatusSettled = true;
+
+  if (otaPendingVerify) {
+    otaPendingVerify = false;
+    if (esp_ota_mark_app_valid_cancel_rollback() == ESP_OK) {
+      Serial.println("[OTA] Image confirmed good — rollback cancelled");
+    } else {
+      Serial.println("[OTA] Failed to mark image valid");
+    }
   }
+
+  // Publish a terminal status on every boot, not only when rollback was armed.
+  // Without this the dashboard is stuck showing "rebooting" forever on any hub
+  // whose bootloader does not arm rollback, which also leaves the Install
+  // button disabled and blocks the next update.
+  strncpy(otaVersion, FW_VERSION, sizeof(otaVersion) - 1);
+  otaVersion[sizeof(otaVersion) - 1] = '\0';
+  publishOtaStatus("confirmed", 100, nullptr);
 }
 
 // Complete an ESP-NOW pairing handshake (used by both auto-accept and cloud-approve paths).

@@ -227,7 +227,12 @@ export default function Firmware() {
             <div style={{ display: 'flex', flexDirection: 'column', gap: 6, minWidth: 260 }}>
               {hubs.map((hub) => {
                 const ota = otaState[hub.mac]
-                const active = ota && !['confirmed', 'failed', 'uptodate'].includes(ota.state)
+                // OTA state belongs to the hub, but a hub row is rendered inside
+                // every image card. Only the card for the version actually being
+                // installed should show progress; the rest just disable their
+                // button, since the hub can only take one update at a time.
+                const busy = ota && !['confirmed', 'failed', 'uptodate'].includes(ota.state)
+                const isTarget = busy && ota.version === img.version
                 const current = hub.fw_version
                 return (
                   <div key={hub.mac} style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
@@ -240,10 +245,13 @@ export default function Firmware() {
                     ) : (
                       <button
                         className="btn btn-sm btn-primary"
-                        disabled={active}
+                        disabled={busy}
+                        title={busy && !isTarget ? `Busy installing ${ota.version}` : ''}
                         onClick={() => handleStage(img.id, hub.mac, current, img.version)}
                       >
-                        {active ? `${ota.state}${ota.pct != null ? ` ${ota.pct}%` : ''}` : 'Install'}
+                        {isTarget
+                          ? `${ota.state}${ota.pct != null ? ` ${ota.pct}%` : ''}`
+                          : 'Install'}
                       </button>
                     )}
                   </div>

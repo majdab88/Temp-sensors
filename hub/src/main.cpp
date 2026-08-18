@@ -40,7 +40,7 @@ void confirmFirmwareValid();
 // the cloud uses it to decide whether an OTA image should be offered.
 #define FW_MAJOR 1
 #define FW_MINOR 0
-#define FW_PATCH 3
+#define FW_PATCH 4
 #define STR_(x) #x
 #define STR(x)  STR_(x)
 #define FW_VERSION STR(FW_MAJOR) "." STR(FW_MINOR) "." STR(FW_PATCH)
@@ -83,6 +83,11 @@ static bool  otaPendingVerify = false;
 // Ensures the terminal OTA status is published once per boot, not on every
 // MQTT reconnect.
 static bool  otaStatusSettled = false;
+
+// Image state the bootloader handed us, as a name. Published in the retained
+// status payload so whether rollback is actually armed is visible from the
+// dashboard rather than only over a serial cable.
+static char  otaBootStateName[16] = "unknown";
 
 #define OTA_HTTP_TIMEOUT_MS 20000
 #define OTA_BUF_SIZE        1024
@@ -1421,7 +1426,7 @@ bool connectCloud() {
   // fw is what the cloud compares against the firmware registry to decide
   // whether this hub has an OTA update pending.
   String status = "{\"online\":true,\"ip\":\"" + WiFi.localIP().toString() +
-                  "\",\"fw\":\"" FW_VERSION "\"}";
+                  "\",\"fw\":\"" FW_VERSION "\",\"img_state\":\"" + otaBootStateName + "\"}";
   mqttClient.publish(topicStatus, status.c_str(), /*retain=*/true);
 
   // WiFi up, MQTT connected, publish accepted — this image has now done the one
@@ -1741,6 +1746,9 @@ void checkOtaPendingVerify() {
       default:                         name = "UNDEFINED";      break;
     }
   }
+  strncpy(otaBootStateName, (err == ESP_OK) ? name : "unavailable",
+          sizeof(otaBootStateName) - 1);
+  otaBootStateName[sizeof(otaBootStateName) - 1] = 0;
   Serial.printf("[OTA] Booted from '%s', image state: %s\n",
                 running ? running->label : "?",
                 (err == ESP_OK) ? name : "unavailable");

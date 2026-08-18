@@ -59,6 +59,15 @@ function IconSetup({ size = 20 }) {
   )
 }
 
+function IconFirmware({ size = 20 }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <rect x="6" y="6" width="12" height="12" rx="2"/>
+      <path d="M10 2v4M14 2v4M10 18v4M14 18v4M2 10h4M2 14h4M18 10h4M18 14h4"/>
+    </svg>
+  )
+}
+
 function IconUsers({ size = 20 }) {
   return (
     <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -143,6 +152,7 @@ export default function Layout() {
     navLinks.push(
       { to: '/organizations', end: !showSensorPages, icon: <IconOrg />,   label: 'Orgs' },
       { to: '/users',         icon: <IconUsers />, label: 'Users' },
+      { to: '/firmware',      icon: <IconFirmware />, label: 'Firmware' },
       { to: '/audit-log',     icon: <IconAudit />, label: 'Audit Log' },
     )
   } else if (user?.role === 'owner' || user?.permissionLevel === 'admin') {

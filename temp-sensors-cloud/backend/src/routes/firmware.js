@@ -114,13 +114,32 @@ router.post(
       // Content-addressed, so re-uploading the same bytes is idempotent.
       await fs.writeFile(path.join(FIRMWARE_DIR, `${sha256}.bin`), image);
 
+      // Re-uploading identical bytes is a harmless no-op, but uploading them
+      // under a *different* version or signature must not silently rewrite the
+      // existing entry. That is how a mislabelled upload once replaced a
+      // known-good image's signature with one that did not match its own bytes,
+      // leaving the registry serving an image no hub would accept.
+      const existing = await query(
+        'SELECT id, version, signature FROM firmware_images WHERE sha256 = $1',
+        [sha256]
+      );
+      if (existing.rows.length > 0) {
+        const row = existing.rows[0];
+        if (row.version !== version || row.signature !== signature) {
+          return res.status(409).json({
+            error: `These exact bytes are already registered as version ${row.version}. ` +
+                   `Re-uploading them as ${version} would relabel that entry. ` +
+                   `Delete it first if that is really what you want, or check you picked the right .bin.`,
+          });
+        }
+        await query('UPDATE firmware_images SET notes = $1 WHERE id = $2',
+                    [notes || null, row.id]);
+      }
+
       const result = await query(
         `INSERT INTO firmware_images (device_kind, version, size, sha256, signature, notes, created_by)
          VALUES ($1, $2, $3, $4, $5, $6, $7)
-         ON CONFLICT (sha256) DO UPDATE
-           SET version = EXCLUDED.version,
-               signature = EXCLUDED.signature,
-               notes = EXCLUDED.notes
+         ON CONFLICT (sha256) DO UPDATE SET notes = EXCLUDED.notes
          RETURNING id, device_kind, version, size, sha256, notes, created_at`,
         [kind, version, image.length, sha256, signature, notes || null, req.user.sub || null]
       );

@@ -21,6 +21,7 @@ router.get('/', async (req, res) => {
       result = await query(
         `SELECT d.id, d.mac, d.name, d.org_id, d.registered_at,
                 d.fw_version, d.fw_reported_at,
+                d.ota_state, d.ota_version, d.ota_pct, d.ota_error,
                 o.name AS org_name
          FROM devices d
          LEFT JOIN organizations o ON o.id = d.org_id
@@ -28,7 +29,8 @@ router.get('/', async (req, res) => {
       );
     } else if (req.orgId) {
       result = await query(
-        `SELECT id, mac, name, org_id, registered_at, fw_version, fw_reported_at
+        `SELECT id, mac, name, org_id, registered_at, fw_version, fw_reported_at,
+                ota_state, ota_version, ota_pct, ota_error
          FROM devices WHERE org_id = $1
          ORDER BY registered_at DESC`,
         [req.orgId]

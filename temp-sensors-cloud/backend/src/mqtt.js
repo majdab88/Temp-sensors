@@ -32,6 +32,7 @@ function initMqtt(io) {
     client.subscribe([
       'sensors/+/data',
       'sensors/+/status',
+      'sensors/+/ota/status',        // hub OTA progress
       'sensors/+/pairing/request',
       'sensors/+/pairing/status',   // hub acks pairing mode enable/disable
       'sensors/+/sync/request',
@@ -81,6 +82,8 @@ async function handleMessage(topic, payload) {
     await handleSyncRequest(hubMac);
   } else if (parts[2] === 'sensor' && parts[3] === 'deleted') {
     await handleSensorDeleted(hubMac, data);
+  } else if (parts[2] === 'ota' && parts[3] === 'status') {
+    await handleOtaStatus(hubMac, data);
   }
 }
 
@@ -286,6 +289,57 @@ function handlePairingModeStatus(hubMac, data) {
 }
 
 /**
+ * Stage a firmware image on a hub.
+ *
+ * The hub verifies the SHA-256 and the ECDSA signature on-device before making
+ * the new slot bootable, so this command is not a trusted channel — it only
+ * tells the hub where to look.
+ */
+function publishOtaCommand(hubMac, { url, version, sha256, signature }) {
+  if (!client || !client.connected) {
+    throw new Error('MQTT client not connected');
+  }
+  const payload = JSON.stringify({ url, version, sha256, sig: signature });
+  client.publish(`sensors/${hubMac.toUpperCase()}/ota/command`, payload);
+}
+
+/**
+ * Record OTA progress reported by a hub and forward it to dashboard clients.
+ */
+async function handleOtaStatus(hubMac, data) {
+  const mac = hubMac.toUpperCase();
+  const state = typeof data.state === 'string' ? data.state.slice(0, 16) : null;
+  const version = typeof data.version === 'string' ? data.version.slice(0, 16) : null;
+  const pct = Number.isInteger(data.pct) ? data.pct : null;
+  const error = typeof data.error === 'string' ? data.error : null;
+
+  _io.to(`hub:${mac}`).emit('otaStatus', {
+    hub_mac: mac, state, version, pct, error, fw: data.fw ?? null,
+  });
+
+  try {
+    await query(
+      `UPDATE devices
+          SET ota_state = $1, ota_version = $2, ota_pct = $3,
+              ota_error = $4, ota_updated_at = NOW()
+        WHERE mac = $5`,
+      [state, version, pct, error, mac]
+    );
+
+    // "confirmed" means the new image booted, reached the cloud, and cancelled
+    // its own rollback — the only point at which the update is truly done.
+    if (state === 'confirmed' && data.fw) {
+      await query(
+        `UPDATE devices SET fw_version = $1, fw_reported_at = NOW() WHERE mac = $2`,
+        [data.fw, mac]
+      );
+    }
+  } catch (err) {
+    console.error('OTA status update error:', err.message);
+  }
+}
+
+/**
  * Tell a hub to enable or disable pairing mode.
  * Called by the pairing route handler.
  */
@@ -324,4 +378,4 @@ function publishSensorRemove(hubMac, sensorMac) {
   console.log(`[MQTT] Sent sensor/remove for ${sensorMac} to hub ${hubMac}`);
 }
 
-module.exports = { initMqtt, publishPairingResponse, publishPairingEnable, publishSensorRemove, getHubStatus, pushSyncToHub: handleSyncRequest };
+module.exports = { initMqtt, publishPairingResponse, publishPairingEnable, publishSensorRemove, getHubStatus, publishOtaCommand, pushSyncToHub: handleSyncRequest };

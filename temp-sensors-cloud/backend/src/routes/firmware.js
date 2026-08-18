@@ -98,6 +98,30 @@ router.post(
     const image  = req.body;
     const sha256 = crypto.createHash('sha256').update(image).digest('hex');
 
+    // The image states its own version through a marker embedded at build time.
+    // Without this the registry simply believes whatever version the uploader
+    // types, and a stale or wrong binary can be published under a label it does
+    // not match — which has happened twice, each time only surfacing after a hub
+    // had downloaded the whole 1.6 MB and rebooted into the wrong firmware.
+    //
+    // esp_app_desc_t is not usable here: under Arduino it carries the core's own
+    // build info (arduino-lib-builder), not ours.
+    const TAG = 'TEMPHUB_FW=';
+    const tagAt = image.indexOf(TAG);
+    if (tagAt !== -1) {
+      const embedded = image
+        .subarray(tagAt + TAG.length, tagAt + TAG.length + 16)
+        .toString('latin1')
+        .split('\0')[0]
+        .trim();
+      if (embedded && embedded !== version) {
+        return res.status(400).json({
+          error: `This image reports version ${embedded}, but you are uploading it ` +
+                 `as ${version}. Rebuild after bumping FW_PATCH, or correct the version field.`,
+        });
+      }
+    }
+
     if (imageUrl(sha256).length > MAX_URL_LEN) {
       return res.status(500).json({ error: 'FIRMWARE_BASE_URL too long for the hub URL buffer' });
     }

@@ -31,6 +31,8 @@ struct log_message;
 void handleLogChunk(const uint8_t* mac, const log_message* msg);
 int  findSensor(const uint8_t* mac);
 void publishOtaStatus(const char* state, int pct, const char* err);
+void saveOfflineBuffer();
+void loadOfflineBuffer();
 void performOtaUpdate();
 void checkOtaPendingVerify();
 void confirmFirmwareValid();
@@ -47,11 +49,17 @@ void confirmFirmwareValid();
 #define FW_MINOR 0
 #endif
 #ifndef FW_PATCH
-#define FW_PATCH 8
+#define FW_PATCH 9
 #endif
 #define STR_(x) #x
 #define STR(x)  STR_(x)
 #define FW_VERSION STR(FW_MAJOR) "." STR(FW_MINOR) "." STR(FW_PATCH)
+
+// Greppable marker so the backend can check that an uploaded image really is
+// the version it is being labelled as. esp_app_desc_t cannot be used for this:
+// under Arduino it carries the core's own build info (arduino-lib-builder),
+// not ours. Printed at boot so the linker cannot discard it.
+#define FW_VERSION_TAG "TEMPHUB_FW=" FW_VERSION
 
 // --- OTA IMAGE SIGNING KEY ---
 // The hub downloads images over an unauthenticated connection, so this key is
@@ -266,6 +274,21 @@ static BufferedReading offlineBuf[OFFLINE_BUFFER_SIZE];
 static int bufHead  = 0;   // next write slot (circular)
 static int bufTail  = 0;   // next read slot  (circular)
 static int bufCount = 0;
+
+// The buffer above is RAM only, so a reboot used to discard everything queued
+// during an outage. That is exactly what happens during an OTA rollback, which
+// restarts the hub every five minutes — a 15 minute recovery could silently
+// swallow three sensors' worth of readings.
+//
+// The most recent entries are mirrored to NVS and restored at boot. Capped well
+// below OFFLINE_BUFFER_SIZE to keep the blob small: the 20 KB NVS partition also
+// holds WiFi credentials, cloud credentials and the sensor list.
+#define OFFLINE_PERSIST_MAX 20
+
+// Set when the buffer changes. The actual flash write happens in loop(), never
+// in the ESP-NOW receive callback — a 10–20 ms NVS commit in that path would
+// stall the WiFi task while sensors are transmitting.
+static volatile bool offlineBufDirty = false;
 
 
 // --- WEB SERVER ---
@@ -1521,6 +1544,45 @@ bool connectCloud() {
 // Publish all readings that were buffered while MQTT was offline.
 // Called immediately after a successful (re)connect so readings are flushed
 // in the order they were received and with their original timestamps.
+// Mirror the newest queued readings to NVS. Each entry already carries the
+// timestamp captured when the reading arrived, so a restored reading is stored
+// at its true time rather than the time it was eventually flushed.
+void saveOfflineBuffer() {
+  Preferences bp;
+  bp.begin("buf", false);
+
+  if (bufCount == 0) {
+    bp.remove("q");
+  } else {
+    int n = bufCount > OFFLINE_PERSIST_MAX ? OFFLINE_PERSIST_MAX : bufCount;
+    static BufferedReading tmp[OFFLINE_PERSIST_MAX];
+    // Keep the newest n, in chronological order.
+    int start = (bufHead - n + OFFLINE_BUFFER_SIZE) % OFFLINE_BUFFER_SIZE;
+    for (int i = 0; i < n; i++) {
+      tmp[i] = offlineBuf[(start + i) % OFFLINE_BUFFER_SIZE];
+    }
+    bp.putBytes("q", tmp, n * sizeof(BufferedReading));
+  }
+  bp.end();
+}
+
+void loadOfflineBuffer() {
+  Preferences bp;
+  bp.begin("buf", true);
+  size_t len = bp.getBytesLength("q");
+
+  if (len >= sizeof(BufferedReading) && (len % sizeof(BufferedReading)) == 0) {
+    int n = len / sizeof(BufferedReading);
+    if (n > OFFLINE_BUFFER_SIZE) n = OFFLINE_BUFFER_SIZE;
+    bp.getBytes("q", offlineBuf, n * sizeof(BufferedReading));
+    bufTail  = 0;
+    bufHead  = n % OFFLINE_BUFFER_SIZE;
+    bufCount = n;
+    Serial.printf("[Buffer] Restored %d reading(s) queued before the last reboot\n", n);
+  }
+  bp.end();
+}
+
 void flushOfflineBuffer() {
   if (bufCount == 0) return;
   Serial.printf("[Buffer] Flushing %d buffered reading(s)...\n", bufCount);
@@ -1548,6 +1610,8 @@ void flushOfflineBuffer() {
 
     delay(20);   // brief yield to avoid flooding the broker
   }
+
+  offlineBufDirty = true;   // stored copy must match whatever is left
 
   if (bufCount == 0) {
     Serial.println("[Buffer] Flush complete.");
@@ -2015,6 +2079,7 @@ void publishSensorData(int idx) {
       bufTail = (bufTail + 1) % OFFLINE_BUFFER_SIZE;
     }
     Serial.printf("[Buffer] Queued reading (%d buffered)\n", bufCount);
+    offlineBufDirty = true;   // persisted from loop(), not here
     return;
   }
 
@@ -2606,6 +2671,8 @@ void setup() {
   delay(500);
   Serial.println("\n=== XIAO ESP32-C6 Hub ===");
   Serial.println("Firmware " FW_VERSION);
+  Serial.println(FW_VERSION_TAG);
+  loadOfflineBuffer();   // readings queued before the last reboot
 
   // Must run before anything can reboot us: if this image is pending
   // verification and we reset without confirming, the bootloader rolls back.
@@ -2790,6 +2857,13 @@ void loop() {
   if (otaRequested && !otaInProgress) {
     otaRequested = false;
     performOtaUpdate();
+  }
+
+  // Flash write kept out of the ESP-NOW callback: an NVS commit there would
+  // stall the WiFi task while sensors are mid-transmission.
+  if (offlineBufDirty && !otaInProgress) {
+    offlineBufDirty = false;
+    saveOfflineBuffer();
   }
 
   // An unconfirmed image that cannot reach the cloud must reboot itself, or the

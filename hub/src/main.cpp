@@ -38,9 +38,17 @@ void confirmFirmwareValid();
 // --- FIRMWARE VERSION ---
 // Reported to the cloud in the retained status payload. Bump on every release;
 // the cloud uses it to decide whether an OTA image should be offered.
+// Overridable from platformio.ini so a test build can carry its own version
+// without editing this file (see the rollbacktest env).
+#ifndef FW_MAJOR
 #define FW_MAJOR 1
+#endif
+#ifndef FW_MINOR
 #define FW_MINOR 0
+#endif
+#ifndef FW_PATCH
 #define FW_PATCH 6
+#endif
 #define STR_(x) #x
 #define STR(x)  STR_(x)
 #define FW_VERSION STR(FW_MAJOR) "." STR(FW_MINOR) "." STR(FW_PATCH)
@@ -1395,6 +1403,22 @@ void applySyncFromCloud(const String& json) {
 // Returns true on success.  lastMqttState is set to the PubSubClient rc so
 // callers (especially BLE provisioning) can report a meaningful error.
 bool connectCloud() {
+#ifdef OTA_ROLLBACK_TEST
+  // Deliberately broken build used to prove app-level rollback actually fires.
+  // The image boots normally but never reaches the cloud, so it can never
+  // confirm itself — which is precisely the failure rollback exists to recover
+  // from. Expect a self-reboot every OTA_VERIFY_WINDOW_MS and a revert to the
+  // previous slot after OTA_MAX_BOOT_TRIES attempts.
+  //
+  // Only ever built by the xiao_esp32c6_hub_rollbacktest env. Never ship this.
+  static bool warned = false;
+  if (!warned) {
+    warned = true;
+    Serial.println("\n*** OTA_ROLLBACK_TEST BUILD — cloud connection disabled ***");
+    Serial.println("*** This image cannot confirm itself and should revert. ***\n");
+  }
+  return false;
+#endif
   if (!cloudConfigured) return false;
 
   // Tear down any prior TLS state. Stale mbedtls buffers from a previous

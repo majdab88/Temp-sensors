@@ -38,6 +38,9 @@ Temp-sensors/
 │       └── main.cpp         # NTC probe firmware (ADC + Steinhart-Hart + deep sleep)
 ├── Temp32_hub.ino           # Original Arduino IDE source (kept for reference)
 ├── Temp32_sensor.ino        # Original Arduino IDE source (kept for reference)
+├── tools/
+│   └── firmware-signing/    # ECDSA keygen + image signing for OTA (sign.js)
+├── OTA_UPDATE_PLAN.md       # Hub firmware OTA + remote sensor config plan
 ├── CLOUD_MIGRATION_PLAN.md  # Plan to migrate to custom cloud + BLE provisioning
 ├── LORAWAN_MIGRATION_PLAN.md # Optional/future: migrate ESP-NOW to LoRaWAN + ChirpStack
 ├── README.md                # Project title placeholder

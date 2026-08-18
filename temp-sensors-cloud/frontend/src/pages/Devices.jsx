@@ -56,7 +56,7 @@ export default function Devices() {
     function onHubStatus(data) {
       setHubStatus((prev) => ({
         ...prev,
-        [data.hub_mac]: { online: data.online, ip: data.ip, ts: data.ts, fw: data.fw },
+        [data.hub_mac]: { online: data.online, ip: data.ip, ts: data.ts, fw: data.fw, img_state: data.img_state },
       }))
     }
 
@@ -293,6 +293,15 @@ export default function Devices() {
                         every MQTT connect, so it reflects a just-completed update. */}
                     {(status?.fw || device.fw_version) && (
                       <div className="device-meta">Firmware: {status?.fw || device.fw_version}</div>
+                    )}
+                    {/* PENDING_VERIFY means the bootloader armed rollback for this
+                        boot. Anything else means a bad image would stick rather
+                        than revert, which is worth knowing before relying on OTA. */}
+                    {status?.img_state && (
+                      <div className="device-meta">
+                        Boot image state: {status.img_state}
+                        {status.img_state === 'VALID' && ' (rollback not armed)'}
+                      </div>
                     )}
                   </div>
                   <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>

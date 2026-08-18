@@ -40,7 +40,7 @@ void confirmFirmwareValid();
 // the cloud uses it to decide whether an OTA image should be offered.
 #define FW_MAJOR 1
 #define FW_MINOR 0
-#define FW_PATCH 0
+#define FW_PATCH 2
 #define STR_(x) #x
 #define STR(x)  STR_(x)
 #define FW_VERSION STR(FW_MAJOR) "." STR(FW_MINOR) "." STR(FW_PATCH)

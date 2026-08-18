@@ -294,13 +294,16 @@ export default function Devices() {
                     {(status?.fw || device.fw_version) && (
                       <div className="device-meta">Firmware: {status?.fw || device.fw_version}</div>
                     )}
-                    {/* PENDING_VERIFY means the bootloader armed rollback for this
-                        boot. Anything else means a bad image would stick rather
-                        than revert, which is worth knowing before relying on OTA. */}
+                    {/* Measured on this hardware: images come up VALID, so the
+                        bootloader never arms its own rollback. The firmware's
+                        app-level scheme covers that case, which is why VALID is
+                        reported as protected rather than as a warning. */}
                     {status?.img_state && (
                       <div className="device-meta">
                         Boot image state: {status.img_state}
-                        {status.img_state === 'VALID' && ' (rollback not armed)'}
+                        {status.img_state === 'PENDING_VERIFY'
+                          ? ' — bootloader rollback armed'
+                          : ' — app-level rollback active'}
                       </div>
                     )}
                   </div>

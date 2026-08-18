@@ -40,7 +40,7 @@ void confirmFirmwareValid();
 // the cloud uses it to decide whether an OTA image should be offered.
 #define FW_MAJOR 1
 #define FW_MINOR 0
-#define FW_PATCH 4
+#define FW_PATCH 5
 #define STR_(x) #x
 #define STR(x)  STR_(x)
 #define FW_VERSION STR(FW_MAJOR) "." STR(FW_MINOR) "." STR(FW_PATCH)
@@ -83,6 +83,24 @@ static bool  otaPendingVerify = false;
 // Ensures the terminal OTA status is published once per boot, not on every
 // MQTT reconnect.
 static bool  otaStatusSettled = false;
+
+// --- APP-LEVEL ROLLBACK ---
+// Measured on real hardware: after esp_ota_set_boot_partition() the image comes
+// up VALID, not PENDING_VERIFY, so the bootloader never arms its own rollback
+// despite CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE being set in the framework's
+// sdkconfig.h. Without the scheme below, an image that boots but cannot reach
+// the cloud would stick forever and need a USB visit to recover.
+//
+// Instead: performOtaUpdate() marks the update unconfirmed in NVS before
+// rebooting. Each boot of an unconfirmed image increments a counter; reaching
+// WiFi + MQTT + a successful publish clears it. If the image cannot do that
+// within OTA_VERIFY_WINDOW_MS the hub reboots itself, and after
+// OTA_MAX_BOOT_TRIES attempts it switches back to the other slot.
+#define OTA_MAX_BOOT_TRIES    3
+#define OTA_VERIFY_WINDOW_MS  300000UL   // 5 min per attempt → ~15 min to revert
+
+static bool          otaUnconfirmed   = false;  // this boot is an unproven image
+static unsigned long otaVerifyDeadline = 0;
 
 // Image state the bootloader handed us, as a name. Published in the retained
 // status payload so whether rollback is actually armed is visible from the
@@ -1719,6 +1737,17 @@ void performOtaUpdate() {
     return;
   }
 
+  // Arm app-level rollback before handing control to the new image. If it
+  // cannot reach the cloud, checkOtaPendingVerify() reverts to this slot after
+  // OTA_MAX_BOOT_TRIES attempts.
+  {
+    Preferences otaPrefs;
+    otaPrefs.begin("ota", false);
+    otaPrefs.putBool("unconf", true);
+    otaPrefs.putUChar("tries", 0);
+    otaPrefs.end();
+  }
+
   Serial.println("[OTA] Verified and staged — rebooting");
   publishOtaStatus("rebooting", 100, nullptr);
   delay(300);          // let the MQTT packet leave before the reset
@@ -1755,8 +1784,46 @@ void checkOtaPendingVerify() {
 
   if (err == ESP_OK && state == ESP_OTA_IMG_PENDING_VERIFY) {
     otaPendingVerify = true;
-    Serial.println("[OTA] Rollback is armed — must confirm before the next reboot");
+    Serial.println("[OTA] Bootloader rollback is armed");
   }
+
+  // App-level rollback. Runs regardless of the bootloader's behaviour, because
+  // on this hardware the bootloader does not arm its own (see the note above
+  // OTA_MAX_BOOT_TRIES).
+  Preferences otaPrefs;
+  otaPrefs.begin("ota", false);
+  bool    unconfirmed = otaPrefs.getBool("unconf", false);
+  uint8_t tries       = otaPrefs.getUChar("tries", 0);
+
+  if (unconfirmed) {
+    tries++;
+    Serial.printf("[OTA] Unconfirmed image, boot attempt %u of %u\n",
+                  tries, OTA_MAX_BOOT_TRIES);
+
+    if (tries > OTA_MAX_BOOT_TRIES) {
+      // Give up and go back. The previous image is still intact in the other
+      // slot, which is exactly what esp_ota_get_next_update_partition() returns
+      // while the new one is running.
+      const esp_partition_t* previous = esp_ota_get_next_update_partition(NULL);
+      otaPrefs.putBool("unconf", false);
+      otaPrefs.putUChar("tries", 0);
+      otaPrefs.end();
+
+      if (previous && esp_ota_set_boot_partition(previous) == ESP_OK) {
+        Serial.printf("[OTA] Giving up on this image — reverting to '%s'\n",
+                      previous->label);
+      } else {
+        Serial.println("[OTA] Revert failed — continuing on the current image");
+      }
+      delay(200);
+      ESP.restart();
+    }
+
+    otaPrefs.putUChar("tries", tries);
+    otaUnconfirmed    = true;
+    otaVerifyDeadline = millis() + OTA_VERIFY_WINDOW_MS;
+  }
+  otaPrefs.end();
 }
 
 // Confirm the running image only once it has proven it can do its job: WiFi up,
@@ -1771,10 +1838,22 @@ void confirmFirmwareValid() {
   if (otaPendingVerify) {
     otaPendingVerify = false;
     if (esp_ota_mark_app_valid_cancel_rollback() == ESP_OK) {
-      Serial.println("[OTA] Image confirmed good — rollback cancelled");
+      Serial.println("[OTA] Image confirmed good — bootloader rollback cancelled");
     } else {
       Serial.println("[OTA] Failed to mark image valid");
     }
+  }
+
+  // Clear the app-level counter: WiFi is up, MQTT is connected, and a publish
+  // was accepted, which is the whole job this firmware exists to do.
+  if (otaUnconfirmed) {
+    otaUnconfirmed = false;
+    Preferences otaPrefs;
+    otaPrefs.begin("ota", false);
+    otaPrefs.putBool("unconf", false);
+    otaPrefs.putUChar("tries", 0);
+    otaPrefs.end();
+    Serial.println("[OTA] Image proved itself — rollback disarmed");
   }
 
   // Publish a terminal status on every boot, not only when rollback was armed.
@@ -2637,6 +2716,16 @@ void loop() {
   if (otaRequested && !otaInProgress) {
     otaRequested = false;
     performOtaUpdate();
+  }
+
+  // An unconfirmed image that cannot reach the cloud must reboot itself, or the
+  // attempt counter never advances and it would sit here forever instead of
+  // reverting. This is the mechanism that actually makes rollback happen.
+  if (otaUnconfirmed && !otaInProgress && (long)(millis() - otaVerifyDeadline) >= 0) {
+    Serial.println("[OTA] Image failed to reach the cloud in time — restarting");
+    Serial.flush();
+    delay(100);
+    ESP.restart();
   }
 
   // Cloud-gated pairing: resolve once the dashboard approves/rejects or timeout

@@ -47,7 +47,7 @@ void confirmFirmwareValid();
 #define FW_MINOR 0
 #endif
 #ifndef FW_PATCH
-#define FW_PATCH 6
+#define FW_PATCH 7
 #endif
 #define STR_(x) #x
 #define STR(x)  STR_(x)
@@ -1044,9 +1044,14 @@ void mqttCallback(char* topic, byte* payload, unsigned int length) {
       Serial.println("[OTA] Update already running — ignoring command");
       return;
     }
-    if (otaPendingVerify) {
+    if (otaPendingVerify || otaUnconfirmed) {
       // Chaining a second update before the first is confirmed would overwrite
-      // the very slot the bootloader needs to roll back into.
+      // the very slot we need to roll back into — the only way to end up with
+      // no good image to return to.
+      //
+      // otaUnconfirmed is the one that matters in practice: otaPendingVerify
+      // tracks the bootloader's own rollback, which this hardware never arms,
+      // so on its own this guard was permanently false.
       Serial.println("[OTA] Current image not yet confirmed — refusing");
       publishOtaStatus("failed", 0, "previous update not yet confirmed");
       return;

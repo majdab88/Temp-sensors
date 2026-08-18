@@ -12,6 +12,11 @@
 #include <Preferences.h>
 #include <ESPmDNS.h>
 #include "time.h"
+#include <HTTPClient.h>           // OTA image download
+#include <esp_ota_ops.h>          // OTA partition write + rollback state
+#include <mbedtls/md.h>           // SHA-256 over the downloaded image
+#include <mbedtls/pk.h>           // ECDSA P-256 signature verification
+#include <mbedtls/base64.h>
 
 // --- FORWARD DECLARATIONS ---
 // Required because PlatformIO/C++ does not auto-generate these like the Arduino IDE.
@@ -25,6 +30,10 @@ void sanitizeName(char* name, size_t maxLen);
 struct log_message;
 void handleLogChunk(const uint8_t* mac, const log_message* msg);
 int  findSensor(const uint8_t* mac);
+void publishOtaStatus(const char* state, int pct, const char* err);
+void performOtaUpdate();
+void checkOtaPendingVerify();
+void confirmFirmwareValid();
 
 // --- FIRMWARE VERSION ---
 // Reported to the cloud in the retained status payload. Bump on every release;
@@ -35,6 +44,44 @@ int  findSensor(const uint8_t* mac);
 #define STR_(x) #x
 #define STR(x)  STR_(x)
 #define FW_VERSION STR(FW_MAJOR) "." STR(FW_MINOR) "." STR(FW_PATCH)
+
+// --- OTA IMAGE SIGNING KEY ---
+// The hub downloads images over an unauthenticated connection, so this key is
+// the only thing preventing an attacker-supplied image from being flashed. The
+// image is verified before the new slot is ever made bootable.
+//
+// This is the PUBLIC half only — it can verify signatures, never create them,
+// so it is safe in git and safe to extract from a hub. The matching private key
+// lives only on the dev machine; if it is lost, these hubs can never be updated
+// over the air again. Rotating it means shipping the new key in an image signed
+// with the OLD one first, or the fleet is stranded.
+static const uint8_t FW_PUBLIC_KEY[] = {
+  0x30, 0x59, 0x30, 0x13, 0x06, 0x07, 0x2A, 0x86, 0x48, 0xCE, 0x3D, 0x02,
+  0x01, 0x06, 0x08, 0x2A, 0x86, 0x48, 0xCE, 0x3D, 0x03, 0x01, 0x07, 0x03,
+  0x42, 0x00, 0x04, 0xDB, 0x0E, 0x6F, 0x8E, 0x68, 0x68, 0x91, 0x13, 0x37,
+  0x01, 0xC0, 0xDF, 0x60, 0x13, 0x37, 0xCC, 0x34, 0xF4, 0xE5, 0xFD, 0xE2,
+  0x56, 0xCB, 0x2A, 0x2D, 0xE8, 0xF8, 0x21, 0xAF, 0x8B, 0xB5, 0x2C, 0xA0,
+  0x5F, 0x76, 0x14, 0x52, 0xE3, 0x31, 0xB3, 0x26, 0x15, 0x44, 0xFB, 0xF4,
+  0xA5, 0x98, 0x17, 0x13, 0xEE, 0xD2, 0x0A, 0x72, 0xB1, 0x71, 0xF1, 0x1F,
+  0x20, 0x60, 0x01, 0x69, 0x65, 0xDC, 0x2C,
+};
+
+// --- OTA STATE ---
+// The MQTT callback only records the command; the download runs from loop() so
+// it never blocks PubSubClient's own receive path.
+static bool  otaRequested   = false;
+static char  otaUrl[192]    = "";
+static char  otaVersion[16] = "";
+static char  otaSha256[65]  = "";   // 64 hex chars + NUL
+static char  otaSigB64[160] = "";   // base64 DER ECDSA signature
+static bool  otaInProgress  = false;
+
+// True when this boot is running an image the bootloader has not yet been told
+// is good. If we reboot again without confirming, it rolls back automatically.
+static bool  otaPendingVerify = false;
+
+#define OTA_HTTP_TIMEOUT_MS 20000
+#define OTA_BUF_SIZE        1024
 
 // --- XIAO ESP32-C6 PIN DEFINITIONS ---
 #define TRIGGER_PIN 9   // BOOT button
@@ -229,6 +276,8 @@ char topicSensorRenamed[72]; // Hub → Cloud: local rename notification
 char topicSensorDeleted[72]; // Hub → Cloud: local delete notification
 char topicPairEnable[80];   // Cloud → Hub: enable/disable pairing mode
 char topicPairStatus[80];   // Hub → Cloud: pairing mode state ack
+char topicOtaCmd[72];       // Cloud → Hub: OTA command (stage an image)
+char topicOtaStatus[72];    // Hub → Cloud: OTA progress / result
 
 bool cloudConfigured = false;  // true when MQTT credentials exist in NVS
 int  lastMqttState   = 0;     // PubSubClient state after last connectCloud() attempt
@@ -924,12 +973,55 @@ void buildTopics() {
   snprintf(topicSensorDeleted,sizeof(topicSensorDeleted),"sensors/%s/sensor/deleted",   hubMacStr);
   snprintf(topicPairEnable,  sizeof(topicPairEnable),  "sensors/%s/pairing/enable",   hubMacStr);
   snprintf(topicPairStatus,  sizeof(topicPairStatus),  "sensors/%s/pairing/status",   hubMacStr);
+  snprintf(topicOtaCmd,      sizeof(topicOtaCmd),      "sensors/%s/ota/command",      hubMacStr);
+  snprintf(topicOtaStatus,   sizeof(topicOtaStatus),   "sensors/%s/ota/status",       hubMacStr);
   Serial.printf("[MQTT] Hub MAC: %s\n", hubMacStr);
 }
 
 // Called by PubSubClient when a subscribed message arrives.
 void mqttCallback(char* topic, byte* payload, unsigned int length) {
   String json = String((char*)payload, length);
+
+  // ── OTA command from cloud ────────────────────────────────────────────────
+  // Only records the request; the download runs from loop() so it never blocks
+  // PubSubClient's receive path.
+  if (strcmp(topic, topicOtaCmd) == 0) {
+    String url = jsonGetStr(json, "url");
+    String ver = jsonGetStr(json, "version");
+    String sha = jsonGetStr(json, "sha256");
+    String sig = jsonGetStr(json, "sig");
+
+    if (url.isEmpty() || sha.isEmpty() || sig.isEmpty()) {
+      Serial.println("[OTA] Command missing url/sha256/sig — ignoring");
+      publishOtaStatus("failed", 0, "incomplete command");
+      return;
+    }
+    if (otaInProgress) {
+      Serial.println("[OTA] Update already running — ignoring command");
+      return;
+    }
+    if (otaPendingVerify) {
+      // Chaining a second update before the first is confirmed would overwrite
+      // the very slot the bootloader needs to roll back into.
+      Serial.println("[OTA] Current image not yet confirmed — refusing");
+      publishOtaStatus("failed", 0, "previous update not yet confirmed");
+      return;
+    }
+    if (ver == FW_VERSION) {
+      Serial.printf("[OTA] Already running %s — nothing to do\n", FW_VERSION);
+      publishOtaStatus("uptodate", 100, nullptr);
+      return;
+    }
+
+    url.toCharArray(otaUrl,     sizeof(otaUrl));
+    ver.toCharArray(otaVersion, sizeof(otaVersion));
+    sha.toCharArray(otaSha256,  sizeof(otaSha256));
+    sig.toCharArray(otaSigB64,  sizeof(otaSigB64));
+    otaRequested = true;
+    Serial.printf("[OTA] Queued update to %s\n", otaVersion);
+    publishOtaStatus("accepted", 0, nullptr);
+    return;
+  }
 
   // ── Pairing mode enable/disable from cloud ─────────────────────────────────
   if (strcmp(topic, topicPairEnable) == 0) {
@@ -1319,6 +1411,7 @@ bool connectCloud() {
   mqttClient.subscribe(topicSensorRemove);
   mqttClient.subscribe(topicSensorRename);
   mqttClient.subscribe(topicPairEnable);
+  mqttClient.subscribe(topicOtaCmd);
 
   // Publish retained online status so the dashboard sees us immediately.
   // fw is what the cloud compares against the firmware registry to decide
@@ -1326,6 +1419,10 @@ bool connectCloud() {
   String status = "{\"online\":true,\"ip\":\"" + WiFi.localIP().toString() +
                   "\",\"fw\":\"" FW_VERSION "\"}";
   mqttClient.publish(topicStatus, status.c_str(), /*retain=*/true);
+
+  // WiFi up, MQTT connected, publish accepted — this image has now done the one
+  // job that matters, so it is safe to cancel the bootloader's pending rollback.
+  confirmFirmwareValid();
   return true;
 }
 
@@ -1384,6 +1481,268 @@ void maintainCloud() {
     mqttClient.setSocketTimeout(3);
     publishSyncRequest();
     flushOfflineBuffer();
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// FIRMWARE OTA
+// ─────────────────────────────────────────────────────────────────────────────
+
+void publishOtaStatus(const char* state, int pct, const char* err) {
+  if (!mqttClient.connected()) return;
+  char payload[224];
+  if (err && *err) {
+    snprintf(payload, sizeof(payload),
+             "{\"state\":\"%s\",\"version\":\"%s\",\"pct\":%d,\"error\":\"%s\",\"fw\":\"" FW_VERSION "\"}",
+             state, otaVersion, pct, err);
+  } else {
+    snprintf(payload, sizeof(payload),
+             "{\"state\":\"%s\",\"version\":\"%s\",\"pct\":%d,\"fw\":\"" FW_VERSION "\"}",
+             state, otaVersion, pct);
+  }
+  mqttClient.publish(topicOtaStatus, payload);
+  mqttClient.loop();
+}
+
+// Parse 64 hex chars into a 32-byte digest. Returns false on any bad character
+// so a malformed command fails closed rather than comparing against garbage.
+static bool hexToDigest(const char* hex, uint8_t* out) {
+  if (strlen(hex) != 64) return false;
+  for (int i = 0; i < 32; i++) {
+    int hi = hex[i * 2], lo = hex[i * 2 + 1];
+    auto nib = [](int c) -> int {
+      if (c >= '0' && c <= '9') return c - '0';
+      if (c >= 'a' && c <= 'f') return c - 'a' + 10;
+      if (c >= 'A' && c <= 'F') return c - 'A' + 10;
+      return -1;
+    };
+    int h = nib(hi), l = nib(lo);
+    if (h < 0 || l < 0) return false;
+    out[i] = (uint8_t)((h << 4) | l);
+  }
+  return true;
+}
+
+// Verify the base64 DER ECDSA signature in otaSigB64 against a SHA-256 digest,
+// using the compiled-in public key.
+static bool verifyImageSignature(const uint8_t* digest) {
+  uint8_t sig[128];
+  size_t  sigLen = 0;
+  if (mbedtls_base64_decode(sig, sizeof(sig), &sigLen,
+                            (const unsigned char*)otaSigB64, strlen(otaSigB64)) != 0) {
+    Serial.println("[OTA] Signature is not valid base64");
+    return false;
+  }
+
+  mbedtls_pk_context pk;
+  mbedtls_pk_init(&pk);
+  int rc = mbedtls_pk_parse_public_key(&pk, FW_PUBLIC_KEY, sizeof(FW_PUBLIC_KEY));
+  if (rc != 0) {
+    Serial.printf("[OTA] Public key parse failed (-0x%04X)\n", -rc);
+    mbedtls_pk_free(&pk);
+    return false;
+  }
+
+  rc = mbedtls_pk_verify(&pk, MBEDTLS_MD_SHA256, digest, 32, sig, sigLen);
+  mbedtls_pk_free(&pk);
+
+  if (rc != 0) {
+    Serial.printf("[OTA] Signature verification FAILED (-0x%04X)\n", -rc);
+    return false;
+  }
+  Serial.println("[OTA] Signature OK");
+  return true;
+}
+
+// Download, verify, and stage a firmware image. Runs from loop(), never from
+// the MQTT callback. On success this function does not return — it reboots.
+void performOtaUpdate() {
+  otaInProgress = true;
+  Serial.printf("[OTA] Starting update to %s from %s\n", otaVersion, otaUrl);
+
+  uint8_t expected[32];
+  if (!hexToDigest(otaSha256, expected)) {
+    publishOtaStatus("failed", 0, "bad sha256 in command");
+    otaInProgress = false;
+    return;
+  }
+
+  const esp_partition_t* target = esp_ota_get_next_update_partition(NULL);
+  if (!target) {
+    publishOtaStatus("failed", 0, "no OTA partition");
+    otaInProgress = false;
+    return;
+  }
+
+  // Plain HTTP by design: the image is signature-verified below, and the hub
+  // does not authenticate TLS certificates anyway, so HTTPS would add no
+  // authenticity here — only a second concurrent TLS session competing with
+  // the MQTT socket for heap.
+  WiFiClient  net;
+  HTTPClient  http;
+  http.setTimeout(OTA_HTTP_TIMEOUT_MS);
+  http.setConnectTimeout(OTA_HTTP_TIMEOUT_MS);
+  if (!http.begin(net, otaUrl)) {
+    publishOtaStatus("failed", 0, "bad url");
+    otaInProgress = false;
+    return;
+  }
+
+  int code = http.GET();
+  if (code != HTTP_CODE_OK) {
+    char err[48];
+    snprintf(err, sizeof(err), "http %d", code);
+    publishOtaStatus("failed", 0, err);
+    http.end();
+    otaInProgress = false;
+    return;
+  }
+
+  int total = http.getSize();
+  if (total <= 0) {
+    publishOtaStatus("failed", 0, "no content-length");
+    http.end();
+    otaInProgress = false;
+    return;
+  }
+  if ((size_t)total > target->size) {
+    publishOtaStatus("failed", 0, "image larger than partition");
+    http.end();
+    otaInProgress = false;
+    return;
+  }
+
+  esp_ota_handle_t handle = 0;
+  esp_err_t err = esp_ota_begin(target, total, &handle);
+  if (err != ESP_OK) {
+    publishOtaStatus("failed", 0, "ota_begin failed");
+    http.end();
+    otaInProgress = false;
+    return;
+  }
+
+  mbedtls_md_context_t md;
+  mbedtls_md_init(&md);
+  mbedtls_md_setup(&md, mbedtls_md_info_from_type(MBEDTLS_MD_SHA256), 0);
+  mbedtls_md_starts(&md);
+
+  publishOtaStatus("downloading", 0, nullptr);
+
+  WiFiClient* stream = http.getStreamPtr();
+  uint8_t buf[OTA_BUF_SIZE];
+  int written = 0, lastPct = 0;
+  unsigned long lastData = millis();
+  bool ok = true;
+
+  while (written < total) {
+    size_t avail = stream->available();
+    if (avail == 0) {
+      if (millis() - lastData > OTA_HTTP_TIMEOUT_MS) {
+        Serial.println("[OTA] Download stalled");
+        ok = false;
+        break;
+      }
+      delay(1);
+      continue;
+    }
+    lastData = millis();
+
+    int n = stream->readBytes(buf, avail > sizeof(buf) ? sizeof(buf) : avail);
+    if (n <= 0) continue;
+
+    if (esp_ota_write(handle, buf, n) != ESP_OK) {
+      Serial.println("[OTA] Flash write failed");
+      ok = false;
+      break;
+    }
+    mbedtls_md_update(&md, buf, n);
+    written += n;
+
+    int pct = (int)((int64_t)written * 100 / total);
+    if (pct >= lastPct + 10) {
+      lastPct = pct;
+      Serial.printf("[OTA] %d%% (%d/%d)\n", pct, written, total);
+      // Doubles as MQTT keepalive traffic during a download that can outlast
+      // the 30 s keepalive interval.
+      publishOtaStatus("downloading", pct, nullptr);
+    }
+  }
+
+  http.end();
+
+  uint8_t digest[32];
+  mbedtls_md_finish(&md, digest);
+  mbedtls_md_free(&md);
+
+  if (!ok || written != total) {
+    esp_ota_abort(handle);
+    publishOtaStatus("failed", lastPct, "download incomplete");
+    otaInProgress = false;
+    return;
+  }
+
+  publishOtaStatus("verifying", 100, nullptr);
+
+  if (memcmp(digest, expected, 32) != 0) {
+    Serial.println("[OTA] SHA-256 mismatch");
+    esp_ota_abort(handle);
+    publishOtaStatus("failed", 100, "sha256 mismatch");
+    otaInProgress = false;
+    return;
+  }
+
+  if (!verifyImageSignature(digest)) {
+    esp_ota_abort(handle);
+    publishOtaStatus("failed", 100, "signature invalid");
+    otaInProgress = false;
+    return;
+  }
+
+  if (esp_ota_end(handle) != ESP_OK) {
+    publishOtaStatus("failed", 100, "image rejected by esp_ota_end");
+    otaInProgress = false;
+    return;
+  }
+
+  if (esp_ota_set_boot_partition(target) != ESP_OK) {
+    publishOtaStatus("failed", 100, "set_boot_partition failed");
+    otaInProgress = false;
+    return;
+  }
+
+  Serial.println("[OTA] Verified and staged — rebooting");
+  publishOtaStatus("rebooting", 100, nullptr);
+  delay(300);          // let the MQTT packet leave before the reset
+  ESP.restart();
+}
+
+// Called once at boot. If the bootloader handed us an image it has not been
+// told is good, we must confirm it before the next reboot or it rolls back.
+void checkOtaPendingVerify() {
+  const esp_partition_t* running = esp_ota_get_running_partition();
+  esp_ota_img_states_t state;
+  if (esp_ota_get_state_partition(running, &state) != ESP_OK) return;
+
+  if (state == ESP_OTA_IMG_PENDING_VERIFY) {
+    otaPendingVerify = true;
+    Serial.println("[OTA] Running a NEW image pending verification — "
+                   "will confirm after WiFi + MQTT come up");
+  }
+}
+
+// Confirm the running image only once it has proven it can do its job: WiFi up,
+// MQTT connected, and a publish accepted. Confirming any earlier would defeat
+// the rollback — a firmware that boots but cannot reach the cloud is exactly
+// the failure we need to recover from, and a hub we cannot reach is a hub we
+// cannot fix remotely.
+void confirmFirmwareValid() {
+  if (!otaPendingVerify) return;
+  otaPendingVerify = false;
+  if (esp_ota_mark_app_valid_cancel_rollback() == ESP_OK) {
+    Serial.println("[OTA] Image confirmed good — rollback cancelled");
+    publishOtaStatus("confirmed", 100, nullptr);
+  } else {
+    Serial.println("[OTA] Failed to mark image valid");
   }
 }
 
@@ -2053,6 +2412,11 @@ void setup() {
   Serial.begin(115200);
   delay(500);
   Serial.println("\n=== XIAO ESP32-C6 Hub ===");
+  Serial.println("Firmware " FW_VERSION);
+
+  // Must run before anything can reboot us: if this image is pending
+  // verification and we reset without confirming, the bootloader rolls back.
+  checkOtaPendingVerify();
 
   pinMode(TRIGGER_PIN, INPUT_PULLUP);
   pinMode(LED_PIN, OUTPUT);
@@ -2226,6 +2590,14 @@ void loop() {
   server.handleClient();
   maintainWiFi();
   maintainCloud();
+
+  // Run a queued OTA outside the MQTT callback. Blocks for the duration of the
+  // download; ESP-NOW readings arriving meanwhile are handled by its callback
+  // and buffered as usual.
+  if (otaRequested && !otaInProgress) {
+    otaRequested = false;
+    performOtaUpdate();
+  }
 
   // Cloud-gated pairing: resolve once the dashboard approves/rejects or timeout
   if (pendingPairing.active) {

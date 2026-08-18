@@ -100,6 +100,11 @@ services:
       ADMIN_PASSWORD_HASH: ${ADMIN_PASSWORD_HASH}
       PORT: 3000
       NODE_ENV: production
+      FIRMWARE_DIR: /data/firmware              # where uploaded .bin files are stored
+      FIRMWARE_BASE_URL: ${FIRMWARE_BASE_URL}   # plain http:// origin the hub downloads from
+      FW_PUBLIC_KEY_PEM: ${FW_PUBLIC_KEY_PEM:-} # optional: verify signatures at upload time
+    volumes:
+      - ./firmware:/data/firmware               # writable here; nginx mounts it read-only
     networks:
       - internal
 
@@ -120,6 +125,7 @@ services:
       - ./nginx/certbot-webroot:/var/www/certbot:ro  # ACME challenge
       - ./certs:/etc/letsencrypt:ro                   # Let's Encrypt certs
       - ./frontend/dist:/usr/share/nginx/html:ro      # React build output (Phase 3)
+      - ./firmware:/usr/share/nginx/firmware:ro       # signed OTA images (served over HTTP)
     networks:
       - internal
 

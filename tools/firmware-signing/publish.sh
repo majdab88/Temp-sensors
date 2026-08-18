@@ -55,6 +55,9 @@ while [ $# -gt 0 ]; do
   shift
 done
 
+# The command is retained at the broker, so a hub that is offline now will
+# act on it the moment it reconnects.
+
 [ -n "$API" ]        || die "API is not set (create publish.env from publish.env.example)"
 [ -n "$ADMIN_PASS" ] || die "ADMIN_PASS is not set"
 
@@ -158,8 +161,19 @@ esac
 [ -n "$INSTALL_ON" ] || { note "not installing (pass --install <MAC|all>)"; exit 0; }
 
 if [ "$INSTALL_ON" = all ]; then
-  MACS=$(curl -fsS "$API/api/devices" -H "Authorization: Bearer $TOKEN" \
+  DEVICES=$(curl -fsS "$API/api/devices" -H "Authorization: Bearer $TOKEN")
+  MACS=$(printf '%s' "$DEVICES" \
          | python -c "import sys,json;print(' '.join(d['mac'] for d in json.load(sys.stdin)))")
+
+  # A hub that has never reported a firmware version predates OTA support and
+  # has no receiver. The command is retained, so it will act on it after its
+  # one USB flash - but say so rather than let it look like a silent failure.
+  NO_FW=$(printf '%s' "$DEVICES" \
+          | python -c "import sys,json;print(' '.join(d['mac'] for d in json.load(sys.stdin) if not d.get('fw_version')))")
+  if [ -n "$NO_FW" ]; then
+    echo "warning: no firmware version reported by: $NO_FW" >&2
+    echo "         these predate OTA support and need one USB flash first" >&2
+  fi
 else
   MACS=$INSTALL_ON
 fi
@@ -169,7 +183,7 @@ for mac in $MACS; do
   curl -fsS -X POST "$API/api/firmware/$FW_ID/stage" \
     -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
     -d "$(printf '{"hub_mac":"%s"}' "$mac")" >/dev/null \
-    && echo "    staged" || echo "    FAILED (hub offline, or already on $VER)"
+    && echo "    staged" || echo "    FAILED - hub not registered, or API error"
 done
 
 note "watch progress on the Firmware page, or:"

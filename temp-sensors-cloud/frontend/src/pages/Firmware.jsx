@@ -10,6 +10,11 @@ import socket from '../services/socket'
  * this server. The SHA-256 is computed by the backend from the uploaded bytes,
  * so it is never something anyone can paste incorrectly.
  */
+// Longer than the firmware's worst-case app-level rollback (3 boot attempts at
+// 5 minutes each), so a hub that is genuinely mid-recovery is not mistaken for
+// an abandoned update.
+const OTA_STALE_MS = 20 * 60 * 1000
+
 export default function Firmware() {
   const [images, setImages] = useState([])
   const [hubs, setHubs] = useState([])
@@ -39,7 +44,8 @@ export default function Firmware() {
       const seeded = {}
       for (const d of devRes.data) {
         if (d.ota_state) {
-          seeded[d.mac] = { state: d.ota_state, version: d.ota_version, pct: d.ota_pct, error: d.ota_error }
+          seeded[d.mac] = { state: d.ota_state, version: d.ota_version, pct: d.ota_pct,
+                             error: d.ota_error, updatedAt: d.ota_updated_at }
         }
       }
       setOtaState(seeded)
@@ -57,7 +63,7 @@ export default function Firmware() {
     load()
 
     function onOtaStatus(data) {
-      setOtaState((prev) => ({ ...prev, [data.hub_mac]: data }))
+      setOtaState((prev) => ({ ...prev, [data.hub_mac]: { ...data, updatedAt: new Date().toISOString() } }))
       // A confirmed update changes the hub's reported version — refresh the list.
       if (data.state === 'confirmed') load()
     }
@@ -116,7 +122,8 @@ export default function Firmware() {
     try {
       await api.post(`/firmware/${imageId}/stage`, { hub_mac: hubMac })
       setNotice(`Staged ${imageVersion} on ${hubMac}`)
-      setOtaState((prev) => ({ ...prev, [hubMac]: { state: 'staged', version: imageVersion, pct: 0 } }))
+      setOtaState((prev) => ({ ...prev, [hubMac]: { state: 'staged', version: imageVersion, pct: 0,
+                                                    updatedAt: new Date().toISOString() } }))
     } catch (err) {
       setError(err.response?.data?.error || 'Failed to stage')
     }
@@ -231,7 +238,13 @@ export default function Firmware() {
                 // every image card. Only the card for the version actually being
                 // installed should show progress; the rest just disable their
                 // button, since the hub can only take one update at a time.
-                const busy = ota && !['confirmed', 'failed', 'uptodate'].includes(ota.state)
+                // A hub that never answers would otherwise block its own Install
+                // button forever — staging on an offline hub used to leave
+                // "staged" in the database permanently. Anything older than the
+                // rollback window is treated as abandoned rather than in flight.
+                const ageMs = ota?.updatedAt ? Date.now() - new Date(ota.updatedAt).getTime() : 0
+                const stale = ageMs > OTA_STALE_MS
+                const busy = ota && !['confirmed', 'failed', 'uptodate'].includes(ota.state) && !stale
                 const isTarget = busy && ota.version === img.version
                 const current = hub.fw_version
                 return (

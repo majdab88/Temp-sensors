@@ -300,7 +300,21 @@ function publishOtaCommand(hubMac, { url, version, sha256, signature }) {
     throw new Error('MQTT client not connected');
   }
   const payload = JSON.stringify({ url, version, sha256, sig: signature });
-  client.publish(`sensors/${hubMac.toUpperCase()}/ota/command`, payload);
+  // Retained, so a hub that is offline right now picks the command up when it
+  // reconnects instead of silently missing it. Safe against loops because the
+  // hub refuses a command matching its running version — once updated it just
+  // answers "uptodate". handleOtaStatus clears the retained message once the
+  // update lands, so it does not linger forever.
+  client.publish(`sensors/${hubMac.toUpperCase()}/ota/command`, payload, { retain: true });
+}
+
+/**
+ * Drop the retained OTA command for a hub, so it is not replayed on every
+ * future reconnect. An empty retained payload deletes it at the broker.
+ */
+function clearRetainedOtaCommand(hubMac) {
+  if (!client || !client.connected) return;
+  client.publish(`sensors/${hubMac.toUpperCase()}/ota/command`, '', { retain: true });
 }
 
 /**
@@ -325,6 +339,12 @@ async function handleOtaStatus(hubMac, data) {
         WHERE mac = $5`,
       [state, version, pct, error, mac]
     );
+
+    // Once the hub is running something it is happy with, the staged command
+    // has done its job — drop it so it is not replayed on every reconnect.
+    if (state === 'confirmed' || state === 'uptodate') {
+      clearRetainedOtaCommand(mac);
+    }
 
     // "confirmed" means the new image booted, reached the cloud, and cancelled
     // its own rollback — the only point at which the update is truly done.

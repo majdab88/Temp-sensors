@@ -40,7 +40,7 @@ void confirmFirmwareValid();
 // the cloud uses it to decide whether an OTA image should be offered.
 #define FW_MAJOR 1
 #define FW_MINOR 0
-#define FW_PATCH 5
+#define FW_PATCH 6
 #define STR_(x) #x
 #define STR(x)  STR_(x)
 #define FW_VERSION STR(FW_MAJOR) "." STR(FW_MINOR) "." STR(FW_PATCH)
@@ -1013,6 +1013,15 @@ void mqttCallback(char* topic, byte* payload, unsigned int length) {
   // Only records the request; the download runs from loop() so it never blocks
   // PubSubClient's receive path.
   if (strcmp(topic, topicOtaCmd) == 0) {
+    // An empty retained payload is how the cloud deletes a completed command at
+    // the broker. It is not a malformed command, and must not be reported as a
+    // failure — doing so overwrote a good "confirmed" state with "failed"
+    // immediately after every successful update.
+    if (length == 0 || json.indexOf('{') < 0) {
+      Serial.println("[OTA] Retained command cleared");
+      return;
+    }
+
     String url = jsonGetStr(json, "url");
     String ver = jsonGetStr(json, "version");
     String sha = jsonGetStr(json, "sha256");

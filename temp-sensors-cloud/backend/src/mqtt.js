@@ -340,9 +340,15 @@ async function handleOtaStatus(hubMac, data) {
       [state, version, pct, error, mac]
     );
 
-    // Once the hub is running something it is happy with, the staged command
-    // has done its job — drop it so it is not replayed on every reconnect.
-    if (state === 'confirmed' || state === 'uptodate') {
+    // Drop the retained command once it has reached any terminal state.
+    //
+    // 'failed' matters as much as success here. A command that failed
+    // verification will fail identically every time, but retained messages are
+    // redelivered on every resubscribe — so leaving it in place made the hub
+    // re-download the same rejected image forever, and kept ota_state
+    // permanently non-terminal, which disabled its Install button and blocked
+    // every subsequent update.
+    if (state === 'confirmed' || state === 'uptodate' || state === 'failed') {
       clearRetainedOtaCommand(mac);
     }
 

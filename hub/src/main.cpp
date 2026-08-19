@@ -54,7 +54,7 @@ void confirmFirmwareValid();
 #define FW_MINOR 1
 #endif
 #ifndef FW_PATCH
-#define FW_PATCH 0
+#define FW_PATCH 1
 #endif
 #define STR_(x) #x
 #define STR(x)  STR_(x)
@@ -1101,6 +1101,14 @@ void mqttCallback(char* topic, byte* payload, unsigned int length) {
 
   // ── Sensor config from cloud ──────────────────────────────────────────────
   if (strcmp(topic, topicCfgSet) == 0) {
+    // An empty retained payload is how the cloud deletes a config command once
+    // it has landed. It is not a malformed command — same lesson as the OTA
+    // topic, which reported these as failures until it was fixed.
+    if (length == 0 || json.indexOf('{') < 0) {
+      Serial.println("[CFG] Retained command cleared");
+      return;
+    }
+
     String macStr = jsonGetStr(json, "sensor_mac");
     uint8_t mac[6];
     if (macStr.length() != 17 ||

@@ -50,6 +50,25 @@
 
 // --- NTC PROBE PARAMETERS ---
 #define SERIES_RESISTOR 10000   // Accurate 10kΩ resistor (measured ≈ nominal)
+
+// Which leg of the divider the NTC sits on. The v2 WROOM PCB wires this the
+// opposite way round to the v1/XIAO design the firmware originally assumed:
+//
+//   v1/XIAO:  3V3 -> NTC -> ADC tap -> R_series -> GND switch   (NTC high side)
+//   v2 WROOM: 3V3 -> R_series -> ADC tap -> NTC -> GND switch   (NTC low side)
+//
+// Getting this wrong inverts the computed resistance. The error is small where
+// R_ntc is near R_series -- about 2 C at room temperature, easy to miss -- and
+// grows sharply away from it: a probe at +4 C (26.8 kOhm) was being reported as
+// +41 C. The "ADC nonlinearity" previously blamed for over-reading in the cold
+// was this.
+#ifndef NTC_ON_LOW_SIDE
+#if BOARD_REV == 2
+#define NTC_ON_LOW_SIDE 1
+#else
+#define NTC_ON_LOW_SIDE 0
+#endif
+#endif
 #define NTC_SAMPLES        20   // ADC readings to average for stable result
 
 // Full Steinhart-Hart equation: 1/T(K) = A + B·ln(R) + C·(ln(R))³
@@ -86,7 +105,7 @@
 // release; the cloud uses it to tell which nodes still need updating.
 #define FW_MAJOR 1
 #define FW_MINOR 1
-#define FW_PATCH 0
+#define FW_PATCH 1
 
 // --- SLEEP SETTINGS ---
 #define SLEEP_TIME 900  // Seconds — compiled default, overridden by cloud config
@@ -646,9 +665,15 @@ float readNTC() {
     return -999;
   }
 
-  // Resolve NTC resistance from voltage divider equation
+  // Resolve NTC resistance from the divider, using the equation that matches
+  // which leg the NTC is actually on (see NTC_ON_LOW_SIDE above).
+#if NTC_ON_LOW_SIDE
+  // V_adc = vcc * R_ntc / (R_ntc + R_series)  =>  R_ntc = R_series * V_adc / (vcc - V_adc)
+  float r_ntc = g_rSeries * adcV / (vcc - adcV);
+#else
   // V_adc = vcc * R_series / (R_ntc + R_series)  =>  R_ntc = R_series * (vcc - V_adc) / V_adc
   float r_ntc = g_rSeries * (vcc - adcV) / adcV;
+#endif
 
   // Full Steinhart-Hart equation: 1/T(K) = A + B·ln(R) + C·(ln(R))³
   float lnR   = log(r_ntc);

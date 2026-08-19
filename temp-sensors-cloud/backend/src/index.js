@@ -23,6 +23,7 @@ const pushRoutes      = require('./routes/push');
 const healthRoutes    = require('./routes/health');
 const excursionRoutes = require('./routes/excursions');
 const firmwareRoutes  = require('./routes/firmware');
+const sensorCfgRoutes = require('./routes/sensor-config');
 
 const app    = express();
 const server = http.createServer(app);
@@ -52,6 +53,7 @@ app.use('/api/organizations',        orgRoutes);
 app.use('/api/account',              accountRoutes);
 app.use('/api/audit-log',            auditRoutes);
 app.use('/api/firmware',             firmwareRoutes);
+app.use('/api/sensor-config',         sensorCfgRoutes);
 app.use('/api/alerts',               alertRoutes);
 app.use('/api/push',                 pushRoutes);
 app.use('/api/health',               healthRoutes);

@@ -31,6 +31,11 @@ struct log_message;
 void handleLogChunk(const uint8_t* mac, const log_message* msg);
 int  findSensor(const uint8_t* mac);
 void publishOtaStatus(const char* state, int pct, const char* err);
+void saveSensorConfig(int idx);
+void loadSensorConfig(int idx);
+void publishConfigState(int idx);
+void pushConfigIfPending(int idx, const uint8_t* mac);
+float jsonGetFloat(const String& json, const String& key);
 void saveOfflineBuffer();
 void loadOfflineBuffer();
 void performOtaUpdate();
@@ -46,10 +51,10 @@ void confirmFirmwareValid();
 #define FW_MAJOR 1
 #endif
 #ifndef FW_MINOR
-#define FW_MINOR 0
+#define FW_MINOR 1
 #endif
 #ifndef FW_PATCH
-#define FW_PATCH 9
+#define FW_PATCH 0
 #endif
 #define STR_(x) #x
 #define STR(x)  STR_(x)
@@ -139,6 +144,7 @@ static char  otaRejectedVersion[16] = "";
 #define MSG_PAIRING 1
 #define MSG_DATA    2
 #define MSG_LOG     3   // Sensor → hub remote log (chunked text)
+#define MSG_CONFIG  4   // Hub → sensor: new configuration
 
 // --- REMOTE LOG STORAGE ---
 #define LOG_BUF_SIZE     1024  // bytes of log retained per sensor (latest only)
@@ -208,6 +214,24 @@ static_assert(offsetof(struct_message, hum)     == offsetof(legacy_message, hum)
 static_assert(offsetof(struct_message, battery) == offsetof(legacy_message, battery), "wire format changed");
 static_assert(sizeof(struct_message) > sizeof(legacy_message), "new fields must change the length");
 
+// --- CONFIG MESSAGE (hub → sensor; must match sensor byte for byte) ---
+// Fixed size with explicit spare bytes so a parameter can be added later
+// without a new wire format.
+typedef struct config_message {
+  uint8_t  msgType;       // MSG_CONFIG
+  uint8_t  schema;        // 1 = the fields below
+  uint16_t cfg_ver;
+  uint16_t sleep_secs;
+  uint16_t pad;
+  float    sh_a;          // Steinhart-Hart A (K^-1)
+  float    sh_b;          // Steinhart-Hart B (K^-1)
+  float    sh_c;          // Steinhart-Hart C (K^-1)
+  float    r_series;      // divider resistor, ohms
+  uint8_t  reserved[16];
+} config_message;
+
+static_assert(sizeof(config_message) == 40, "config wire format changed");
+
 // --- LOG MESSAGE STRUCTURE (must match sensor) ---
 // Sensor-ntc sends its wake-cycle serial log to the hub in 240-byte chunks
 // over the existing encrypted ESP-NOW peer.
@@ -241,7 +265,18 @@ struct SensorData {
   uint8_t       fw_major;
   uint8_t       fw_minor;
   uint8_t       fw_patch;
-  uint16_t      cfg_ver;
+  uint16_t      cfg_ver;        // version the sensor reports as applied
+
+  // Config the cloud wants this sensor to run. Pushed on the next data frame
+  // whenever it differs from what the sensor reports, and held in NVS so a hub
+  // reboot does not forget a change that has not landed yet.
+  bool          cfgPending;
+  uint16_t      cfgDesiredVer;
+  uint16_t      cfgSleepSecs;
+  float         cfgShA;
+  float         cfgShB;
+  float         cfgShC;
+  float         cfgRSeries;
 
   // Latest remote log received from this sensor (filled by handleLogChunk).
   // logExpectedTotal/logChunksRcvd track the in-progress assembly so we know
@@ -341,6 +376,8 @@ char topicPairEnable[80];   // Cloud → Hub: enable/disable pairing mode
 char topicPairStatus[80];   // Hub → Cloud: pairing mode state ack
 char topicOtaCmd[72];       // Cloud → Hub: OTA command (stage an image)
 char topicOtaStatus[72];    // Hub → Cloud: OTA progress / result
+char topicCfgSet[72];       // Cloud → Hub: desired sensor config
+char topicCfgState[72];     // Hub → Cloud: config applied / pending
 
 bool cloudConfigured = false;  // true when MQTT credentials exist in NVS
 int  lastMqttState   = 0;     // PubSubClient state after last connectCloud() attempt
@@ -403,6 +440,18 @@ String jsonGetStr(const String& json, const String& key) {
   int end = json.indexOf('"', start);
   if (end == -1) return "";
   return json.substring(start, end);
+}
+
+float jsonGetFloat(const String& json, const String& key) {
+  String search = "\"" + key + "\":";
+  int start = json.indexOf(search);
+  if (start == -1) return NAN;
+  start += search.length();
+  int end  = json.indexOf(',', start);
+  int end2 = json.indexOf('}', start);
+  if (end == -1 || (end2 != -1 && end2 < end)) end = end2;
+  if (end == -1) return NAN;
+  return json.substring(start, end).toFloat();
 }
 
 int jsonGetInt(const String& json, const String& key) {
@@ -982,6 +1031,9 @@ void loadPairedSensors() {
     if (esp_now_add_peer(&peer) == ESP_OK) {
       Serial.printf("  ✓ %02X:%02X:%02X:%02X:%02X:%02X restored\n",
                     mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
+      // A config change that has not reached its sensor yet must survive a hub
+      // reboot, or a node that was mid-cycle would silently never receive it.
+      loadSensorConfig(sensorCount - 1);
     } else {
       Serial.printf("  ✗ Failed to re-register peer %02X:%02X:%02X:%02X:%02X:%02X\n",
                     mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
@@ -1038,12 +1090,60 @@ void buildTopics() {
   snprintf(topicPairStatus,  sizeof(topicPairStatus),  "sensors/%s/pairing/status",   hubMacStr);
   snprintf(topicOtaCmd,      sizeof(topicOtaCmd),      "sensors/%s/ota/command",      hubMacStr);
   snprintf(topicOtaStatus,   sizeof(topicOtaStatus),   "sensors/%s/ota/status",       hubMacStr);
+  snprintf(topicCfgSet,      sizeof(topicCfgSet),      "sensors/%s/config/set",       hubMacStr);
+  snprintf(topicCfgState,    sizeof(topicCfgState),    "sensors/%s/config/state",     hubMacStr);
   Serial.printf("[MQTT] Hub MAC: %s\n", hubMacStr);
 }
 
 // Called by PubSubClient when a subscribed message arrives.
 void mqttCallback(char* topic, byte* payload, unsigned int length) {
   String json = String((char*)payload, length);
+
+  // ── Sensor config from cloud ──────────────────────────────────────────────
+  if (strcmp(topic, topicCfgSet) == 0) {
+    String macStr = jsonGetStr(json, "sensor_mac");
+    uint8_t mac[6];
+    if (macStr.length() != 17 ||
+        sscanf(macStr.c_str(), "%hhX:%hhX:%hhX:%hhX:%hhX:%hhX",
+               &mac[0], &mac[1], &mac[2], &mac[3], &mac[4], &mac[5]) != 6) {
+      Serial.println("[CFG] Bad sensor_mac in config command");
+      return;
+    }
+    int idx = findSensor(mac);
+    if (idx == -1) {
+      Serial.println("[CFG] Config for unknown sensor — ignoring");
+      return;
+    }
+
+    int   ver    = jsonGetInt(json, "cfg_ver");
+    int   sleep  = jsonGetInt(json, "sleep_secs");
+    float shA    = jsonGetFloat(json, "sh_a");
+    float shB    = jsonGetFloat(json, "sh_b");
+    float shC    = jsonGetFloat(json, "sh_c");
+    float rSer   = jsonGetFloat(json, "r_series");
+
+    if (ver <= 0 || sleep <= 0 || isnan(shA) || isnan(shB) || isnan(shC) || isnan(rSer)) {
+      Serial.println("[CFG] Incomplete config command — ignoring");
+      return;
+    }
+
+    sensors[idx].cfgDesiredVer = (uint16_t)ver;
+    sensors[idx].cfgSleepSecs  = (uint16_t)sleep;
+    sensors[idx].cfgShA        = shA;
+    sensors[idx].cfgShB        = shB;
+    sensors[idx].cfgShC        = shC;
+    sensors[idx].cfgRSeries    = rSer;
+    sensors[idx].cfgPending    = true;
+    saveSensorConfig(idx);
+
+    // Delivery waits for the sensor to wake — up to one full reporting
+    // interval. The dashboard shows it as pending until the node echoes the
+    // new cfg_ver back.
+    Serial.printf("[CFG] Queued config v%d for %s (applies on next wake)\n",
+                  ver, macStr.c_str());
+    publishConfigState(idx);
+    return;
+  }
 
   // ── OTA command from cloud ────────────────────────────────────────────────
   // Only records the request; the download runs from loop() so it never blocks
@@ -1527,6 +1627,7 @@ bool connectCloud() {
   mqttClient.subscribe(topicSensorRename);
   mqttClient.subscribe(topicPairEnable);
   mqttClient.subscribe(topicOtaCmd);
+  mqttClient.subscribe(topicCfgSet);
 
   // Publish retained online status so the dashboard sees us immediately.
   // fw is what the cloud compares against the firmware registry to decide
@@ -2001,6 +2102,108 @@ void confirmFirmwareValid() {
   strncpy(otaVersion, FW_VERSION, sizeof(otaVersion) - 1);
   otaVersion[sizeof(otaVersion) - 1] = '\0';
   publishOtaStatus("confirmed", 100, nullptr);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// SENSOR REMOTE CONFIG
+// ─────────────────────────────────────────────────────────────────────────────
+
+// Desired config is held in NVS as well as RAM: a change that has not reached
+// its sensor yet must survive a hub reboot, otherwise a node that happens to be
+// mid-cycle silently never gets it.
+void saveSensorConfig(int idx) {
+  if (idx < 0 || idx >= sensorCount) return;
+  char key[24];
+  Preferences cp;
+  cp.begin("scfg", false);
+  snprintf(key, sizeof(key), "%02X%02X%02X%02X%02X%02X",
+           sensors[idx].mac[0], sensors[idx].mac[1], sensors[idx].mac[2],
+           sensors[idx].mac[3], sensors[idx].mac[4], sensors[idx].mac[5]);
+  config_message blob = {};
+  blob.msgType     = MSG_CONFIG;
+  blob.schema      = 1;
+  blob.cfg_ver     = sensors[idx].cfgDesiredVer;
+  blob.sleep_secs  = sensors[idx].cfgSleepSecs;
+  blob.sh_a        = sensors[idx].cfgShA;
+  blob.sh_b        = sensors[idx].cfgShB;
+  blob.sh_c        = sensors[idx].cfgShC;
+  blob.r_series    = sensors[idx].cfgRSeries;
+  cp.putBytes(key, &blob, sizeof(blob));
+  cp.end();
+}
+
+void loadSensorConfig(int idx) {
+  if (idx < 0 || idx >= sensorCount) return;
+  char key[24];
+  Preferences cp;
+  cp.begin("scfg", true);
+  snprintf(key, sizeof(key), "%02X%02X%02X%02X%02X%02X",
+           sensors[idx].mac[0], sensors[idx].mac[1], sensors[idx].mac[2],
+           sensors[idx].mac[3], sensors[idx].mac[4], sensors[idx].mac[5]);
+  config_message blob = {};
+  if (cp.getBytes(key, &blob, sizeof(blob)) == sizeof(blob) && blob.cfg_ver != 0) {
+    sensors[idx].cfgDesiredVer = blob.cfg_ver;
+    sensors[idx].cfgSleepSecs  = blob.sleep_secs;
+    sensors[idx].cfgShA        = blob.sh_a;
+    sensors[idx].cfgShB        = blob.sh_b;
+    sensors[idx].cfgShC        = blob.sh_c;
+    sensors[idx].cfgRSeries    = blob.r_series;
+    sensors[idx].cfgPending    = true;   // resolved on first contact
+  }
+  cp.end();
+}
+
+// Report what a sensor is actually running, so the dashboard can tell a landed
+// change from a pending one rather than guessing.
+void publishConfigState(int idx) {
+  if (idx < 0 || idx >= sensorCount) return;
+  if (!cloudConfigured || !mqttClient.connected()) return;
+
+  char mac[18];
+  snprintf(mac, sizeof(mac), "%02X:%02X:%02X:%02X:%02X:%02X",
+           sensors[idx].mac[0], sensors[idx].mac[1], sensors[idx].mac[2],
+           sensors[idx].mac[3], sensors[idx].mac[4], sensors[idx].mac[5]);
+
+  char payload[224];
+  snprintf(payload, sizeof(payload),
+    "{\"sensor_mac\":\"%s\",\"applied_cfg_ver\":%u,\"desired_cfg_ver\":%u,"
+    "\"pending\":%s,\"sleep_secs\":%u,\"sh_a\":%.6e,\"sh_b\":%.6e,\"sh_c\":%.6e,\"r_series\":%.1f}",
+    mac, sensors[idx].cfg_ver, sensors[idx].cfgDesiredVer,
+    sensors[idx].cfgPending ? "true" : "false",
+    sensors[idx].cfgSleepSecs, sensors[idx].cfgShA, sensors[idx].cfgShB,
+    sensors[idx].cfgShC, sensors[idx].cfgRSeries);
+
+  mqttClient.publish(topicCfgState, payload);
+}
+
+// Called from OnDataRecv the moment a sensor reports in — that frame is the only
+// time the node is awake and listening, so the push has to happen here.
+void pushConfigIfPending(int idx, const uint8_t* mac) {
+  if (idx < 0 || idx >= sensorCount) return;
+  if (!sensors[idx].cfgPending) return;
+
+  if (sensors[idx].cfg_ver == sensors[idx].cfgDesiredVer) {
+    sensors[idx].cfgPending = false;      // the sensor has it
+    Serial.printf("[CFG] Sensor confirmed config v%u\n", sensors[idx].cfg_ver);
+    publishConfigState(idx);
+    return;
+  }
+
+  config_message cfg = {};
+  cfg.msgType     = MSG_CONFIG;
+  cfg.schema      = 1;
+  cfg.cfg_ver     = sensors[idx].cfgDesiredVer;
+  cfg.sleep_secs  = sensors[idx].cfgSleepSecs;
+  cfg.sh_a        = sensors[idx].cfgShA;
+  cfg.sh_b        = sensors[idx].cfgShB;
+  cfg.sh_c        = sensors[idx].cfgShC;
+  cfg.r_series    = sensors[idx].cfgRSeries;
+
+  if (esp_now_send(mac, (uint8_t*)&cfg, sizeof(cfg)) == ESP_OK) {
+    Serial.printf("[CFG] Pushed config v%u to sensor\n", cfg.cfg_ver);
+  } else {
+    Serial.println("[CFG] Push failed — will retry on the next reading");
+  }
 }
 
 // Complete an ESP-NOW pairing handshake (used by both auto-accept and cloud-approve paths).
@@ -2593,6 +2796,10 @@ void OnDataRecv(const esp_now_recv_info_t* esp_now_info,
     sensors[index].fw_minor = incomingData.fw_minor;
     sensors[index].fw_patch = incomingData.fw_patch;
     sensors[index].cfg_ver  = incomingData.cfg_ver;
+
+    // The sensor is awake and listening only right now, so any pending config
+    // has to go out on this frame.
+    pushConfigIfPending(index, esp_now_info->src_addr);
 
     updateSensor(index, incomingData.temp, incomingData.hum,
                  incomingRSSI, incomingData.battery);

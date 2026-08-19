@@ -135,7 +135,14 @@ NTC PCB circuit: `3.3V → NTC probe → GPIO1/D1 (ADC) → 10 kΩ (series) → 
 - NTC is on the **high side** (between 3.3V and ADC pin). At cold temperatures the NTC resistance is high, which keeps the ADC voltage low — in the accurate zone of the ESP32 ADC. The old topology (series R on top) drove the ADC to ~2.9V at -17°C, which is in the nonlinear region of ADC_11db and caused ~11°C over-reading. ADC attenuation is `ADC_6db` (0–2.2V), covering -40°C to +40°C for a 10K NTC.
 - No I2C bus — GPIO22 (D4) is repurposed as NTC GND switch; GPIO23 (D5) is unused.
 - `hum` is always sent as `-999`; the hub should display "N/A" for these nodes.
-- NTC parameters (`NTC_NOMINAL`, `NTC_BCOEFF`, `SERIES_RESISTOR`) must match your probe's datasheet.
+- Temperature uses the **full Steinhart-Hart equation** — `1/T(K) = A + B·ln(R) + C·ln(R)³` —
+  with `NTC_SH_A`/`NTC_SH_B`/`NTC_SH_C`, not the Beta approximation. The deployed values are a
+  **restricted cold-range fit** taken against an SHT40 reference, so they look nothing like
+  textbook 10K coefficients; a full-range fit is less accurate inside a cooler.
+- `SERIES_RESISTOR` should be the *measured* value of the divider resistor on each board — its
+  tolerance biases every resistance reading.
+- All four are settable per sensor from the dashboard (superadmin only); the compiled values are
+  the defaults until the cloud pushes something.
 - **Filter caps on ADC pins** (noise rejection / anti-aliasing):
   - `Cfn` = 100 nF X7R from GPIO1/D1 (NTC_ADC) to GND
   - `Cfb` = 10 nF X7R from GPIO2/D2 (BAT_ADC) to GND
@@ -280,9 +287,9 @@ Set the **ESP-PROG VDD jumper to 3.3 V** before connecting; 5 V will damage the 
 ### NTC variant only (`sensor-ntc/`)
 | Constant | Value | Notes |
 |----------|-------|-------|
-| `NTC_NOMINAL` | 10000 Ω | NTC resistance at reference temp — check datasheet |
-| `NTC_BCOEFF` | 3435 K | Beta coefficient — Eliwell/Carel/Dixell standard NTC 10K; check your probe's datasheet |
-| `NTC_T0_CELSIUS` | 25 °C | Reference temperature for `NTC_NOMINAL` |
+| `NTC_SH_A` | 2.535e-3 | Steinhart-Hart A — cold-range fit, not a textbook value |
+| `NTC_SH_B` | 3.01e-5 | Steinhart-Hart B — fitted from (-18.2 °C/81911 Ω, -7.2 °C/47214 Ω, +4 °C/26811 Ω) |
+| `NTC_SH_C` | 7.23e-7 | Steinhart-Hart C — SHT40 reference, cold-board operation |
 | `SERIES_RESISTOR` | 10000 Ω | Fixed series resistor — use ≥1 % tolerance |
 | `NTC_SAMPLES` | 20 | ADC readings averaged per measurement |
 | `NTC_PIN` | 1 | ADC GPIO — adjust if PCB differs |

@@ -85,11 +85,38 @@
 // Sent to the hub in every data frame and forwarded to the cloud. Bump on every
 // release; the cloud uses it to tell which nodes still need updating.
 #define FW_MAJOR 1
-#define FW_MINOR 0
+#define FW_MINOR 1
 #define FW_PATCH 0
 
 // --- SLEEP SETTINGS ---
-#define SLEEP_TIME 900  // Seconds
+#define SLEEP_TIME 900  // Seconds — compiled default, overridden by cloud config
+
+// --- REMOTE CONFIG LIMITS ---
+// Clamped here, on the device, not only in the cloud. The cloud-side check is
+// UX; this one survives a backend bug, a bad migration or a malformed frame.
+//
+// The sleep ceiling is a self-rescue constraint rather than a preference: a
+// config change can only land while the sensor is awake, so a 24 h interval
+// would put every correction 24 h away. One hour keeps recovery bounded.
+#define CFG_SLEEP_MIN     300
+#define CFG_SLEEP_MAX     3600
+// Steinhart-Hart coefficients are not clamped to narrow numeric windows. The
+// deployed fit is a restricted cold-range one (A=2.535e-3, B=3.01e-5,
+// C=7.23e-7) and looks nothing like textbook values, so any tight bound would
+// reject a legitimate recalibration. Only absurd magnitudes are refused; the
+// real check is the physical plausibility test below.
+#define CFG_A_MIN   1e-4f
+#define CFG_A_MAX   1e-2f
+#define CFG_B_MIN   1e-6f
+#define CFG_B_MAX   1e-3f
+#define CFG_C_ABS_MAX 1e-5f
+#define CFG_RSERIES_MIN 5000.0f
+#define CFG_RSERIES_MAX 20000.0f
+
+// How long to keep the radio up after the log burst, waiting for a config the
+// hub may be sending. Costs roughly 30 mAh/year at a 15 min interval (~1% of
+// the pack); returns early the moment a config arrives.
+#define CFG_WAIT_MS 60
 
 // --- RETRY SETTINGS ---
 #define MAX_RETRIES    5
@@ -176,6 +203,8 @@ RTC_DATA_ATTR bool     in_hibernate_mode        = false;
 #define MSG_PAIRING 1
 #define MSG_DATA    2
 #define MSG_LOG     3
+#define MSG_CONFIG  4   // Hub -> sensor: new configuration
+
 
 // --- ESP-NOW ENCRYPTION ---
 // IMPORTANT: These keys must be identical on all devices (hub + all sensors)
@@ -231,6 +260,23 @@ typedef struct struct_message {
 // Sent over the same encrypted ESP-NOW peer as the data message.
 // Chunked because ESP-NOW max payload is 250 bytes; one wake cycle's log
 // is typically a few hundred bytes — usually fits in 1–2 chunks.
+// --- CONFIG MESSAGE (hub -> sensor) ---
+// Fixed size with explicit spare bytes so a parameter can be added later
+// without a new wire format: older sensors ignore what they do not know, and
+// only sensors that must *act* on a new field need new firmware.
+typedef struct config_message {
+  uint8_t  msgType;       // MSG_CONFIG
+  uint8_t  schema;        // 1 = the fields below
+  uint16_t cfg_ver;       // version being pushed
+  uint16_t sleep_secs;    // reporting interval
+  uint16_t pad;
+  float    sh_a;          // Steinhart-Hart A (K^-1)
+  float    sh_b;          // Steinhart-Hart B (K^-1)
+  float    sh_c;          // Steinhart-Hart C (K^-1)
+  float    r_series;      // divider resistor, ohms — per-board tolerance trim
+  uint8_t  reserved[16];
+} config_message;
+
 typedef struct log_message {
   uint8_t msgType;            // MSG_LOG = 3
   uint8_t seq;                // chunk index (0-based)
@@ -259,12 +305,28 @@ static float g_bat_v = 3.3f; // Set by getBatteryInfo(); used in readNTC() for V
 // change has actually landed.
 static uint16_t g_cfg_ver = 0;
 
+// Live configuration. Compiled defaults until the hub pushes something.
+static uint16_t g_sleepSecs = SLEEP_TIME;
+static float    g_shA      = NTC_SH_A;
+static float    g_shB      = NTC_SH_B;
+static float    g_shC      = NTC_SH_C;
+static float    g_rSeries  = SERIES_RESISTOR;
+
+// Set by OnDataRecv when a config frame is accepted, so goToSleep() can stop
+// waiting early and sleep for the new interval straight away.
+static volatile bool g_configApplied = false;
+
 // Stamp the fields that identify this node into the outgoing message. Must run
 // before any send — pairing broadcasts carry them too, so the hub learns a
 // node's firmware version at pairing time rather than one cycle later.
 void loadIdentity() {
   preferences.begin("config", true);
-  g_cfg_ver = preferences.getUShort("cfg_ver", 0);
+  g_cfg_ver    = preferences.getUShort("cfg_ver", 0);
+  g_sleepSecs = preferences.getUShort("sleep", SLEEP_TIME);
+  g_shA       = preferences.getFloat ("sh_a",  NTC_SH_A);
+  g_shB       = preferences.getFloat ("sh_b",  NTC_SH_B);
+  g_shC       = preferences.getFloat ("sh_c",  NTC_SH_C);
+  g_rSeries   = preferences.getFloat ("rser",  SERIES_RESISTOR);
   preferences.end();
 
   myData.fw_major = FW_MAJOR;
@@ -321,6 +383,36 @@ void sendLogToHub() {
   }
 }
 
+// Keep the radio up briefly after the log burst so a config pushed by the hub
+// can land. The hub replies within a few ms of the data frame, and the log
+// send above usually covers that already, so this normally returns at once.
+// Coefficients can be individually plausible and still nonsense together — a
+// transposed or mis-scaled fit is the realistic failure. An NTC's resistance
+// must fall as temperature rises, so check the curve behaves like one across
+// the deployment range rather than trusting three numbers in isolation.
+bool shCoefficientsSane(float a, float b, float c) {
+  const float probes[3] = { 5000.0f, 20000.0f, 80000.0f };
+  float prev = 999.0f;
+  for (int i = 0; i < 3; i++) {
+    float lnR = log(probes[i]);
+    float denom = a + b * lnR + c * lnR * lnR * lnR;
+    if (denom <= 0.0f) return false;
+    float t = 1.0f / denom - 273.15f;
+    if (t < -60.0f || t > 100.0f) return false;   // implausible for this probe
+    if (t >= prev) return false;                  // must decrease as R rises
+    prev = t;
+  }
+  return true;
+}
+
+void waitForConfig() {
+  if (!isPaired) return;
+  unsigned long start = millis();
+  while (!g_configApplied && millis() - start < CFG_WAIT_MS) {
+    delay(2);
+  }
+}
+
 // --- SAFE DEEP SLEEP ---
 // ESP32-C6 RISC-V requires proper WiFi/ESP-NOW shutdown before sleep
 // Skipping this causes the illegal instruction crash (MCAUSE: 0x18)
@@ -329,6 +421,7 @@ void goToSleep(int seconds) {
   Serial.flush();         // Ensure serial output completes
 
   sendLogToHub();         // Ship the wake-cycle log to the hub via ESP-NOW
+  waitForConfig();        // Brief window for a config the hub may be pushing
   esp_now_deinit();       // Then deinit ESP-NOW
   esp_wifi_stop();        // Stop WiFi radio
   delay(100);             // Allow shutdown to settle
@@ -374,6 +467,61 @@ void OnDataSent(const wifi_tx_info_t *info, esp_now_send_status_t status) {
 }
 
 void OnDataRecv(const esp_now_recv_info_t *esp_now_info, const uint8_t *incomingData, int len) {
+  if (len < 1) return;
+
+  // Config push from the hub. Values are validated here rather than trusted:
+  // out-of-range settings are rejected outright, not silently clamped to
+  // something the operator never chose. The rejection is written to the wake
+  // log, which the hub already collects, and cfg_ver stays unchanged so the
+  // dashboard keeps showing the change as pending.
+  if (incomingData[0] == MSG_CONFIG && len >= (int)sizeof(config_message)) {
+    const config_message *cfg = (const config_message *)incomingData;
+
+    if (cfg->sleep_secs < CFG_SLEEP_MIN || cfg->sleep_secs > CFG_SLEEP_MAX) {
+      ulog("[CFG] Rejected: sleep %u outside %u-%u\n",
+           cfg->sleep_secs, CFG_SLEEP_MIN, CFG_SLEEP_MAX);
+      return;
+    }
+    if (!(cfg->r_series >= CFG_RSERIES_MIN && cfg->r_series <= CFG_RSERIES_MAX)) {
+      ulog("[CFG] Rejected: r_series %.0f outside %.0f-%.0f\n",
+           cfg->r_series, CFG_RSERIES_MIN, CFG_RSERIES_MAX);
+      return;
+    }
+    if (!(cfg->sh_a >= CFG_A_MIN && cfg->sh_a <= CFG_A_MAX) ||
+        !(cfg->sh_b >= CFG_B_MIN && cfg->sh_b <= CFG_B_MAX) ||
+        !(fabsf(cfg->sh_c) <= CFG_C_ABS_MAX)) {
+      ulog("[CFG] Rejected: A/B/C magnitude implausible (%.4e %.4e %.4e)\n",
+           cfg->sh_a, cfg->sh_b, cfg->sh_c);
+      return;
+    }
+    if (!shCoefficientsSane(cfg->sh_a, cfg->sh_b, cfg->sh_c)) {
+      ulog("[CFG] Rejected: A/B/C do not produce a falling NTC curve\n");
+      return;
+    }
+
+    preferences.begin("config", false);
+    preferences.putUShort("sleep",   cfg->sleep_secs);
+    preferences.putFloat ("sh_a",    cfg->sh_a);
+    preferences.putFloat ("sh_b",    cfg->sh_b);
+    preferences.putFloat ("sh_c",    cfg->sh_c);
+    preferences.putFloat ("rser",    cfg->r_series);
+    preferences.putUShort("cfg_ver", cfg->cfg_ver);
+    preferences.end();
+
+    g_sleepSecs = cfg->sleep_secs;
+    g_shA       = cfg->sh_a;
+    g_shB       = cfg->sh_b;
+    g_shC       = cfg->sh_c;
+    g_rSeries   = cfg->r_series;
+    g_cfg_ver   = cfg->cfg_ver;
+    g_configApplied = true;
+
+    ulog("[CFG] Applied v%u: sleep %us, R=%.0f, A=%.4e B=%.4e C=%.4e\n",
+         cfg->cfg_ver, cfg->sleep_secs, cfg->r_series,
+         cfg->sh_a, cfg->sh_b, cfg->sh_c);
+    return;
+  }
+
   struct_message *msg = (struct_message *)incomingData;
 
   if (msg->msgType == MSG_PAIRING) {
@@ -500,11 +648,11 @@ float readNTC() {
 
   // Resolve NTC resistance from voltage divider equation
   // V_adc = vcc * R_series / (R_ntc + R_series)  =>  R_ntc = R_series * (vcc - V_adc) / V_adc
-  float r_ntc = SERIES_RESISTOR * (vcc - adcV) / adcV;
+  float r_ntc = g_rSeries * (vcc - adcV) / adcV;
 
   // Full Steinhart-Hart equation: 1/T(K) = A + B·ln(R) + C·(ln(R))³
   float lnR   = log(r_ntc);
-  float tempC = 1.0f / (NTC_SH_A + NTC_SH_B * lnR + NTC_SH_C * lnR * lnR * lnR) - 273.15f;
+  float tempC = 1.0f / (g_shA + g_shB * lnR + g_shC * lnR * lnR * lnR) - 273.15f;
   ulog("[NTC] vcc=%.3fV  adc=%.0fmV  R_ntc=%.0fΩ  T=%.2f°C\n", vcc, adcMv, r_ntc, tempC);
 
   if (tempC < -55.0f || tempC > 125.0f) {
@@ -733,7 +881,7 @@ void setup() {
   ulog("Reset reason: %d\n", (int)reset_reason);
   if (reset_reason == ESP_RST_BROWNOUT) {
     ulog("⚠ Brownout on previous boot — skipping wake cycle\n");
-    esp_sleep_enable_timer_wakeup((uint64_t)SLEEP_TIME * 1000000ULL);
+    esp_sleep_enable_timer_wakeup((uint64_t)g_sleepSecs * 1000000ULL);
     esp_deep_sleep_enable_gpio_wakeup(1ULL << RESET_PIN, ESP_GPIO_WAKEUP_GPIO_LOW);
     esp_deep_sleep_start();
   }
@@ -777,7 +925,7 @@ void setup() {
   ulog("Battery: %.2fV  %d%%  %s\n", bat.voltage, bat.percentage, bat.status);
   if (bat.percentage != 255 && bat.percentage <= CRITICAL_PCT) {
     Serial.println("Battery critical — sleeping to protect cell.");
-    esp_sleep_enable_timer_wakeup((uint64_t)SLEEP_TIME * 1000000ULL);
+    esp_sleep_enable_timer_wakeup((uint64_t)g_sleepSecs * 1000000ULL);
     esp_deep_sleep_start();
   }
   //read ntc before radio init since it can cause brownout at low battery levels, leading to failed reads
@@ -910,7 +1058,7 @@ void setup() {
       }
     }
 
-    goToSleep(SLEEP_TIME);
+    goToSleep(g_sleepSecs);   // configured interval, not the compiled default
   } else {
     enterPairingMode();
   }

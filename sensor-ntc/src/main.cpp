@@ -85,11 +85,29 @@
 // Sent to the hub in every data frame and forwarded to the cloud. Bump on every
 // release; the cloud uses it to tell which nodes still need updating.
 #define FW_MAJOR 1
-#define FW_MINOR 0
+#define FW_MINOR 1
 #define FW_PATCH 0
 
 // --- SLEEP SETTINGS ---
-#define SLEEP_TIME 900  // Seconds
+#define SLEEP_TIME 900  // Seconds — compiled default, overridden by cloud config
+
+// --- REMOTE CONFIG LIMITS ---
+// Clamped here, on the device, not only in the cloud. The cloud-side check is
+// UX; this one survives a backend bug, a bad migration or a malformed frame.
+//
+// The sleep ceiling is a self-rescue constraint rather than a preference: a
+// config change can only land while the sensor is awake, so a 24 h interval
+// would put every correction 24 h away. One hour keeps recovery bounded.
+#define CFG_SLEEP_MIN     300
+#define CFG_SLEEP_MAX     3600
+#define CFG_OFFSET_ABS_MAX 10.0f
+#define CFG_GAIN_MIN      0.9f
+#define CFG_GAIN_MAX      1.1f
+
+// How long to keep the radio up after the log burst, waiting for a config the
+// hub may be sending. Costs roughly 30 mAh/year at a 15 min interval (~1% of
+// the pack); returns early the moment a config arrives.
+#define CFG_WAIT_MS 60
 
 // --- RETRY SETTINGS ---
 #define MAX_RETRIES    5
@@ -176,6 +194,8 @@ RTC_DATA_ATTR bool     in_hibernate_mode        = false;
 #define MSG_PAIRING 1
 #define MSG_DATA    2
 #define MSG_LOG     3
+#define MSG_CONFIG  4   // Hub -> sensor: new configuration
+
 
 // --- ESP-NOW ENCRYPTION ---
 // IMPORTANT: These keys must be identical on all devices (hub + all sensors)
@@ -231,6 +251,20 @@ typedef struct struct_message {
 // Sent over the same encrypted ESP-NOW peer as the data message.
 // Chunked because ESP-NOW max payload is 250 bytes; one wake cycle's log
 // is typically a few hundred bytes — usually fits in 1–2 chunks.
+// --- CONFIG MESSAGE (hub -> sensor) ---
+// Fixed size with explicit spare bytes so a parameter can be added later
+// without a new wire format: older sensors ignore what they do not know, and
+// only sensors that must *act* on a new field need new firmware.
+typedef struct config_message {
+  uint8_t  msgType;       // MSG_CONFIG
+  uint8_t  schema;        // 1 = the fields below
+  uint16_t cfg_ver;       // version being pushed
+  uint16_t sleep_secs;    // reporting interval
+  float    temp_offset;   // degrees C, added after Steinhart-Hart
+  float    temp_gain;     // multiplier, applied before the offset
+  uint8_t  reserved[16];
+} config_message;
+
 typedef struct log_message {
   uint8_t msgType;            // MSG_LOG = 3
   uint8_t seq;                // chunk index (0-based)
@@ -259,12 +293,24 @@ static float g_bat_v = 3.3f; // Set by getBatteryInfo(); used in readNTC() for V
 // change has actually landed.
 static uint16_t g_cfg_ver = 0;
 
+// Live configuration. Compiled defaults until the hub pushes something.
+static uint16_t g_sleepSecs  = SLEEP_TIME;
+static float    g_tempOffset = 0.0f;
+static float    g_tempGain   = 1.0f;
+
+// Set by OnDataRecv when a config frame is accepted, so goToSleep() can stop
+// waiting early and sleep for the new interval straight away.
+static volatile bool g_configApplied = false;
+
 // Stamp the fields that identify this node into the outgoing message. Must run
 // before any send — pairing broadcasts carry them too, so the hub learns a
 // node's firmware version at pairing time rather than one cycle later.
 void loadIdentity() {
   preferences.begin("config", true);
-  g_cfg_ver = preferences.getUShort("cfg_ver", 0);
+  g_cfg_ver    = preferences.getUShort("cfg_ver", 0);
+  g_sleepSecs  = preferences.getUShort("sleep",  SLEEP_TIME);
+  g_tempOffset = preferences.getFloat ("offset", 0.0f);
+  g_tempGain   = preferences.getFloat ("gain",   1.0f);
   preferences.end();
 
   myData.fw_major = FW_MAJOR;
@@ -321,6 +367,17 @@ void sendLogToHub() {
   }
 }
 
+// Keep the radio up briefly after the log burst so a config pushed by the hub
+// can land. The hub replies within a few ms of the data frame, and the log
+// send above usually covers that already, so this normally returns at once.
+void waitForConfig() {
+  if (!isPaired) return;
+  unsigned long start = millis();
+  while (!g_configApplied && millis() - start < CFG_WAIT_MS) {
+    delay(2);
+  }
+}
+
 // --- SAFE DEEP SLEEP ---
 // ESP32-C6 RISC-V requires proper WiFi/ESP-NOW shutdown before sleep
 // Skipping this causes the illegal instruction crash (MCAUSE: 0x18)
@@ -329,6 +386,7 @@ void goToSleep(int seconds) {
   Serial.flush();         // Ensure serial output completes
 
   sendLogToHub();         // Ship the wake-cycle log to the hub via ESP-NOW
+  waitForConfig();        // Brief window for a config the hub may be pushing
   esp_now_deinit();       // Then deinit ESP-NOW
   esp_wifi_stop();        // Stop WiFi radio
   delay(100);             // Allow shutdown to settle
@@ -374,6 +432,50 @@ void OnDataSent(const wifi_tx_info_t *info, esp_now_send_status_t status) {
 }
 
 void OnDataRecv(const esp_now_recv_info_t *esp_now_info, const uint8_t *incomingData, int len) {
+  if (len < 1) return;
+
+  // Config push from the hub. Values are validated here rather than trusted:
+  // out-of-range settings are rejected outright, not silently clamped to
+  // something the operator never chose. The rejection is written to the wake
+  // log, which the hub already collects, and cfg_ver stays unchanged so the
+  // dashboard keeps showing the change as pending.
+  if (incomingData[0] == MSG_CONFIG && len >= (int)sizeof(config_message)) {
+    const config_message *cfg = (const config_message *)incomingData;
+
+    if (cfg->sleep_secs < CFG_SLEEP_MIN || cfg->sleep_secs > CFG_SLEEP_MAX) {
+      ulog("[CFG] Rejected: sleep %u outside %u-%u\n",
+           cfg->sleep_secs, CFG_SLEEP_MIN, CFG_SLEEP_MAX);
+      return;
+    }
+    if (!(cfg->temp_offset >= -CFG_OFFSET_ABS_MAX && cfg->temp_offset <= CFG_OFFSET_ABS_MAX)) {
+      ulog("[CFG] Rejected: offset %.2f outside +/-%.1f\n",
+           cfg->temp_offset, CFG_OFFSET_ABS_MAX);
+      return;
+    }
+    if (!(cfg->temp_gain >= CFG_GAIN_MIN && cfg->temp_gain <= CFG_GAIN_MAX)) {
+      ulog("[CFG] Rejected: gain %.4f outside %.2f-%.2f\n",
+           cfg->temp_gain, CFG_GAIN_MIN, CFG_GAIN_MAX);
+      return;
+    }
+
+    preferences.begin("config", false);
+    preferences.putUShort("sleep",   cfg->sleep_secs);
+    preferences.putFloat ("offset",  cfg->temp_offset);
+    preferences.putFloat ("gain",    cfg->temp_gain);
+    preferences.putUShort("cfg_ver", cfg->cfg_ver);
+    preferences.end();
+
+    g_sleepSecs  = cfg->sleep_secs;
+    g_tempOffset = cfg->temp_offset;
+    g_tempGain   = cfg->temp_gain;
+    g_cfg_ver    = cfg->cfg_ver;
+    g_configApplied = true;
+
+    ulog("[CFG] Applied v%u: sleep %us, gain %.4f, offset %+.2f\n",
+         cfg->cfg_ver, cfg->sleep_secs, cfg->temp_gain, cfg->temp_offset);
+    return;
+  }
+
   struct_message *msg = (struct_message *)incomingData;
 
   if (msg->msgType == MSG_PAIRING) {
@@ -524,6 +626,16 @@ bool readSensor() {
   if (temp == -999) {
     myData.temp = -999;
     return false;
+  }
+
+  // Two-point calibration: gain corrects slope, offset corrects bias. Offset
+  // alone cannot fix a slope error, which this project has already been bitten
+  // by (the ADC nonlinearity that over-read by ~11 C at -17 C).
+  if (g_tempGain != 1.0f || g_tempOffset != 0.0f) {
+    float raw = temp;
+    temp = g_tempGain * raw + g_tempOffset;
+    ulog("[CFG] Calibrated %.2f -> %.2f (gain %.4f, offset %+.2f)\n", 
+         raw, temp, g_tempGain, g_tempOffset);
   }
 
   myData.temp = temp;
@@ -733,7 +845,7 @@ void setup() {
   ulog("Reset reason: %d\n", (int)reset_reason);
   if (reset_reason == ESP_RST_BROWNOUT) {
     ulog("⚠ Brownout on previous boot — skipping wake cycle\n");
-    esp_sleep_enable_timer_wakeup((uint64_t)SLEEP_TIME * 1000000ULL);
+    esp_sleep_enable_timer_wakeup((uint64_t)g_sleepSecs * 1000000ULL);
     esp_deep_sleep_enable_gpio_wakeup(1ULL << RESET_PIN, ESP_GPIO_WAKEUP_GPIO_LOW);
     esp_deep_sleep_start();
   }
@@ -777,7 +889,7 @@ void setup() {
   ulog("Battery: %.2fV  %d%%  %s\n", bat.voltage, bat.percentage, bat.status);
   if (bat.percentage != 255 && bat.percentage <= CRITICAL_PCT) {
     Serial.println("Battery critical — sleeping to protect cell.");
-    esp_sleep_enable_timer_wakeup((uint64_t)SLEEP_TIME * 1000000ULL);
+    esp_sleep_enable_timer_wakeup((uint64_t)g_sleepSecs * 1000000ULL);
     esp_deep_sleep_start();
   }
   //read ntc before radio init since it can cause brownout at low battery levels, leading to failed reads
@@ -910,7 +1022,7 @@ void setup() {
       }
     }
 
-    goToSleep(SLEEP_TIME);
+    goToSleep(g_sleepSecs);   // configured interval, not the compiled default
   } else {
     enterPairingMode();
   }

@@ -58,9 +58,12 @@ export default function SensorConfigModal({ sensor, onClose }) {
     setBusy(true)
     try {
       const res = await api.put(`/sensor-config/${sensor.id}`, payload)
-      const mins = Math.round((res.data.applies_within_secs || 900) / 60)
-      setNotice(`Queued as v${res.data.cfg_ver} — applies within about ${mins} min, ` +
-                `when the sensor next reports.`)
+      if (res.data.unchanged) {
+        setNotice('No change — these are the settings already queued for this sensor.')
+      } else {
+        const mins = Math.round((res.data.applies_within_secs || 900) / 60)
+        setNotice(`Queued — applies within about ${mins} min, when the sensor next reports.`)
+      }
       const fresh = await api.get(`/sensor-config/${sensor.id}`)
       setCfg(fresh.data)
     } catch (err) {
@@ -89,8 +92,8 @@ export default function SensorConfigModal({ sensor, onClose }) {
           <>
             {pending && (
               <div className="alert">
-                Change v{cfg.cfg_desired_ver} is waiting for this sensor to wake.
-                It is still running v{cfg.applied_cfg_ver || 0}.
+                A change is waiting for this sensor to wake — it is still running
+                its previous settings. Applies on the next reading.
               </div>
             )}
 
@@ -160,8 +163,8 @@ export default function SensorConfigModal({ sensor, onClose }) {
               <>
                 <h3 style={{ fontSize: 14, margin: '20px 0 8px' }}>Recent changes</h3>
                 {cfg.history.map((h) => (
-                  <div className="device-meta" key={h.cfg_ver}>
-                    v{h.cfg_ver} · {Math.round(h.sleep_secs / 60)} min · R={h.r_series} ·
+                  <div className="device-meta" key={h.changed_at}>
+                    {Math.round(h.sleep_secs / 60)} min · R={h.r_series} ·
                     A={h.sh_a} B={h.sh_b} C={h.sh_c} ·{' '}
                     {h.applied_at
                       ? `applied ${new Date(h.applied_at).toLocaleString()}`

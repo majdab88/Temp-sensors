@@ -1,6 +1,7 @@
 'use strict';
 
 const express = require('express');
+const crypto  = require('crypto');
 const { query } = require('../db');
 const { requireAuth, requireSuperadmin } = require('../middleware/auth');
 const { audit } = require('../audit');
@@ -28,6 +29,30 @@ const LIMITS = {
   sh_c:       { min: -1e-5, max: 1e-5  },
   r_series:   { min: 5000,  max: 20000 },
 };
+
+// cfg_ver is a fingerprint of the values, not a counter.
+//
+// The sensor has to echo *something* back for "did this land?" to be answerable
+// by evidence rather than assumption — but that something may as well be derived
+// from the settings themselves. Two useful properties fall out: re-sending an
+// identical config is naturally a no-op, and reverting to an earlier one is just
+// another value change rather than a version that has to move forwards.
+//
+// 0 is reserved to mean "no config has ever been applied", so it is never used
+// as a fingerprint.
+function fingerprint(v) {
+  const canonical = [v.sleep_secs, v.sh_a, v.sh_b, v.sh_c, v.r_series].join('|');
+  const fp = crypto.createHash('sha256').update(canonical).digest().readUInt16BE(0);
+  return fp === 0 ? 1 : fp;
+}
+
+function sameValues(a, b) {
+  return Number(a.cfg_sleep_secs) === b.sleep_secs &&
+         Number(a.cfg_sh_a)       === b.sh_a &&
+         Number(a.cfg_sh_b)       === b.sh_b &&
+         Number(a.cfg_sh_c)       === b.sh_c &&
+         Number(a.cfg_r_series)   === b.r_series;
+}
 
 function validate(body) {
   const out = {};
@@ -94,8 +119,15 @@ router.put('/:id', async (req, res) => {
     if (r.rows.length === 0) return res.status(404).json({ error: 'Sensor not found' });
     const s = r.rows[0];
 
-    // Monotonic, so the sensor can tell a new instruction from a replayed one.
-    const nextVer = (s.cfg_desired_ver || 0) + 1;
+    if (sameValues(s, value)) {
+      return res.json({ queued: false, unchanged: true, cfg_ver: s.cfg_desired_ver });
+    }
+
+    let nextVer = fingerprint(value);
+    // A 16-bit fingerprint can in principle collide with the version already
+    // applied, which would make a real change look like it had already landed.
+    // Nudging past it costs nothing and removes the failure entirely.
+    if (nextVer === (s.cfg_desired_ver || 0)) nextVer = (nextVer % 65535) + 1;
 
     await query(
       `UPDATE sensors

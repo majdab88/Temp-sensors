@@ -2,6 +2,8 @@ import React, { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import api from '../services/api'
 import AlertRuleModal from './AlertRuleModal'
+import SensorConfigModal from './SensorConfigModal'
+import { useAuth } from '../context/AuthContext'
 import BatteryIcon from './BatteryIcon'
 import { useToast } from '../context/ToastContext'
 
@@ -71,6 +73,11 @@ export default function SensorCard({ sensor, reading, alert, rule, spark, onRena
   const [saving, setSaving] = useState(false)
   const [deleting, setDeleting] = useState(false)
   const [showAlert, setShowAlert] = useState(false)
+  const [showConfig, setShowConfig] = useState(false)
+  // Calibration and reporting cadence affect the integrity of the temperature
+  // record, so this is superadmin-only rather than an org-level permission.
+  const { user: cfgUser } = useAuth()
+  const canConfigure = cfgUser?.role === 'superadmin'
 
   const status = getStatus(reading?.recorded_at)
 
@@ -176,6 +183,13 @@ export default function SensorCard({ sensor, reading, alert, rule, spark, onRena
               <div className="sensor-name">{sensor.name || sensor.mac}</div>
               {canEdit && <button className="sensor-rename-btn" onClick={startEdit} title="Rename sensor">✎</button>}
               {canEdit && <button className="sensor-alert-btn" onClick={openAlert} title="Temperature alerts">🔔</button>}
+              {canConfigure && (
+                <button
+                  className="sensor-rename-btn"
+                  onClick={(e) => { e.stopPropagation(); setShowConfig(true) }}
+                  title="Interval and calibration"
+                >⚙</button>
+              )}
               {canEdit && <button className="sensor-delete-btn" onClick={handleDelete} disabled={deleting} title="Remove sensor">✕</button>}
             </div>
           )}
@@ -215,6 +229,10 @@ export default function SensorCard({ sensor, reading, alert, rule, spark, onRena
         )}
         <BatteryIcon level={reading?.battery} />
       </div>
+
+      {showConfig && (
+        <SensorConfigModal sensor={sensor} onClose={() => setShowConfig(false)} />
+      )}
 
       {showAlert && (
         <AlertRuleModal sensor={sensor} onClose={() => setShowAlert(false)} />

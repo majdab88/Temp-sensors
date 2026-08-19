@@ -33,6 +33,7 @@ function initMqtt(io) {
       'sensors/+/data',
       'sensors/+/status',
       'sensors/+/ota/status',        // hub OTA progress
+      'sensors/+/config/state',      // sensor config applied / pending
       'sensors/+/pairing/request',
       'sensors/+/pairing/status',   // hub acks pairing mode enable/disable
       'sensors/+/sync/request',
@@ -84,6 +85,8 @@ async function handleMessage(topic, payload) {
     await handleSensorDeleted(hubMac, data);
   } else if (parts[2] === 'ota' && parts[3] === 'status') {
     await handleOtaStatus(hubMac, data);
+  } else if (parts[2] === 'config' && parts[3] === 'state') {
+    await handleConfigState(hubMac, data);
   }
 }
 
@@ -366,6 +369,64 @@ async function handleOtaStatus(hubMac, data) {
 }
 
 /**
+ * Push a sensor's desired configuration to its hub.
+ *
+ * Retained, like the OTA command: the hub may be offline, and more importantly
+ * the change has to survive until the sensor next wakes — which can be a full
+ * reporting interval away. The hub clears its own pending flag once the node
+ * echoes the new cfg_ver back.
+ */
+function publishSensorConfig(hubMac, cfg) {
+  if (!client || !client.connected) {
+    throw new Error('MQTT client not connected');
+  }
+  client.publish(`sensors/${hubMac.toUpperCase()}/config/set`,
+                 JSON.stringify(cfg), { retain: true });
+}
+
+/**
+ * Record what a sensor is actually running. applied_cfg_ver comes from the node
+ * itself, so this is evidence rather than assumption.
+ */
+async function handleConfigState(hubMac, data) {
+  const mac = (data.sensor_mac || '').toUpperCase();
+  if (!mac) return;
+
+  const applied = Number.isInteger(data.applied_cfg_ver) ? data.applied_cfg_ver : null;
+  const desired = Number.isInteger(data.desired_cfg_ver) ? data.desired_cfg_ver : null;
+  const landed  = applied !== null && desired !== null && applied === desired;
+
+  _io.to(`hub:${hubMac.toUpperCase()}`).emit('sensorConfigState', {
+    hub_mac: hubMac.toUpperCase(), sensor_mac: mac,
+    applied_cfg_ver: applied, desired_cfg_ver: desired,
+    pending: !!data.pending, sleep_secs: data.sleep_secs ?? null,
+    temp_offset: data.temp_offset ?? null, temp_gain: data.temp_gain ?? null,
+  });
+
+  try {
+    if (landed) {
+      const r = await query(
+        `UPDATE sensors SET cfg_applied_at = NOW()
+          WHERE mac = $1 AND (cfg_applied_at IS NULL OR cfg_ver IS DISTINCT FROM $2)
+        RETURNING id`,
+        [mac, applied]
+      );
+      if (r.rows.length > 0) {
+        await query(
+          `UPDATE sensor_config_events SET applied_at = NOW()
+            WHERE sensor_id = $1 AND cfg_ver = $2 AND applied_at IS NULL`,
+          [r.rows[0].id, applied]
+        );
+      }
+      // Config has landed; stop replaying it to the hub on every reconnect.
+      client.publish(`sensors/${hubMac.toUpperCase()}/config/set`, '', { retain: true });
+    }
+  } catch (err) {
+    console.error('Config state update error:', err.message);
+  }
+}
+
+/**
  * Tell a hub to enable or disable pairing mode.
  * Called by the pairing route handler.
  */
@@ -404,4 +465,4 @@ function publishSensorRemove(hubMac, sensorMac) {
   console.log(`[MQTT] Sent sensor/remove for ${sensorMac} to hub ${hubMac}`);
 }
 
-module.exports = { initMqtt, publishPairingResponse, publishPairingEnable, publishSensorRemove, getHubStatus, publishOtaCommand, pushSyncToHub: handleSyncRequest };
+module.exports = { initMqtt, publishPairingResponse, publishPairingEnable, publishSensorRemove, getHubStatus, publishOtaCommand, publishSensorConfig, pushSyncToHub: handleSyncRequest };

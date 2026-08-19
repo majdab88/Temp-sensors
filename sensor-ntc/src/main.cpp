@@ -100,9 +100,18 @@
 // would put every correction 24 h away. One hour keeps recovery bounded.
 #define CFG_SLEEP_MIN     300
 #define CFG_SLEEP_MAX     3600
-#define CFG_OFFSET_ABS_MAX 10.0f
-#define CFG_GAIN_MIN      0.9f
-#define CFG_GAIN_MAX      1.1f
+// Steinhart-Hart coefficients are not clamped to narrow numeric windows. The
+// deployed fit is a restricted cold-range one (A=2.535e-3, B=3.01e-5,
+// C=7.23e-7) and looks nothing like textbook values, so any tight bound would
+// reject a legitimate recalibration. Only absurd magnitudes are refused; the
+// real check is the physical plausibility test below.
+#define CFG_A_MIN   1e-4f
+#define CFG_A_MAX   1e-2f
+#define CFG_B_MIN   1e-6f
+#define CFG_B_MAX   1e-3f
+#define CFG_C_ABS_MAX 1e-5f
+#define CFG_RSERIES_MIN 5000.0f
+#define CFG_RSERIES_MAX 20000.0f
 
 // How long to keep the radio up after the log burst, waiting for a config the
 // hub may be sending. Costs roughly 30 mAh/year at a 15 min interval (~1% of
@@ -260,8 +269,11 @@ typedef struct config_message {
   uint8_t  schema;        // 1 = the fields below
   uint16_t cfg_ver;       // version being pushed
   uint16_t sleep_secs;    // reporting interval
-  float    temp_offset;   // degrees C, added after Steinhart-Hart
-  float    temp_gain;     // multiplier, applied before the offset
+  uint16_t pad;
+  float    sh_a;          // Steinhart-Hart A (K^-1)
+  float    sh_b;          // Steinhart-Hart B (K^-1)
+  float    sh_c;          // Steinhart-Hart C (K^-1)
+  float    r_series;      // divider resistor, ohms — per-board tolerance trim
   uint8_t  reserved[16];
 } config_message;
 
@@ -294,9 +306,11 @@ static float g_bat_v = 3.3f; // Set by getBatteryInfo(); used in readNTC() for V
 static uint16_t g_cfg_ver = 0;
 
 // Live configuration. Compiled defaults until the hub pushes something.
-static uint16_t g_sleepSecs  = SLEEP_TIME;
-static float    g_tempOffset = 0.0f;
-static float    g_tempGain   = 1.0f;
+static uint16_t g_sleepSecs = SLEEP_TIME;
+static float    g_shA      = NTC_SH_A;
+static float    g_shB      = NTC_SH_B;
+static float    g_shC      = NTC_SH_C;
+static float    g_rSeries  = SERIES_RESISTOR;
 
 // Set by OnDataRecv when a config frame is accepted, so goToSleep() can stop
 // waiting early and sleep for the new interval straight away.
@@ -308,9 +322,11 @@ static volatile bool g_configApplied = false;
 void loadIdentity() {
   preferences.begin("config", true);
   g_cfg_ver    = preferences.getUShort("cfg_ver", 0);
-  g_sleepSecs  = preferences.getUShort("sleep",  SLEEP_TIME);
-  g_tempOffset = preferences.getFloat ("offset", 0.0f);
-  g_tempGain   = preferences.getFloat ("gain",   1.0f);
+  g_sleepSecs = preferences.getUShort("sleep", SLEEP_TIME);
+  g_shA       = preferences.getFloat ("sh_a",  NTC_SH_A);
+  g_shB       = preferences.getFloat ("sh_b",  NTC_SH_B);
+  g_shC       = preferences.getFloat ("sh_c",  NTC_SH_C);
+  g_rSeries   = preferences.getFloat ("rser",  SERIES_RESISTOR);
   preferences.end();
 
   myData.fw_major = FW_MAJOR;
@@ -370,6 +386,25 @@ void sendLogToHub() {
 // Keep the radio up briefly after the log burst so a config pushed by the hub
 // can land. The hub replies within a few ms of the data frame, and the log
 // send above usually covers that already, so this normally returns at once.
+// Coefficients can be individually plausible and still nonsense together — a
+// transposed or mis-scaled fit is the realistic failure. An NTC's resistance
+// must fall as temperature rises, so check the curve behaves like one across
+// the deployment range rather than trusting three numbers in isolation.
+bool shCoefficientsSane(float a, float b, float c) {
+  const float probes[3] = { 5000.0f, 20000.0f, 80000.0f };
+  float prev = 999.0f;
+  for (int i = 0; i < 3; i++) {
+    float lnR = log(probes[i]);
+    float denom = a + b * lnR + c * lnR * lnR * lnR;
+    if (denom <= 0.0f) return false;
+    float t = 1.0f / denom - 273.15f;
+    if (t < -60.0f || t > 100.0f) return false;   // implausible for this probe
+    if (t >= prev) return false;                  // must decrease as R rises
+    prev = t;
+  }
+  return true;
+}
+
 void waitForConfig() {
   if (!isPaired) return;
   unsigned long start = millis();
@@ -447,32 +482,43 @@ void OnDataRecv(const esp_now_recv_info_t *esp_now_info, const uint8_t *incoming
            cfg->sleep_secs, CFG_SLEEP_MIN, CFG_SLEEP_MAX);
       return;
     }
-    if (!(cfg->temp_offset >= -CFG_OFFSET_ABS_MAX && cfg->temp_offset <= CFG_OFFSET_ABS_MAX)) {
-      ulog("[CFG] Rejected: offset %.2f outside +/-%.1f\n",
-           cfg->temp_offset, CFG_OFFSET_ABS_MAX);
+    if (!(cfg->r_series >= CFG_RSERIES_MIN && cfg->r_series <= CFG_RSERIES_MAX)) {
+      ulog("[CFG] Rejected: r_series %.0f outside %.0f-%.0f\n",
+           cfg->r_series, CFG_RSERIES_MIN, CFG_RSERIES_MAX);
       return;
     }
-    if (!(cfg->temp_gain >= CFG_GAIN_MIN && cfg->temp_gain <= CFG_GAIN_MAX)) {
-      ulog("[CFG] Rejected: gain %.4f outside %.2f-%.2f\n",
-           cfg->temp_gain, CFG_GAIN_MIN, CFG_GAIN_MAX);
+    if (!(cfg->sh_a >= CFG_A_MIN && cfg->sh_a <= CFG_A_MAX) ||
+        !(cfg->sh_b >= CFG_B_MIN && cfg->sh_b <= CFG_B_MAX) ||
+        !(fabsf(cfg->sh_c) <= CFG_C_ABS_MAX)) {
+      ulog("[CFG] Rejected: A/B/C magnitude implausible (%.4e %.4e %.4e)\n",
+           cfg->sh_a, cfg->sh_b, cfg->sh_c);
+      return;
+    }
+    if (!shCoefficientsSane(cfg->sh_a, cfg->sh_b, cfg->sh_c)) {
+      ulog("[CFG] Rejected: A/B/C do not produce a falling NTC curve\n");
       return;
     }
 
     preferences.begin("config", false);
     preferences.putUShort("sleep",   cfg->sleep_secs);
-    preferences.putFloat ("offset",  cfg->temp_offset);
-    preferences.putFloat ("gain",    cfg->temp_gain);
+    preferences.putFloat ("sh_a",    cfg->sh_a);
+    preferences.putFloat ("sh_b",    cfg->sh_b);
+    preferences.putFloat ("sh_c",    cfg->sh_c);
+    preferences.putFloat ("rser",    cfg->r_series);
     preferences.putUShort("cfg_ver", cfg->cfg_ver);
     preferences.end();
 
-    g_sleepSecs  = cfg->sleep_secs;
-    g_tempOffset = cfg->temp_offset;
-    g_tempGain   = cfg->temp_gain;
-    g_cfg_ver    = cfg->cfg_ver;
+    g_sleepSecs = cfg->sleep_secs;
+    g_shA       = cfg->sh_a;
+    g_shB       = cfg->sh_b;
+    g_shC       = cfg->sh_c;
+    g_rSeries   = cfg->r_series;
+    g_cfg_ver   = cfg->cfg_ver;
     g_configApplied = true;
 
-    ulog("[CFG] Applied v%u: sleep %us, gain %.4f, offset %+.2f\n",
-         cfg->cfg_ver, cfg->sleep_secs, cfg->temp_gain, cfg->temp_offset);
+    ulog("[CFG] Applied v%u: sleep %us, R=%.0f, A=%.4e B=%.4e C=%.4e\n",
+         cfg->cfg_ver, cfg->sleep_secs, cfg->r_series,
+         cfg->sh_a, cfg->sh_b, cfg->sh_c);
     return;
   }
 
@@ -602,11 +648,11 @@ float readNTC() {
 
   // Resolve NTC resistance from voltage divider equation
   // V_adc = vcc * R_series / (R_ntc + R_series)  =>  R_ntc = R_series * (vcc - V_adc) / V_adc
-  float r_ntc = SERIES_RESISTOR * (vcc - adcV) / adcV;
+  float r_ntc = g_rSeries * (vcc - adcV) / adcV;
 
   // Full Steinhart-Hart equation: 1/T(K) = A + B·ln(R) + C·(ln(R))³
   float lnR   = log(r_ntc);
-  float tempC = 1.0f / (NTC_SH_A + NTC_SH_B * lnR + NTC_SH_C * lnR * lnR * lnR) - 273.15f;
+  float tempC = 1.0f / (g_shA + g_shB * lnR + g_shC * lnR * lnR * lnR) - 273.15f;
   ulog("[NTC] vcc=%.3fV  adc=%.0fmV  R_ntc=%.0fΩ  T=%.2f°C\n", vcc, adcMv, r_ntc, tempC);
 
   if (tempC < -55.0f || tempC > 125.0f) {
@@ -626,16 +672,6 @@ bool readSensor() {
   if (temp == -999) {
     myData.temp = -999;
     return false;
-  }
-
-  // Two-point calibration: gain corrects slope, offset corrects bias. Offset
-  // alone cannot fix a slope error, which this project has already been bitten
-  // by (the ADC nonlinearity that over-read by ~11 C at -17 C).
-  if (g_tempGain != 1.0f || g_tempOffset != 0.0f) {
-    float raw = temp;
-    temp = g_tempGain * raw + g_tempOffset;
-    ulog("[CFG] Calibrated %.2f -> %.2f (gain %.4f, offset %+.2f)\n", 
-         raw, temp, g_tempGain, g_tempOffset);
   }
 
   myData.temp = temp;

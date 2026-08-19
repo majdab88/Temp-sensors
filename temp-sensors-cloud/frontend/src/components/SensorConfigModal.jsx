@@ -15,16 +15,20 @@ export default function SensorConfigModal({ sensor, onClose }) {
   const [notice, setNotice] = useState('')
 
   const [sleepMins, setSleepMins] = useState('')
-  const [offset, setOffset] = useState('')
-  const [gain, setGain] = useState('')
+  const [shA, setShA] = useState('')
+  const [shB, setShB] = useState('')
+  const [shC, setShC] = useState('')
+  const [rSeries, setRSeries] = useState('')
 
   useEffect(() => {
     api.get(`/sensor-config/${sensor.id}`)
       .then((res) => {
         setCfg(res.data)
         setSleepMins(String(Math.round((res.data.cfg_sleep_secs ?? 900) / 60)))
-        setOffset(String(res.data.cfg_temp_offset ?? 0))
-        setGain(String(res.data.cfg_temp_gain ?? 1))
+        setShA(String(res.data.cfg_sh_a ?? 2.535e-3))
+        setShB(String(res.data.cfg_sh_b ?? 3.01e-5))
+        setShC(String(res.data.cfg_sh_c ?? 7.23e-7))
+        setRSeries(String(res.data.cfg_r_series ?? 10000))
       })
       .catch(() => setError('Failed to load configuration'))
   }, [sensor.id])
@@ -34,14 +38,16 @@ export default function SensorConfigModal({ sensor, onClose }) {
     setError(''); setNotice('')
 
     const payload = {
-      sleep_secs:  Math.round(Number(sleepMins) * 60),
-      temp_offset: Number(offset),
-      temp_gain:   Number(gain),
+      sleep_secs: Math.round(Number(sleepMins) * 60),
+      sh_a:       Number(shA),
+      sh_b:       Number(shB),
+      sh_c:       Number(shC),
+      r_series:   Number(rSeries),
     }
 
     const changesCalibration =
-      payload.temp_offset !== (cfg.cfg_temp_offset ?? 0) ||
-      payload.temp_gain !== (cfg.cfg_temp_gain ?? 1)
+      payload.sh_a !== cfg.cfg_sh_a || payload.sh_b !== cfg.cfg_sh_b ||
+      payload.sh_c !== cfg.cfg_sh_c || payload.r_series !== cfg.cfg_r_series
 
     if (changesCalibration && !window.confirm(
       'Changing calibration shifts every future reading from this sensor.\n\n' +
@@ -102,28 +108,44 @@ export default function SensorConfigModal({ sensor, onClose }) {
                 </span>
               </div>
 
+              <div className="form-group">
+                <label>Series resistor (Ω)</label>
+                <input
+                  type="text" inputMode="decimal"
+                  value={rSeries} onChange={(e) => setRSeries(e.target.value)} required
+                />
+                <span className="form-hint">
+                  The measured value of the divider resistor on this board. Its
+                  tolerance biases every resistance reading, so measuring it is the
+                  cheapest accuracy win available.
+                </span>
+              </div>
+
               <div className="form-row">
                 <div className="form-group">
-                  <label>Temperature offset (°C)</label>
-                  <input
-                    type="number" min="-10" max="10" step="0.01"
-                    value={offset} onChange={(e) => setOffset(e.target.value)} required
-                  />
-                  <span className="form-hint">Added after conversion. ±10 °C.</span>
+                  <label>Steinhart-Hart A</label>
+                  <input type="text" inputMode="decimal" value={shA}
+                         onChange={(e) => setShA(e.target.value)} required />
                 </div>
                 <div className="form-group">
-                  <label>Temperature gain</label>
-                  <input
-                    type="number" min="0.9" max="1.1" step="0.0001"
-                    value={gain} onChange={(e) => setGain(e.target.value)} required
-                  />
-                  <span className="form-hint">Multiplier, applied first. 0.9–1.1.</span>
+                  <label>B</label>
+                  <input type="text" inputMode="decimal" value={shB}
+                         onChange={(e) => setShB(e.target.value)} required />
+                </div>
+                <div className="form-group">
+                  <label>C</label>
+                  <input type="text" inputMode="decimal" value={shC}
+                         onChange={(e) => setShC(e.target.value)} required />
                 </div>
               </div>
 
               <p className="form-hint">
-                Corrected = gain × raw + offset. Gain corrects a slope error;
-                offset alone cannot.
+                1/T(K) = A + B·ln(R) + C·ln(R)³. Fit these from measured
+                resistance/temperature pairs across the range the sensor actually
+                works in — a full-range fit is less accurate inside a cooler than a
+                cold-range one. Scientific notation is accepted (e.g. 2.535e-3).
+                The sensor re-checks that the coefficients produce a falling NTC
+                curve and rejects them outright if they do not.
               </p>
 
               <div className="modal-actions">
@@ -139,8 +161,8 @@ export default function SensorConfigModal({ sensor, onClose }) {
                 <h3 style={{ fontSize: 14, margin: '20px 0 8px' }}>Recent changes</h3>
                 {cfg.history.map((h) => (
                   <div className="device-meta" key={h.cfg_ver}>
-                    v{h.cfg_ver} · {Math.round(h.sleep_secs / 60)} min ·
-                    gain {h.temp_gain} · offset {h.temp_offset > 0 ? '+' : ''}{h.temp_offset} ·{' '}
+                    v{h.cfg_ver} · {Math.round(h.sleep_secs / 60)} min · R={h.r_series} ·
+                    A={h.sh_a} B={h.sh_b} C={h.sh_c} ·{' '}
                     {h.applied_at
                       ? `applied ${new Date(h.applied_at).toLocaleString()}`
                       : 'not yet applied'}

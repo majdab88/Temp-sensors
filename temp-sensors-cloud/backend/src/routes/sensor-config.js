@@ -16,10 +16,17 @@ router.use(requireSuperadmin);
 // These must match the clamps compiled into the sensor. The device enforces its
 // own limits regardless — this copy exists to give a useful error instead of a
 // silent rejection that only shows up as "still pending" an hour later.
+// Deliberately loose on A/B/C. The deployed fit is a restricted cold-range one
+// (A=2.535e-3, B=3.01e-5, C=7.23e-7) and looks nothing like textbook values, so
+// a tight window would reject a legitimate recalibration. The sensor performs
+// the real check: it verifies the coefficients actually produce a falling NTC
+// curve across the deployment range before accepting them.
 const LIMITS = {
-  sleep_secs:  { min: 300,  max: 3600 },
-  temp_offset: { min: -10,  max: 10   },
-  temp_gain:   { min: 0.9,  max: 1.1  },
+  sleep_secs: { min: 300,   max: 3600  },
+  sh_a:       { min: 1e-4,  max: 1e-2  },
+  sh_b:       { min: 1e-6,  max: 1e-3  },
+  sh_c:       { min: -1e-5, max: 1e-5  },
+  r_series:   { min: 5000,  max: 20000 },
 };
 
 function validate(body) {
@@ -41,8 +48,8 @@ router.get('/:id', async (req, res) => {
   try {
     const r = await query(
       `SELECT s.id, s.mac, s.name, s.cfg_ver AS applied_cfg_ver,
-              s.cfg_desired_ver, s.cfg_sleep_secs, s.cfg_temp_offset,
-              s.cfg_temp_gain, s.cfg_updated_at, s.cfg_applied_at,
+              s.cfg_desired_ver, s.cfg_sleep_secs, s.cfg_sh_a, s.cfg_sh_b,
+              s.cfg_sh_c, s.cfg_r_series, s.cfg_updated_at, s.cfg_applied_at,
               d.mac AS hub_mac
          FROM sensors s JOIN devices d ON d.id = s.device_id
         WHERE s.id = $1`,
@@ -51,7 +58,7 @@ router.get('/:id', async (req, res) => {
     if (r.rows.length === 0) return res.status(404).json({ error: 'Sensor not found' });
 
     const events = await query(
-      `SELECT cfg_ver, sleep_secs, temp_offset, temp_gain, changed_at, applied_at
+      `SELECT cfg_ver, sleep_secs, sh_a, sh_b, sh_c, r_series, changed_at, applied_at
          FROM sensor_config_events WHERE sensor_id = $1
         ORDER BY changed_at DESC LIMIT 20`,
       [req.params.id]
@@ -79,7 +86,7 @@ router.put('/:id', async (req, res) => {
   try {
     const r = await query(
       `SELECT s.id, s.mac, s.name, s.cfg_desired_ver, s.cfg_sleep_secs,
-              s.cfg_temp_offset, s.cfg_temp_gain, d.mac AS hub_mac
+              s.cfg_sh_a, s.cfg_sh_b, s.cfg_sh_c, s.cfg_r_series, d.mac AS hub_mac
          FROM sensors s JOIN devices d ON d.id = s.device_id
         WHERE s.id = $1 AND s.active = TRUE`,
       [req.params.id]
@@ -92,28 +99,32 @@ router.put('/:id', async (req, res) => {
 
     await query(
       `UPDATE sensors
-          SET cfg_desired_ver = $1, cfg_sleep_secs = $2, cfg_temp_offset = $3,
-              cfg_temp_gain = $4, cfg_updated_at = NOW(), cfg_applied_at = NULL
-        WHERE id = $5`,
-      [nextVer, value.sleep_secs, value.temp_offset, value.temp_gain, s.id]
+          SET cfg_desired_ver = $1, cfg_sleep_secs = $2, cfg_sh_a = $3,
+              cfg_sh_b = $4, cfg_sh_c = $5, cfg_r_series = $6,
+              cfg_updated_at = NOW(), cfg_applied_at = NULL
+        WHERE id = $7`,
+      [nextVer, value.sleep_secs, value.sh_a, value.sh_b, value.sh_c,
+       value.r_series, s.id]
     );
 
     // Recorded even before it lands: a calibration change shifts every later
     // reading, and a step in the history has to stay explicable months on.
     await query(
       `INSERT INTO sensor_config_events
-         (sensor_id, cfg_ver, sleep_secs, temp_offset, temp_gain, changed_by)
-       VALUES ($1, $2, $3, $4, $5, $6)`,
-      [s.id, nextVer, value.sleep_secs, value.temp_offset, value.temp_gain,
-       req.user.sub || null]
+         (sensor_id, cfg_ver, sleep_secs, sh_a, sh_b, sh_c, r_series, changed_by)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+      [s.id, nextVer, value.sleep_secs, value.sh_a, value.sh_b, value.sh_c,
+       value.r_series, req.user.sub || null]
     );
 
     publishSensorConfig(s.hub_mac, {
-      sensor_mac:  s.mac,
-      cfg_ver:     nextVer,
-      sleep_secs:  value.sleep_secs,
-      temp_offset: value.temp_offset,
-      temp_gain:   value.temp_gain,
+      sensor_mac: s.mac,
+      cfg_ver:    nextVer,
+      sleep_secs: value.sleep_secs,
+      sh_a:       value.sh_a,
+      sh_b:       value.sh_b,
+      sh_c:       value.sh_c,
+      r_series:   value.r_series,
     });
 
     await audit({
@@ -123,8 +134,8 @@ router.put('/:id', async (req, res) => {
       targetId: s.id,
       details: {
         sensor_mac: s.mac, cfg_ver: nextVer,
-        from: { sleep_secs: s.cfg_sleep_secs, temp_offset: s.cfg_temp_offset,
-                temp_gain: s.cfg_temp_gain },
+        from: { sleep_secs: s.cfg_sleep_secs, sh_a: s.cfg_sh_a, sh_b: s.cfg_sh_b,
+                sh_c: s.cfg_sh_c, r_series: s.cfg_r_series },
         to: value,
       },
     });

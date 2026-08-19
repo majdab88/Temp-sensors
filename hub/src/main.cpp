@@ -222,12 +222,15 @@ typedef struct config_message {
   uint8_t  schema;        // 1 = the fields below
   uint16_t cfg_ver;
   uint16_t sleep_secs;
-  float    temp_offset;
-  float    temp_gain;
+  uint16_t pad;
+  float    sh_a;          // Steinhart-Hart A (K^-1)
+  float    sh_b;          // Steinhart-Hart B (K^-1)
+  float    sh_c;          // Steinhart-Hart C (K^-1)
+  float    r_series;      // divider resistor, ohms
   uint8_t  reserved[16];
 } config_message;
 
-static_assert(sizeof(config_message) == 32, "config wire format changed");
+static_assert(sizeof(config_message) == 40, "config wire format changed");
 
 // --- LOG MESSAGE STRUCTURE (must match sensor) ---
 // Sensor-ntc sends its wake-cycle serial log to the hub in 240-byte chunks
@@ -270,8 +273,10 @@ struct SensorData {
   bool          cfgPending;
   uint16_t      cfgDesiredVer;
   uint16_t      cfgSleepSecs;
-  float         cfgTempOffset;
-  float         cfgTempGain;
+  float         cfgShA;
+  float         cfgShB;
+  float         cfgShC;
+  float         cfgRSeries;
 
   // Latest remote log received from this sensor (filled by handleLogChunk).
   // logExpectedTotal/logChunksRcvd track the in-progress assembly so we know
@@ -1112,18 +1117,22 @@ void mqttCallback(char* topic, byte* payload, unsigned int length) {
 
     int   ver    = jsonGetInt(json, "cfg_ver");
     int   sleep  = jsonGetInt(json, "sleep_secs");
-    float offset = jsonGetFloat(json, "temp_offset");
-    float gain   = jsonGetFloat(json, "temp_gain");
+    float shA    = jsonGetFloat(json, "sh_a");
+    float shB    = jsonGetFloat(json, "sh_b");
+    float shC    = jsonGetFloat(json, "sh_c");
+    float rSer   = jsonGetFloat(json, "r_series");
 
-    if (ver <= 0 || sleep <= 0 || isnan(offset) || isnan(gain)) {
+    if (ver <= 0 || sleep <= 0 || isnan(shA) || isnan(shB) || isnan(shC) || isnan(rSer)) {
       Serial.println("[CFG] Incomplete config command — ignoring");
       return;
     }
 
     sensors[idx].cfgDesiredVer = (uint16_t)ver;
     sensors[idx].cfgSleepSecs  = (uint16_t)sleep;
-    sensors[idx].cfgTempOffset = offset;
-    sensors[idx].cfgTempGain   = gain;
+    sensors[idx].cfgShA        = shA;
+    sensors[idx].cfgShB        = shB;
+    sensors[idx].cfgShC        = shC;
+    sensors[idx].cfgRSeries    = rSer;
     sensors[idx].cfgPending    = true;
     saveSensorConfig(idx);
 
@@ -2115,8 +2124,10 @@ void saveSensorConfig(int idx) {
   blob.schema      = 1;
   blob.cfg_ver     = sensors[idx].cfgDesiredVer;
   blob.sleep_secs  = sensors[idx].cfgSleepSecs;
-  blob.temp_offset = sensors[idx].cfgTempOffset;
-  blob.temp_gain   = sensors[idx].cfgTempGain;
+  blob.sh_a        = sensors[idx].cfgShA;
+  blob.sh_b        = sensors[idx].cfgShB;
+  blob.sh_c        = sensors[idx].cfgShC;
+  blob.r_series    = sensors[idx].cfgRSeries;
   cp.putBytes(key, &blob, sizeof(blob));
   cp.end();
 }
@@ -2133,8 +2144,10 @@ void loadSensorConfig(int idx) {
   if (cp.getBytes(key, &blob, sizeof(blob)) == sizeof(blob) && blob.cfg_ver != 0) {
     sensors[idx].cfgDesiredVer = blob.cfg_ver;
     sensors[idx].cfgSleepSecs  = blob.sleep_secs;
-    sensors[idx].cfgTempOffset = blob.temp_offset;
-    sensors[idx].cfgTempGain   = blob.temp_gain;
+    sensors[idx].cfgShA        = blob.sh_a;
+    sensors[idx].cfgShB        = blob.sh_b;
+    sensors[idx].cfgShC        = blob.sh_c;
+    sensors[idx].cfgRSeries    = blob.r_series;
     sensors[idx].cfgPending    = true;   // resolved on first contact
   }
   cp.end();
@@ -2154,10 +2167,11 @@ void publishConfigState(int idx) {
   char payload[224];
   snprintf(payload, sizeof(payload),
     "{\"sensor_mac\":\"%s\",\"applied_cfg_ver\":%u,\"desired_cfg_ver\":%u,"
-    "\"pending\":%s,\"sleep_secs\":%u,\"temp_offset\":%.2f,\"temp_gain\":%.4f}",
+    "\"pending\":%s,\"sleep_secs\":%u,\"sh_a\":%.6e,\"sh_b\":%.6e,\"sh_c\":%.6e,\"r_series\":%.1f}",
     mac, sensors[idx].cfg_ver, sensors[idx].cfgDesiredVer,
     sensors[idx].cfgPending ? "true" : "false",
-    sensors[idx].cfgSleepSecs, sensors[idx].cfgTempOffset, sensors[idx].cfgTempGain);
+    sensors[idx].cfgSleepSecs, sensors[idx].cfgShA, sensors[idx].cfgShB,
+    sensors[idx].cfgShC, sensors[idx].cfgRSeries);
 
   mqttClient.publish(topicCfgState, payload);
 }
@@ -2180,8 +2194,10 @@ void pushConfigIfPending(int idx, const uint8_t* mac) {
   cfg.schema      = 1;
   cfg.cfg_ver     = sensors[idx].cfgDesiredVer;
   cfg.sleep_secs  = sensors[idx].cfgSleepSecs;
-  cfg.temp_offset = sensors[idx].cfgTempOffset;
-  cfg.temp_gain   = sensors[idx].cfgTempGain;
+  cfg.sh_a        = sensors[idx].cfgShA;
+  cfg.sh_b        = sensors[idx].cfgShB;
+  cfg.sh_c        = sensors[idx].cfgShC;
+  cfg.r_series    = sensors[idx].cfgRSeries;
 
   if (esp_now_send(mac, (uint8_t*)&cfg, sizeof(cfg)) == ESP_OK) {
     Serial.printf("[CFG] Pushed config v%u to sensor\n", cfg.cfg_ver);

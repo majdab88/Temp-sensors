@@ -400,7 +400,8 @@ async function handleConfigState(hubMac, data) {
     hub_mac: hubMac.toUpperCase(), sensor_mac: mac,
     applied_cfg_ver: applied, desired_cfg_ver: desired,
     pending: !!data.pending, sleep_secs: data.sleep_secs ?? null,
-    temp_offset: data.temp_offset ?? null, temp_gain: data.temp_gain ?? null,
+    sh_a: data.sh_a ?? null, sh_b: data.sh_b ?? null,
+    sh_c: data.sh_c ?? null, r_series: data.r_series ?? null,
   });
 
   try {

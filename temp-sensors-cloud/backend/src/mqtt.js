@@ -156,6 +156,43 @@ async function handleSensorData(hubMac, data) {
     [fwVal, cfgVal, sensorId]
   ).catch((err) => console.error('Version update error:', err.message));
 
+  // Re-send the desired config whenever what the sensor reports does not match
+  // what the cloud wants.
+  //
+  // The config command is published once, to whichever hub the sensor happened
+  // to be on at the time. Move a sensor to a different hub -- which requires a
+  // factory reset, clearing its stored config -- and the new hub was never told
+  // anything, so it never pushes and the change waits forever. The same applies
+  // after a hub is reflashed or its NVS is cleared.
+  //
+  // Reconciling here means the pairing repairs itself from the only fact that is
+  // reliable: what the sensor says it is running.
+  {
+    query(
+      `SELECT cfg_desired_ver, cfg_sleep_secs, cfg_sh_a, cfg_sh_b, cfg_sh_c, cfg_r_series
+         FROM sensors
+        WHERE id = $1
+          AND COALESCE(cfg_desired_ver, 0) <> 0
+          AND COALESCE(cfg_desired_ver, 0) <> $2
+          AND cfg_sleep_secs IS NOT NULL AND cfg_sh_a IS NOT NULL
+          AND cfg_sh_b IS NOT NULL AND cfg_sh_c IS NOT NULL
+          AND cfg_r_series IS NOT NULL`,
+      [sensorId, cfgVal]
+    ).then((r) => {
+      if (r.rows.length === 0) return;
+      const c = r.rows[0];
+      publishSensorConfig(hubMac, {
+        sensor_mac:  normMac,
+        cfg_ver:     c.cfg_desired_ver,
+        sleep_secs:  c.cfg_sleep_secs,
+        sh_a:        c.cfg_sh_a,
+        sh_b:        c.cfg_sh_b,
+        sh_c:        c.cfg_sh_c,
+        r_series:    c.cfg_r_series,
+      });
+    }).catch((err) => console.error('Config reconcile error:', err.message));
+  }
+
   _io.to(`hub:${hubMac.toUpperCase()}`).emit('sensorData', {
     sensor_mac: sensor_mac.toUpperCase(),
     temp: tempVal,

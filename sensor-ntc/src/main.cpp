@@ -105,7 +105,7 @@
 // release; the cloud uses it to tell which nodes still need updating.
 #define FW_MAJOR 1
 #define FW_MINOR 1
-#define FW_PATCH 2
+#define FW_PATCH 3
 
 // --- SLEEP SETTINGS ---
 #define SLEEP_TIME 900  // Seconds — compiled default, overridden by cloud config
@@ -953,6 +953,13 @@ void setup() {
     }
   }
 
+  // Stored configuration must be loaded before anything uses it. It was
+  // previously read after readSensor(), which meant the NTC conversion silently
+  // used the compiled defaults and no pushed calibration ever affected a
+  // reading: a probe configured with r_series=47000 was still being computed
+  // against 10000. Only NVS access, so it is safe this early.
+  loadIdentity();
+
   // Read battery BEFORE radio init
   BatteryInfo bat = getBatteryInfo();
   ulog("Battery: %.2fV  %d%%  %s\n", bat.voltage, bat.percentage, bat.status);
@@ -964,8 +971,8 @@ void setup() {
   //read ntc before radio init since it can cause brownout at low battery levels, leading to failed reads
   readSensor();
 
-  loadIdentity();
-  ulog("FW %d.%d.%d  cfg_ver %u\n", FW_MAJOR, FW_MINOR, FW_PATCH, g_cfg_ver);
+  ulog("FW %d.%d.%d  cfg_ver %u  R=%.0f\n",
+       FW_MAJOR, FW_MINOR, FW_PATCH, g_cfg_ver, g_rSeries);
 
   // Load pairing
   preferences.begin("network", true);

@@ -24,9 +24,13 @@ router.use(requireSuperadmin);
 // curve across the deployment range before accepting them.
 const LIMITS = {
   sleep_secs: { min: 300,   max: 3600  },
-  sh_a:       { min: 1e-4,  max: 1e-2  },
-  sh_b:       { min: 1e-6,  max: 1e-3  },
-  sh_c:       { min: -1e-5, max: 1e-5  },
+  // Magnitude only. Textbook sign conventions do not hold for restricted-range
+  // fits: a real cold-range fit measured on this hardware has a negative B
+  // (A=5.678e-3, B=-4.038e-4, C=1.919e-6) and a positive-only bound rejected it.
+  // The sensor's falling-curve check is what actually validates a fit.
+  sh_a:       { min: -1e-1, max: 1e-1 },
+  sh_b:       { min: -1e-1, max: 1e-1 },
+  sh_c:       { min: -1e-1, max: 1e-1 },
   // Wide on purpose: the divider resistor is a design choice, and raising it is
   // how a low-side board buys back cold headroom before the ADC saturates.
   r_series:   { min: 1000,  max: 1000000 },

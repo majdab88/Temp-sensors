@@ -81,9 +81,15 @@ export default function SensorCard({ sensor, reading, alert, rule, spark, onRena
 
   const status = getStatus(reading?.recorded_at)
 
-  // Chip: ALARM wins; otherwise connection status
+  // A failed probe is a node that is online and reporting, just with no
+  // temperature in it. Without its own chip it reads as OK with a blank
+  // reading, which is the one interpretation that is definitely wrong.
+  const probeError = sensor.probe_error === true
+
+  // Chip: ALARM wins, then a broken probe; otherwise connection status
   const chip = alert
     ? { label: 'ALARM', cls: 'alarm' }
+    : probeError ? { label: 'PROBE ERROR', cls: 'offline' }
     : status === 'offline' ? { label: 'OFFLINE', cls: 'offline' }
     : status === 'stale'   ? { label: 'STALE',   cls: 'stale' }
     : status === 'unknown' ? { label: 'NO DATA', cls: '' }

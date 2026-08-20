@@ -28,7 +28,7 @@ router.get('/', async (req, res) => {
     if (isSuperadminUnscoped(req)) {
       result = await query(
         `SELECT s.id, s.device_id, s.mac, s.name, s.paired_at, s.active,
-                s.fw_version, s.cfg_ver,
+                s.fw_version, s.cfg_ver, s.probe_error, s.probe_error_at,
                 d.mac AS hub_mac, d.name AS hub_name, d.org_id,
                 lr.temp, lr.hum, lr.rssi, lr.battery,
                 EXTRACT(EPOCH FROM lr.recorded_at)::bigint AS "lastUpdate"
@@ -41,7 +41,7 @@ router.get('/', async (req, res) => {
     } else if (req.orgId) {
       result = await query(
         `SELECT s.id, s.device_id, s.mac, s.name, s.paired_at, s.active,
-                s.fw_version, s.cfg_ver,
+                s.fw_version, s.cfg_ver, s.probe_error, s.probe_error_at,
                 d.mac AS hub_mac, d.name AS hub_name,
                 lr.temp, lr.hum, lr.rssi, lr.battery,
                 EXTRACT(EPOCH FROM lr.recorded_at)::bigint AS "lastUpdate"

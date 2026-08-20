@@ -168,6 +168,14 @@ export default function Dashboard() {
           recorded_at: new Date(data.ts).toISOString(),
         },
       }))
+      // The probe-error chip is driven from the sensor record, not the reading,
+      // so a failure appearing mid-session has to be reflected there too --
+      // otherwise it only shows up after a page refresh.
+      setSensors((prev) => prev.map((s) =>
+        s.mac === data.sensor_mac && s.probe_error !== data.probe_error
+          ? { ...s, probe_error: data.probe_error }
+          : s
+      ))
       if (data.temp != null) {
         setSparks((prev) => {
           const cur = prev[data.sensor_mac] || []

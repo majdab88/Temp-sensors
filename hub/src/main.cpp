@@ -54,7 +54,7 @@ void confirmFirmwareValid();
 #define FW_MINOR 1
 #endif
 #ifndef FW_PATCH
-#define FW_PATCH 1
+#define FW_PATCH 2
 #endif
 #define STR_(x) #x
 #define STR(x)  STR_(x)
@@ -2780,11 +2780,24 @@ void OnDataRecv(const esp_now_recv_info_t* esp_now_info,
     for (int i = 0; i < 5; i++) Serial.printf("%02X:", esp_now_info->src_addr[i]);
     Serial.printf("%02X", esp_now_info->src_addr[5]);
 
-    // hum == -999 is a valid sentinel meaning "no humidity sensor" (NTC-only nodes).
-    bool humInvalid = (incomingData.hum != -999) &&
-                      (incomingData.hum < 0 || incomingData.hum > 100);
-    if (incomingData.temp < -50 || incomingData.temp > 100 || humInvalid) {
+    // -999 is a sentinel, not a bad reading: on hum it means "no humidity
+    // sensor" (NTC-only nodes), and on temp it means the probe read failed --
+    // open, shorted, or out of range.
+    //
+    // A failed probe used to be dropped here, so the cloud saw nothing at all
+    // and the node just looked quiet. That is the wrong way round: a probe
+    // that has stopped working is exactly what someone needs to be told about,
+    // so it is forwarded and flagged rather than discarded.
+    bool humInvalid  = (incomingData.hum != -999) &&
+                       (incomingData.hum < 0 || incomingData.hum > 100);
+    bool probeFailed = (incomingData.temp == -999);
+    bool tempInvalid = !probeFailed &&
+                       (incomingData.temp < -50 || incomingData.temp > 100);
+    if (tempInvalid || humInvalid) {
       Serial.println(" | ERROR: Invalid sensor data!"); return;
+    }
+    if (probeFailed) {
+      Serial.print(" | PROBE ERROR — forwarding to cloud");
     }
 
     Serial.printf(" | Temp: %.2f°C | Hum: %.2f%% | RSSI: %d dBm | Bat: %d%% | ",

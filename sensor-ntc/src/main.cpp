@@ -105,7 +105,7 @@
 // release; the cloud uses it to tell which nodes still need updating.
 #define FW_MAJOR 1
 #define FW_MINOR 1
-#define FW_PATCH 3
+#define FW_PATCH 4
 
 // --- SLEEP SETTINGS ---
 #define SLEEP_TIME 900  // Seconds — compiled default, overridden by cloud config
@@ -124,11 +124,15 @@
 // C=7.23e-7) and looks nothing like textbook values, so any tight bound would
 // reject a legitimate recalibration. Only absurd magnitudes are refused; the
 // real check is the physical plausibility test below.
-#define CFG_A_MIN   1e-4f
-#define CFG_A_MAX   1e-2f
-#define CFG_B_MIN   1e-6f
-#define CFG_B_MAX   1e-3f
-#define CFG_C_ABS_MAX 1e-5f
+// Magnitude only, and generous. Sign conventions from textbook fits do not
+// hold for restricted-range ones: the coefficients trade off against each
+// other, and a perfectly good cold-range fit can have a negative B compensated
+// by a larger C. A real fit measured on this hardware --
+// A=5.678e-3, B=-4.038e-4, C=1.919e-6 -- was rejected by a positive-only bound.
+//
+// These limits only catch garbage. The physical check below is what actually
+// decides whether a set of coefficients is usable.
+#define CFG_COEF_ABS_MAX 1e-1f
 // The divider resistor is a design choice, not a fixed 10k. Raising it moves
 // the whole voltage range down, which is how a low-side board buys back cold
 // headroom before the ADC saturates -- so the bound has to be wide enough to
@@ -514,9 +518,10 @@ void OnDataRecv(const esp_now_recv_info_t *esp_now_info, const uint8_t *incoming
            cfg->r_series, CFG_RSERIES_MIN, CFG_RSERIES_MAX);
       return;
     }
-    if (!(cfg->sh_a >= CFG_A_MIN && cfg->sh_a <= CFG_A_MAX) ||
-        !(cfg->sh_b >= CFG_B_MIN && cfg->sh_b <= CFG_B_MAX) ||
-        !(fabsf(cfg->sh_c) <= CFG_C_ABS_MAX)) {
+    if (!isfinite(cfg->sh_a) || !isfinite(cfg->sh_b) || !isfinite(cfg->sh_c) ||
+        fabsf(cfg->sh_a) > CFG_COEF_ABS_MAX ||
+        fabsf(cfg->sh_b) > CFG_COEF_ABS_MAX ||
+        fabsf(cfg->sh_c) > CFG_COEF_ABS_MAX) {
       ulog("[CFG] Rejected: A/B/C magnitude implausible (%.4e %.4e %.4e)\n",
            cfg->sh_a, cfg->sh_b, cfg->sh_c);
       return;

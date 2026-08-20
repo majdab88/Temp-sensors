@@ -317,6 +317,35 @@ async function handleSyncRequest(hubMac) {
   if (devRes.rows.length === 0) return;
   const deviceId = devRes.rows[0].id;
 
+  // A hub asks to sync on every MQTT connect, which is also the moment it may
+  // have forgotten things: a reflash or an NVS erase leaves it holding no
+  // pending configuration while the cloud still believes one is in flight.
+  // Re-sending here costs one small retained message per unconfigured sensor
+  // and removes a whole class of "the change never arrived" states.
+  query(
+    `SELECT mac, cfg_desired_ver, cfg_sleep_secs, cfg_sh_a, cfg_sh_b, cfg_sh_c, cfg_r_series
+       FROM sensors
+      WHERE device_id = $1 AND active = TRUE
+        AND COALESCE(cfg_desired_ver, 0) <> 0
+        AND COALESCE(cfg_desired_ver, 0) <> COALESCE(cfg_ver, 0)
+        AND cfg_sleep_secs IS NOT NULL AND cfg_sh_a IS NOT NULL
+        AND cfg_sh_b IS NOT NULL AND cfg_sh_c IS NOT NULL
+        AND cfg_r_series IS NOT NULL`,
+    [deviceId]
+  ).then((r) => {
+    for (const c of r.rows) {
+      publishSensorConfig(mac, {
+        sensor_mac:  c.mac,
+        cfg_ver:     c.cfg_desired_ver,
+        sleep_secs:  c.cfg_sleep_secs,
+        sh_a:        c.cfg_sh_a,
+        sh_b:        c.cfg_sh_b,
+        sh_c:        c.cfg_sh_c,
+        r_series:    c.cfg_r_series,
+      });
+    }
+  }).catch((err) => console.error('Config resync error:', err.message));
+
   const sensorRes = await query(
     'SELECT mac, name FROM sensors WHERE device_id = $1 AND active = TRUE',
     [deviceId]

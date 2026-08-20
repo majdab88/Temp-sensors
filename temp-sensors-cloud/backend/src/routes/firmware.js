@@ -39,8 +39,13 @@ function imageUrl(sha256) {
 // keeping it here is safe and catches a signature/binary mismatch at upload
 // instead of on a hub that then refuses to install.
 function verifyUploadSignature(image, signatureB64) {
-  const pem = process.env.FW_PUBLIC_KEY_PEM;
+  let pem = process.env.FW_PUBLIC_KEY_PEM;
   if (!pem) return { checked: false, valid: null };
+
+  // A PEM is multi-line and Docker Compose .env files cannot hold multi-line
+  // values, so the practical way to configure this is a single line with
+  // escaped newlines. Accept either form rather than making the operator care.
+  pem = pem.trim().replace(/\\n/g, '\n');
   try {
     const ok = crypto
       .createVerify('SHA256')

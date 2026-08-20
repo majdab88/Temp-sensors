@@ -4,7 +4,7 @@ const express = require('express');
 const { query } = require('../db');
 const { requireAuth, isSuperadminUnscoped } = require('../middleware/auth');
 const { requirePermission } = require('../middleware/permissions');
-const { publishPairingResponse, publishPairingEnable, publishSensorRemove } = require('../mqtt');
+const { publishPairingResponse, publishPairingEnable, publishSensorRemove, publishSensorConfig } = require('../mqtt');
 const { audit } = require('../audit');
 
 const router = express.Router();
@@ -161,6 +161,40 @@ async function resolveRequest(req, res, approved) {
     const devRes = await query('SELECT mac FROM devices WHERE id = $1', [row.device_id]);
     if (devRes.rows.length > 0) {
       publishPairingResponse(devRes.rows[0].mac, row.slave_mac, approved);
+
+      // Hand the hub this sensor's configuration straight away.
+      //
+      // Moving a sensor requires a factory reset, so it arrives running
+      // compiled defaults, and the config command was only ever sent to
+      // whichever hub it was on before. Waiting for the mismatch to be noticed
+      // on a reading works, but costs an extra wake cycle: the hub only learns
+      // what to push after the sensor has already gone back to sleep. Pushing
+      // now means the config lands on the node's first wake instead of its
+      // second.
+      if (approved) {
+        query(
+          `SELECT cfg_desired_ver, cfg_sleep_secs, cfg_sh_a, cfg_sh_b, cfg_sh_c, cfg_r_series
+             FROM sensors
+            WHERE device_id = $1 AND mac = $2
+              AND COALESCE(cfg_desired_ver, 0) <> 0
+              AND cfg_sleep_secs IS NOT NULL AND cfg_sh_a IS NOT NULL
+              AND cfg_sh_b IS NOT NULL AND cfg_sh_c IS NOT NULL
+              AND cfg_r_series IS NOT NULL`,
+          [row.device_id, row.slave_mac.toUpperCase()]
+        ).then((cfgRes) => {
+          if (cfgRes.rows.length === 0) return;
+          const c = cfgRes.rows[0];
+          publishSensorConfig(devRes.rows[0].mac, {
+            sensor_mac:  row.slave_mac.toUpperCase(),
+            cfg_ver:     c.cfg_desired_ver,
+            sleep_secs:  c.cfg_sleep_secs,
+            sh_a:        c.cfg_sh_a,
+            sh_b:        c.cfg_sh_b,
+            sh_c:        c.cfg_sh_c,
+            r_series:    c.cfg_r_series,
+          });
+        }).catch((err) => console.error('Config push on pairing failed:', err.message));
+      }
     }
 
     await audit({ req, action: approved ? 'pairing.approve' : 'pairing.reject', targetType: 'pairing_request', targetId: id, details: { slave_mac: row.slave_mac } });

@@ -27,7 +27,9 @@ const LIMITS = {
   sh_a:       { min: 1e-4,  max: 1e-2  },
   sh_b:       { min: 1e-6,  max: 1e-3  },
   sh_c:       { min: -1e-5, max: 1e-5  },
-  r_series:   { min: 5000,  max: 20000 },
+  // Wide on purpose: the divider resistor is a design choice, and raising it is
+  // how a low-side board buys back cold headroom before the ADC saturates.
+  r_series:   { min: 1000,  max: 1000000 },
 };
 
 // cfg_ver is a fingerprint of the values, not a counter.

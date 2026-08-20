@@ -105,7 +105,7 @@
 // release; the cloud uses it to tell which nodes still need updating.
 #define FW_MAJOR 1
 #define FW_MINOR 1
-#define FW_PATCH 1
+#define FW_PATCH 2
 
 // --- SLEEP SETTINGS ---
 #define SLEEP_TIME 900  // Seconds — compiled default, overridden by cloud config
@@ -129,8 +129,16 @@
 #define CFG_B_MIN   1e-6f
 #define CFG_B_MAX   1e-3f
 #define CFG_C_ABS_MAX 1e-5f
-#define CFG_RSERIES_MIN 5000.0f
-#define CFG_RSERIES_MAX 20000.0f
+// The divider resistor is a design choice, not a fixed 10k. Raising it moves
+// the whole voltage range down, which is how a low-side board buys back cold
+// headroom before the ADC saturates -- so the bound has to be wide enough to
+// allow that. Anything from a few k to ~1M is physically reasonable; past that,
+// ADC input leakage starts to matter more than the divider.
+//
+// A wrong value here scales computed resistance linearly, and the existing
+// -55..125 C check at read time rejects the result of a serious typo.
+#define CFG_RSERIES_MIN 1000.0f
+#define CFG_RSERIES_MAX 1000000.0f
 
 // How long to keep the radio up after the log burst, waiting for a config the
 // hub may be sending. Costs roughly 30 mAh/year at a 15 min interval (~1% of

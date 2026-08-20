@@ -118,7 +118,11 @@ async function handleSensorData(hubMac, data) {
   const sensorId = sensorRes.rows[0].id;
   const sensorName = sensorRes.rows[0].name;
 
-  // Convert -999 sentinel values to NULL
+  // -999 on temp means the probe read failed (open, shorted, out of range), not
+  // that the value is merely missing. Stored as NULL either way, but the
+  // distinction is what lets the dashboard say "probe error" instead of quietly
+  // showing a gap that looks like nothing happened.
+  const probeError = (temp === -999);
   const tempVal = (temp === -999 || temp == null) ? null : temp;
   const humVal  = (hum  === -999 || hum  == null) ? null : hum;
 
@@ -140,6 +144,12 @@ async function handleSensorData(hubMac, data) {
 
   // Only writes when something actually changed — this runs on every reading.
   query(
+    `UPDATE sensors SET probe_error = $1, probe_error_at = CASE WHEN $1 THEN NOW() ELSE probe_error_at END
+      WHERE id = $2 AND probe_error IS DISTINCT FROM $1`,
+    [probeError, sensorId]
+  ).catch((err) => console.error('Probe error update failed:', err.message));
+
+  query(
     `UPDATE sensors SET fw_version = $1, cfg_ver = $2, fw_reported_at = NOW()
       WHERE id = $3
         AND (fw_version IS DISTINCT FROM $1 OR cfg_ver IS DISTINCT FROM $2)`,
@@ -152,6 +162,7 @@ async function handleSensorData(hubMac, data) {
     hum: humVal,
     battery: battery ?? null,
     rssi: rssi ?? null,
+    probe_error: probeError,
     ts: recordedAt.getTime(),
     fw: fwVal,
     cfg_ver: cfgVal,
@@ -175,6 +186,7 @@ async function handleSensorData(hubMac, data) {
     hubMac: hubMac.toUpperCase(),
     battery: battery ?? null,
     tsMs: recordedAt.getTime(),
+    probeError,
   }).catch((err) => console.error('Health eval error:', err.message));
 }
 

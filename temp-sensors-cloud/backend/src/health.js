@@ -97,11 +97,12 @@ async function notifyHub(hst, mac, kind, title, body) {
 
 // A reading arrived. Update last-seen, clear an offline flag (back online),
 // and check the battery level.
-async function onReading({ sensorId, sensorMac, sensorName, hubMac, battery, tsMs }) {
+async function onReading({ sensorId, sensorMac, sensorName, hubMac, battery, tsMs, probeError }) {
   const mac = sensorMac.toUpperCase();
   let st = sensorState.get(mac);
   if (!st) {
-    st = { sensorId, mac, name: sensorName, hubMac, lastSeenMs: 0, offline: false, batteryLow: false };
+    st = { sensorId, mac, name: sensorName, hubMac, lastSeenMs: 0, offline: false,
+           batteryLow: false, probeError: false };
     sensorState.set(mac, st);
   }
   st.sensorId = sensorId;
@@ -115,6 +116,21 @@ async function onReading({ sensorId, sensorMac, sensorName, hubMac, battery, tsM
     st.offline = false;
     if (cfg.sensor_offline_enabled) {
       await notifySensor(st, 'online', '✅ Sensor back online', `${st.name} is reporting again`);
+    }
+  }
+
+  // A dead probe reports nothing rather than something wrong, so without an
+  // explicit signal the node looks healthy while recording no temperature at
+  // all. Notified on transition, like the battery and offline flags.
+  if (probeError != null) {
+    if (!st.probeError && probeError) {
+      st.probeError = true;
+      await notifySensor(st, 'probe_error', '⚠️ Probe error',
+        `${st.name} cannot read its temperature probe — check the connection`);
+    } else if (st.probeError && !probeError) {
+      st.probeError = false;
+      await notifySensor(st, 'probe_ok', '✅ Probe recovered',
+        `${st.name} is reading its probe again`);
     }
   }
 

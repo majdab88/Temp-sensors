@@ -8,6 +8,22 @@ import api from '../services/api'
  * brief window after it transmits, so a change takes up to one reporting
  * interval to land. The UI has to make that obvious or it looks broken.
  */
+// Coefficients are tiny numbers whose full float expansion is unreadable and
+// wraps the layout. Four significant figures is more than the hardware
+// resolves, and keeps a row on one line.
+function coef(v) {
+  if (v == null) return '—'
+  const n = Number(v)
+  return Math.abs(n) < 0.01 ? n.toExponential(3) : n.toFixed(4)
+}
+
+function whenLabel(iso) {
+  const d = new Date(iso)
+  return d.toLocaleString(undefined, {
+    day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit',
+  })
+}
+
 export default function SensorConfigModal({ sensor, onClose }) {
   const [cfg, setCfg] = useState(null)
   const [busy, setBusy] = useState(false)
@@ -161,16 +177,23 @@ export default function SensorConfigModal({ sensor, onClose }) {
 
             {cfg.history?.length > 0 && (
               <>
-                <h3 style={{ fontSize: 14, margin: '20px 0 8px' }}>Recent changes</h3>
-                {cfg.history.map((h) => (
-                  <div className="device-meta" key={h.changed_at}>
-                    {Math.round(h.sleep_secs / 60)} min · R={h.r_series} ·
-                    A={h.sh_a} B={h.sh_b} C={h.sh_c} ·{' '}
-                    {h.applied_at
-                      ? `applied ${new Date(h.applied_at).toLocaleString()}`
-                      : 'not yet applied'}
-                  </div>
-                ))}
+                <h3 style={{ fontSize: 14, margin: '18px 0 6px' }}>
+                  Recent changes
+                </h3>
+                <div className="cfg-history">
+                  {cfg.history.map((h) => (
+                    <div className="cfg-history-row" key={h.changed_at}>
+                      <div className="cfg-history-when">
+                        {whenLabel(h.applied_at || h.changed_at)}
+                        {h.applied_at ? '' : ' · not yet applied'}
+                      </div>
+                      <div className="cfg-history-vals">
+                        {Math.round(h.sleep_secs / 60)}m · R{h.r_series} ·{' '}
+                        A {coef(h.sh_a)} B {coef(h.sh_b)} C {coef(h.sh_c)}
+                      </div>
+                    </div>
+                  ))}
+                </div>
               </>
             )}
           </>

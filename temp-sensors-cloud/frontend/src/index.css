@@ -1868,6 +1868,38 @@ button.perm-pill:hover {
   max-width: 420px;
   padding: 20px 22px 18px;
   cursor: default;
+  /* Without a ceiling a modal grows past the viewport and the page goes
+     crooked -- the config editor's change history made this obvious, but it
+     could happen to any of them. */
+  max-height: calc(100vh - 32px);
+  overflow-y: auto;
+}
+
+/* Change history: capped and scrolled in place, so a long list never drives
+   the height of the dialog that contains it. */
+.cfg-history {
+  max-height: 150px;
+  overflow-y: auto;
+  border-top: 1px solid var(--border);
+  padding-top: 8px;
+}
+
+.cfg-history-row {
+  padding: 6px 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.cfg-history-row:last-child { border-bottom: none; }
+
+.cfg-history-when {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.cfg-history-vals {
+  font-family: var(--font-mono, monospace);
+  font-size: 11px;
+  white-space: nowrap;
 }
 
 .modal-header { margin-bottom: 16px; }

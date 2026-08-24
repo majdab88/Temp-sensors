@@ -69,7 +69,21 @@ async function getState(sensorId) {
 }
 
 // ── Excursion records (open on breach, track peak, close on recovery) ────────
+// A sensor can only be inside one excursion at a time. Without this check a
+// second row was inserted whenever the in-memory state had no excursion id
+// while the sensor was still breached -- which happens after every backend
+// restart, and on any race between two readings. Those extra rows were never
+// tracked by anything, so nothing ever closed them and they showed as ONGOING
+// forever.
 async function openExcursion(sensorId, kind, temp, limit) {
+  const existing = await query(
+    `SELECT id FROM excursions
+      WHERE sensor_id = $1 AND ended_at IS NULL
+      ORDER BY started_at DESC LIMIT 1`,
+    [sensorId]
+  );
+  if (existing.rows.length > 0) return existing.rows[0].id;
+
   const r = await query(
     'INSERT INTO excursions (sensor_id, kind, peak_value, limit_value) VALUES ($1, $2, $3, $4) RETURNING id',
     [sensorId, kind, temp, limit]
@@ -82,8 +96,14 @@ async function updateExcursionPeak(id, kind, temp) {
   await query(`UPDATE excursions SET peak_value = ${worse}(peak_value, $2) WHERE id = $1`, [id, temp]);
 }
 
-async function closeExcursion(id) {
-  await query('UPDATE excursions SET ended_at = NOW() WHERE id = $1 AND ended_at IS NULL', [id]);
+// Close every open excursion for the sensor, not just the one this process is
+// tracking. Orphans from an earlier process would otherwise stay ONGOING
+// permanently, since nothing else ever looks at them.
+async function closeExcursion(sensorId) {
+  await query(
+    'UPDATE excursions SET ended_at = NOW() WHERE sensor_id = $1 AND ended_at IS NULL',
+    [sensorId]
+  );
 }
 
 /**
@@ -150,10 +170,8 @@ async function fire(ctx, rule, state, kind) {
   if (kind === 'recovered') {
     state.breached = false;
     state.kind = null;
-    if (state.excursionId != null) {
-      await closeExcursion(state.excursionId);
-      state.excursionId = null;
-    }
+    await closeExcursion(ctx.sensorId);
+    state.excursionId = null;
   } else {
     state.breached = true;
     state.kind = kind;

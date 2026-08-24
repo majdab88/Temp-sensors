@@ -77,7 +77,7 @@ Temp-sensors/
 - Tracks up to **10 sensors** by MAC address; marks sensors offline after 10 min.
 - Syncs time via **NTP** (`pool.ntp.org`, UTC+2).
 - After pairing, upgrades each sensor peer from unencrypted broadcast to encrypted (LMK) via `esp_now_mod_peer()`.
-- Hold BOOT button (GPIO 9) for 3 s to erase WiFi credentials and restart.
+- Hold BOOT (GPIO 9) **or** the external D0 button (GPIO 0) for 3 s to erase WiFi credentials and restart.
 
 ### Sensor (`Temp32_sensor.ino`)
 - Wakes from **deep sleep**, reads the SHT40, sends data to hub, sleeps again.
@@ -106,7 +106,8 @@ typedef struct struct_message {
 ### Hub (XIAO ESP32-C6)
 | Pin | GPIO | Function |
 |-----|------|----------|
-| BOOT button | 9 | WiFi reset (hold 3 s) |
+| BOOT button (on-module) | 9 | Reset / re-provision (hold 3 s) |
+| External button | 0 (D0) | Reset / re-provision (hold 3 s) — same action as BOOT; not a strap pin |
 | Built-in LED | 15 | Blinks on pairing |
 
 ### Sensor — SHT40 variant (`sensor/`, XIAO ESP32-C6)
@@ -377,8 +378,8 @@ while doing so to avoid back-feeding the cell.
 4. Flash sensor(s) → they auto-pair (or approve pairing via app/dashboard).
 
 ### Resetting
-- **Hub WiFi (current):** Hold BOOT (GPIO 9) for 3 s → WiFiManager portal reopens.
-- **Hub WiFi (planned BLE):** Hold BOOT (GPIO 9) for 3 s → NVS erased → device re-enters BLE provisioning mode.
+- **Hub WiFi (current):** Hold BOOT (GPIO 9) or external D0 (GPIO 0) for 3 s → WiFiManager portal reopens.
+- **Hub WiFi (planned BLE):** Hold BOOT (GPIO 9) or external D0 (GPIO 0) for 3 s → NVS erased → device re-enters BLE provisioning mode.
 - **Sensor pairing:** Hold D0 (GPIO 0) for 3 s → NVS erased → pairing mode. Works from deep sleep — the button wakes the device, then `checkFactoryReset()` detects the held press.
 
 ---

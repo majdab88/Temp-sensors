@@ -347,9 +347,19 @@ export default function Dashboard() {
                     {(a.sensor_name || a.sensor_mac)} {a.kind === 'high' ? 'above' : 'below'} limit
                   </div>
                   <div className="rail-alarm-detail">
-                    {readings[a.sensor_mac]?.temp != null ? `${Number(readings[a.sensor_mac].temp).toFixed(1)} °C` : `${Number(a.value).toFixed(1)} °C`}
+                    {/* The breaching value, not the live one. Showing the current
+                        reading against the breach's limit produced nonsense as soon
+                        as a sensor recovered -- "4.7 °C vs max 30 °C" -- because the
+                        two numbers came from different moments. */}
+                    {Number(a.value).toFixed(1)} °C
                     {a.kind === 'high' && a.high_limit != null && ` vs max ${a.high_limit} °C`}
                     {a.kind === 'low' && a.low_limit != null && ` vs min ${a.low_limit} °C`}
+                    {readings[a.sensor_mac]?.temp != null &&
+                      Math.abs(Number(readings[a.sensor_mac].temp) - Number(a.value)) >= 0.1 && (
+                        <span className="rail-alarm-now">
+                          {' '}· now {Number(readings[a.sensor_mac].temp).toFixed(1)} °C
+                        </span>
+                      )}
                   </div>
                   <div className="rail-alarm-actions">
                     <button className="btn btn-ghost btn-sm" onClick={() => viewSensor(a.sensor_mac)}>Details</button>

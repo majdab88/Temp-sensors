@@ -34,6 +34,7 @@ function initMqtt(io) {
       'sensors/+/status',
       'sensors/+/ota/status',        // hub OTA progress
       'sensors/+/config/state',      // sensor config applied / pending
+      'sensors/+/sensor-ota/status', // sensor firmware transfer progress
       'sensors/+/pairing/request',
       'sensors/+/pairing/status',   // hub acks pairing mode enable/disable
       'sensors/+/sync/request',
@@ -87,6 +88,8 @@ async function handleMessage(topic, payload) {
     await handleOtaStatus(hubMac, data);
   } else if (parts[2] === 'config' && parts[3] === 'state') {
     await handleConfigState(hubMac, data);
+  } else if (parts[2] === 'sensor-ota' && parts[3] === 'status') {
+    await handleSensorOtaStatus(hubMac, data);
   }
 }
 
@@ -447,6 +450,51 @@ async function handleOtaStatus(hubMac, data) {
 }
 
 /**
+ * Stage a firmware image on a sensor, addressed to its hub.
+ *
+ * Retained, because delivery waits for a button press on the node -- which may
+ * be days away. The hub holds it and offers it on every contact until the
+ * sensor takes it or reports that it already has that version.
+ */
+function publishSensorOtaCommand(hubMac, cmd) {
+  if (!client || !client.connected) throw new Error('MQTT client not connected');
+  client.publish(`sensors/${hubMac.toUpperCase()}/sensor-ota/command`,
+                 JSON.stringify({ ...cmd, sig: cmd.signature }), { retain: true });
+}
+
+/**
+ * Record how a sensor firmware transfer is going.
+ */
+async function handleSensorOtaStatus(hubMac, data) {
+  const mac = (data.sensor_mac || '').toUpperCase();
+  if (!mac) return;
+  const state = typeof data.state === 'string' ? data.state.slice(0, 16) : null;
+  const pct   = Number.isInteger(data.pct) ? data.pct : null;
+  const error = typeof data.error === 'string' ? data.error : null;
+
+  _io.to(`hub:${hubMac.toUpperCase()}`).emit('sensorOtaStatus', {
+    hub_mac: hubMac.toUpperCase(), sensor_mac: mac,
+    state, pct, error, version: data.version ?? null,
+  });
+
+  try {
+    await query(
+      `UPDATE sensors SET ota_state = $1, ota_version = $2, ota_pct = $3,
+                          ota_error = $4, ota_updated_at = NOW()
+        WHERE mac = $5`,
+      [state, data.version ?? null, pct, error, mac]
+    );
+    // Installed or failed, the command has done its job; a failed image fails
+    // identically on retry, so leaving it retained would loop forever.
+    if (state === 'installed' || state === 'failed') {
+      client.publish(`sensors/${hubMac.toUpperCase()}/sensor-ota/command`, '', { retain: true });
+    }
+  } catch (err) {
+    console.error('Sensor OTA status error:', err.message);
+  }
+}
+
+/**
  * Push a sensor's desired configuration to its hub.
  *
  * Retained, like the OTA command: the hub may be offline, and more importantly
@@ -544,4 +592,4 @@ function publishSensorRemove(hubMac, sensorMac) {
   console.log(`[MQTT] Sent sensor/remove for ${sensorMac} to hub ${hubMac}`);
 }
 
-module.exports = { initMqtt, publishPairingResponse, publishPairingEnable, publishSensorRemove, getHubStatus, publishOtaCommand, publishSensorConfig, pushSyncToHub: handleSyncRequest };
+module.exports = { initMqtt, publishPairingResponse, publishPairingEnable, publishSensorRemove, getHubStatus, publishOtaCommand, publishSensorConfig, publishSensorOtaCommand, pushSyncToHub: handleSyncRequest };

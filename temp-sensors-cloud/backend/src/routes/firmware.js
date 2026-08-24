@@ -7,7 +7,7 @@ const path    = require('path');
 const { query } = require('../db');
 const { requireAuth, requireSuperadmin } = require('../middleware/auth');
 const { audit } = require('../audit');
-const { publishOtaCommand } = require('../mqtt');
+const { publishOtaCommand, publishSensorOtaCommand } = require('../mqtt');
 
 const router = express.Router();
 router.use(requireAuth);
@@ -205,8 +205,48 @@ router.post('/:id/stage', async (req, res) => {
     if (fwRes.rows.length === 0) return res.status(404).json({ error: 'Firmware not found' });
     const fw = fwRes.rows[0];
 
-    if (fw.device_kind !== 'hub') {
-      return res.status(400).json({ error: 'Only hub images can be staged (sensor OTA is not implemented)' });
+    // A sensor image is relayed by its hub rather than fetched directly, so the
+    // command is addressed to the hub with the sensor named inside it.
+    if (fw.device_kind === 'sensor') {
+      const sensorMac = (req.body.sensor_mac || '').toUpperCase();
+      if (!MAC_RE.test(sensorMac)) {
+        return res.status(400).json({ error: 'sensor_mac is required for a sensor image' });
+      }
+      const sRes = await query(
+        `SELECT s.id, s.mac, s.fw_version, d.mac AS hub_mac
+           FROM sensors s JOIN devices d ON d.id = s.device_id
+          WHERE s.mac = $1 AND s.active = TRUE`,
+        [sensorMac]
+      );
+      if (sRes.rows.length === 0) return res.status(404).json({ error: 'Sensor not found' });
+      const sensor = sRes.rows[0];
+
+      publishSensorOtaCommand(sensor.hub_mac, {
+        sensor_mac: sensor.mac,
+        url: imageUrl(fw.sha256),
+        version: fw.version,
+        sha256: fw.sha256,
+        signature: fw.signature,
+      });
+
+      await query(
+        `UPDATE sensors
+            SET ota_state = 'staged', ota_version = $1, ota_pct = 0,
+                ota_error = NULL, ota_updated_at = NOW()
+          WHERE id = $2`,
+        [fw.version, sensor.id]
+      );
+
+      await audit({
+        req, action: 'firmware.stage', targetType: 'sensor', targetId: sensor.id,
+        details: { sensor_mac: sensor.mac, hub_mac: sensor.hub_mac,
+                   version: fw.version, from_version: sensor.fw_version },
+      });
+
+      // Delivery waits for someone to press the button on the node -- a sensor
+      // only listens for an offer on a button-press wake.
+      return res.json({ staged: true, sensor_mac: sensor.mac, version: fw.version,
+                        needs_button: true });
     }
 
     const mac = hub_mac.toUpperCase();

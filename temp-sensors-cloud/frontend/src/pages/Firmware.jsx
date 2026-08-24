@@ -18,6 +18,7 @@ const OTA_STALE_MS = 20 * 60 * 1000
 export default function Firmware() {
   const [images, setImages] = useState([])
   const [hubs, setHubs] = useState([])
+  const [sensors, setSensors] = useState([])
   const [otaState, setOtaState] = useState({})   // hub_mac -> latest ota/status
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
@@ -32,12 +33,14 @@ export default function Firmware() {
 
   async function load() {
     try {
-      const [fwRes, devRes] = await Promise.all([
+      const [fwRes, devRes, senRes] = await Promise.all([
         api.get('/firmware'),
         api.get('/devices'),
+        api.get('/sensors').catch(() => ({ data: [] })),
       ])
       setImages(fwRes.data)
       setHubs(devRes.data)
+      setSensors(senRes.data)
       hubMacsRef.current = devRes.data.map((d) => d.mac)
 
       // Seed from stored state so a refresh mid-update still shows progress.
@@ -62,6 +65,15 @@ export default function Firmware() {
 
     load()
 
+    function onSensorOtaStatus(data) {
+      setSensors((prev) => prev.map((x) =>
+        x.mac === data.sensor_mac
+          ? { ...x, ota_state: data.state, ota_pct: data.pct, ota_error: data.error }
+          : x
+      ))
+      if (data.state === 'installed') load()
+    }
+
     function onOtaStatus(data) {
       setOtaState((prev) => ({ ...prev, [data.hub_mac]: { ...data, updatedAt: new Date().toISOString() } }))
       // A confirmed update changes the hub's reported version — refresh the list.
@@ -75,9 +87,11 @@ export default function Firmware() {
     }
 
     socket.on('otaStatus', onOtaStatus)
+    socket.on('sensorOtaStatus', onSensorOtaStatus)
     socket.on('connect', onConnect)
     return () => {
       socket.off('otaStatus', onOtaStatus)
+      socket.off('sensorOtaStatus', onSensorOtaStatus)
       socket.off('connect', onConnect)
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -124,6 +138,27 @@ export default function Firmware() {
       setNotice(`Staged ${imageVersion} on ${hubMac}`)
       setOtaState((prev) => ({ ...prev, [hubMac]: { state: 'staged', version: imageVersion, pct: 0,
                                                     updatedAt: new Date().toISOString() } }))
+    } catch (err) {
+      setError(err.response?.data?.error || 'Failed to stage')
+    }
+  }
+
+  async function handleStageSensor(imageId, sensorMac, sensorName, imageVersion) {
+    setError(''); setNotice('')
+    if (!window.confirm(
+      `Send ${imageVersion} to ${sensorName || sensorMac}?\n\n` +
+      'The hub will hold it until someone presses the button on the node — a ' +
+      'sleeping sensor only listens for an offer on a button-press wake.\n\n' +
+      'The transfer takes a few seconds. If the new firmware cannot deliver a ' +
+      'reading, the sensor rolls itself back.'
+    )) return
+
+    try {
+      const res = await api.post(`/firmware/${imageId}/stage`, { sensor_mac: sensorMac })
+      setNotice(res.data.needs_button
+        ? `Staged ${imageVersion} — press the button on ${sensorName || sensorMac} to install`
+        : `Staged ${imageVersion} on ${sensorMac}`)
+      load()
     } catch (err) {
       setError(err.response?.data?.error || 'Failed to stage')
     }
@@ -232,7 +267,42 @@ export default function Firmware() {
             </div>
 
             <div style={{ display: 'flex', flexDirection: 'column', gap: 6, minWidth: 260 }}>
-              {hubs.map((hub) => {
+              {img.device_kind === 'sensor' && (
+                <span className="form-hint" style={{ marginBottom: 2 }}>
+                  Staged now, installed when the node's button is pressed.
+                </span>
+              )}
+              {img.device_kind === 'sensor' && sensors.length === 0 && (
+                <span className="device-meta">No sensors paired.</span>
+              )}
+
+              {img.device_kind === 'sensor' && sensors.map((sen) => {
+                const busy = sen.ota_state &&
+                  !['installed', 'failed', 'declined'].includes(sen.ota_state)
+                const current = sen.fw_version
+                return (
+                  <div key={sen.mac} style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                    <span className="device-meta" style={{ flex: 1 }}>
+                      {sen.name || sen.mac}
+                      {current ? ` · v${current}` : ' · version unknown'}
+                    </span>
+                    {current === img.version ? (
+                      <span className="chip">installed</span>
+                    ) : (
+                      <button
+                        className="btn btn-sm btn-primary"
+                        disabled={busy}
+                        title="Delivered when the button on the node is pressed"
+                        onClick={() => handleStageSensor(img.id, sen.mac, sen.name, img.version)}
+                      >
+                        {busy ? `${sen.ota_state}${sen.ota_pct != null ? ` ${sen.ota_pct}%` : ''}` : 'Send'}
+                      </button>
+                    )}
+                  </div>
+                )
+              })}
+
+              {img.device_kind === 'hub' && hubs.map((hub) => {
                 const ota = otaState[hub.mac]
                 // OTA state belongs to the hub, but a hub row is rendered inside
                 // every image card. Only the card for the version actually being

@@ -31,6 +31,10 @@ struct log_message;
 void handleLogChunk(const uint8_t* mac, const log_message* msg);
 int  findSensor(const uint8_t* mac);
 void publishOtaStatus(const char* state, int pct, const char* err);
+void offerSensorOta(const uint8_t* mac);
+void streamImageToSensor(const uint8_t* mac, uint32_t imageSize, uint16_t chunkSize);
+void publishSensorOtaStatus(const char* state, int pct, const char* err);
+static bool hexToDigest(const char* hex, uint8_t* out);
 void saveSensorConfig(int idx);
 void loadSensorConfig(int idx);
 void publishConfigState(int idx);
@@ -136,6 +140,32 @@ static char  otaRejectedVersion[16] = "";
 #define OTA_HTTP_TIMEOUT_MS 20000
 #define OTA_BUF_SIZE        1024
 
+// --- SENSOR OTA RELAY STATE ---
+// Declared here because the MQTT callback stages a transfer long before the
+// relay functions further down are defined.
+static bool     sOtaPending = false;
+static uint8_t  sOtaMac[6];
+static char     sOtaVersion[16] = "";
+static char     sOtaUrl[192]    = "";
+static char     sOtaSha[65]     = "";
+static char     sOtaSigB64[160] = "";
+static bool     sOtaRunning = false;
+
+// Set by the ESP-NOW callback when a sensor reports in; acted on from loop().
+static volatile bool otaOfferWanted = false;
+static uint8_t       otaOfferMac[6];
+
+// Set from the ESP-NOW callback while a transfer is in flight.
+static volatile bool     sOtaReqReady   = false;
+static volatile uint8_t  sOtaReqAccept  = 0;
+static volatile uint8_t  sOtaReqReason  = 0;
+static volatile bool     sOtaAckReady   = false;
+static volatile uint8_t  sOtaAckStatus  = 0;
+static volatile uint16_t sOtaAckNext    = 0;
+static volatile bool     sOtaDoneReady  = false;
+static volatile uint8_t  sOtaDoneResult = 0;
+
+
 // --- XIAO ESP32-C6 PIN DEFINITIONS ---
 #define TRIGGER_PIN 9   // BOOT button
 #define LED_PIN     15  // Built-in LED
@@ -145,6 +175,72 @@ static char  otaRejectedVersion[16] = "";
 #define MSG_DATA    2
 #define MSG_LOG     3   // Sensor → hub remote log (chunked text)
 #define MSG_CONFIG  4   // Hub → sensor: new configuration
+
+// --- SENSOR OTA (hub -> sensor firmware update) ---
+// Frames are sized by the hub, which knows whether ESP-NOW v2 (1470 B) is
+// available; the sensor handles whatever length arrives. The offer itself is
+// kept under the v1 250-byte limit because it is the first contact, before
+// either side knows what the other supports.
+#define MSG_OTA_OFFER 5   // hub -> sensor: here is an image
+#define MSG_OTA_REQ   6   // sensor -> hub: accept or decline
+#define MSG_OTA_DATA  7   // hub -> sensor: one chunk
+#define MSG_OTA_ACK   8   // sensor -> hub: next sequence expected
+#define MSG_OTA_DONE  9   // sensor -> hub: final result
+
+#define OTA_MAX_CHUNK      1024   // largest payload the sensor will accept
+#define OTA_DATA_HDR          4   // msgType + seq(2) + reserved
+#define OTA_WINDOW_TIMEOUT_MS 4000
+#define OTA_TOTAL_TIMEOUT_MS  120000
+
+// Decline reasons, reported to the hub. Anything non-zero means the transfer
+// never started.
+#define OTA_DECLINE_VERSION   1
+#define OTA_DECLINE_BATTERY   2
+#define OTA_DECLINE_PARTITION 3
+#define OTA_DECLINE_SIZE      4
+#define OTA_DECLINE_BUSY      5
+
+#define OTA_RESULT_OK          0
+#define OTA_RESULT_HASH        1
+#define OTA_RESULT_SIGNATURE   2
+#define OTA_RESULT_WRITE       3
+#define OTA_RESULT_WRONG_IMAGE 4
+#define OTA_RESULT_TIMEOUT     5
+
+// A brownout midway is survivable -- the old image still boots -- but it wastes
+// a full transfer and the operator's time, so refuse up front instead.
+#define OTA_MIN_BATTERY_PCT 40
+
+typedef struct __attribute__((packed)) {
+  uint8_t  msgType;
+  uint8_t  schema;
+  uint16_t chunkSize;
+  uint32_t imageSize;
+  uint8_t  sha256[32];
+  uint8_t  sigLen;
+  uint8_t  sig[72];
+  char     version[16];
+} ota_offer_message;
+
+typedef struct __attribute__((packed)) {
+  uint8_t msgType;
+  uint8_t accept;
+  uint8_t reason;
+  uint8_t pad;
+} ota_req_message;
+
+typedef struct __attribute__((packed)) {
+  uint8_t  msgType;
+  uint8_t  status;     // 0 = in order, 1 = retransmit from nextSeq
+  uint16_t nextSeq;
+} ota_ack_message;
+
+typedef struct __attribute__((packed)) {
+  uint8_t msgType;
+  uint8_t result;
+  uint8_t pad[2];
+} ota_done_message;
+
 
 // --- REMOTE LOG STORAGE ---
 #define LOG_BUF_SIZE     1024  // bytes of log retained per sensor (latest only)
@@ -378,6 +474,8 @@ char topicOtaCmd[72];       // Cloud → Hub: OTA command (stage an image)
 char topicOtaStatus[72];    // Hub → Cloud: OTA progress / result
 char topicCfgSet[72];       // Cloud → Hub: desired sensor config
 char topicCfgState[72];     // Hub → Cloud: config applied / pending
+char topicSensorOta[80];    // Cloud → Hub: stage an image on a sensor
+char topicSensorOtaStatus[80]; // Hub → Cloud: sensor OTA progress
 
 bool cloudConfigured = false;  // true when MQTT credentials exist in NVS
 int  lastMqttState   = 0;     // PubSubClient state after last connectCloud() attempt
@@ -1092,12 +1190,49 @@ void buildTopics() {
   snprintf(topicOtaStatus,   sizeof(topicOtaStatus),   "sensors/%s/ota/status",       hubMacStr);
   snprintf(topicCfgSet,      sizeof(topicCfgSet),      "sensors/%s/config/set",       hubMacStr);
   snprintf(topicCfgState,    sizeof(topicCfgState),    "sensors/%s/config/state",     hubMacStr);
+  snprintf(topicSensorOta,       sizeof(topicSensorOta),       "sensors/%s/sensor-ota/command", hubMacStr);
+  snprintf(topicSensorOtaStatus, sizeof(topicSensorOtaStatus), "sensors/%s/sensor-ota/status",  hubMacStr);
   Serial.printf("[MQTT] Hub MAC: %s\n", hubMacStr);
 }
 
 // Called by PubSubClient when a subscribed message arrives.
 void mqttCallback(char* topic, byte* payload, unsigned int length) {
   String json = String((char*)payload, length);
+
+  // ── Sensor firmware from cloud ────────────────────────────────────────────
+  if (strcmp(topic, topicSensorOta) == 0) {
+    if (length == 0 || json.indexOf('{') < 0) {
+      Serial.println("[SOTA] Retained command cleared");
+      return;
+    }
+    String macStr = jsonGetStr(json, "sensor_mac");
+    String url    = jsonGetStr(json, "url");
+    String ver    = jsonGetStr(json, "version");
+    String sha    = jsonGetStr(json, "sha256");
+    String sig    = jsonGetStr(json, "sig");
+    uint8_t mac[6];
+    if (macStr.length() != 17 ||
+        sscanf(macStr.c_str(), "%hhX:%hhX:%hhX:%hhX:%hhX:%hhX",
+               &mac[0], &mac[1], &mac[2], &mac[3], &mac[4], &mac[5]) != 6 ||
+        url.isEmpty() || sha.isEmpty() || sig.isEmpty()) {
+      Serial.println("[SOTA] Incomplete sensor OTA command");
+      return;
+    }
+    if (sOtaRunning) {
+      Serial.println("[SOTA] Transfer already in progress");
+      return;
+    }
+    memcpy(sOtaMac, mac, 6);
+    url.toCharArray(sOtaUrl,     sizeof(sOtaUrl));
+    ver.toCharArray(sOtaVersion, sizeof(sOtaVersion));
+    sha.toCharArray(sOtaSha,     sizeof(sOtaSha));
+    sig.toCharArray(sOtaSigB64,  sizeof(sOtaSigB64));
+    sOtaPending = true;
+    Serial.printf("[SOTA] Staged %s for %s - waiting for a button press on the node\n",
+                  sOtaVersion, macStr.c_str());
+    publishSensorOtaStatus("staged", 0, nullptr);
+    return;
+  }
 
   // ── Sensor config from cloud ──────────────────────────────────────────────
   if (strcmp(topic, topicCfgSet) == 0) {
@@ -1636,6 +1771,7 @@ bool connectCloud() {
   mqttClient.subscribe(topicPairEnable);
   mqttClient.subscribe(topicOtaCmd);
   mqttClient.subscribe(topicCfgSet);
+  mqttClient.subscribe(topicSensorOta);
 
   // Publish retained online status so the dashboard sees us immediately.
   // fw is what the cloud compares against the firmware registry to decide
@@ -2214,6 +2350,238 @@ void pushConfigIfPending(int idx, const uint8_t* mac) {
   }
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// SENSOR OTA RELAY
+// ─────────────────────────────────────────────────────────────────────────────
+//
+// The hub cannot store a sensor image: after two 1920 KiB app slots its flash
+// has 128 KiB of SPIFFS against a ~1 MB image. So it streams -- pulling ranges
+// over HTTP and pushing them straight out over ESP-NOW, holding only one chunk
+// in RAM.
+//
+// One sensor at a time. The transfer blocks the hub for a few seconds; readings
+// arriving meanwhile are handled by the ESP-NOW callback and buffered as usual.
+
+static const char *sensorOtaResultName(uint8_t r) {
+  switch (r) {
+    case 0: return "ok";
+    case 1: return "sha256 mismatch";
+    case 2: return "signature invalid";
+    case 3: return "flash write failed";
+    case 4: return "not a valid image";
+    case 5: return "timed out";
+    default: return "unknown";
+  }
+}
+
+static const char *sensorOtaDeclineName(uint8_t r) {
+  switch (r) {
+    case 1: return "already on this version";
+    case 2: return "battery too low";
+    case 3: return "no usable partition";
+    case 4: return "image too large";
+    case 5: return "previous image not confirmed";
+    default: return "declined";
+  }
+}
+
+void publishSensorOtaStatus(const char *state, int pct, const char *err) {
+  if (!cloudConfigured || !mqttClient.connected()) return;
+  char mac[18];
+  snprintf(mac, sizeof(mac), "%02X:%02X:%02X:%02X:%02X:%02X",
+           sOtaMac[0], sOtaMac[1], sOtaMac[2], sOtaMac[3], sOtaMac[4], sOtaMac[5]);
+  char payload[256];
+  if (err && *err) {
+    snprintf(payload, sizeof(payload),
+      "{\"sensor_mac\":\"%s\",\"state\":\"%s\",\"version\":\"%s\",\"pct\":%d,\"error\":\"%s\"}",
+      mac, state, sOtaVersion, pct, err);
+  } else {
+    snprintf(payload, sizeof(payload),
+      "{\"sensor_mac\":\"%s\",\"state\":\"%s\",\"version\":\"%s\",\"pct\":%d}",
+      mac, state, sOtaVersion, pct);
+  }
+  mqttClient.publish(topicSensorOtaStatus, payload);
+  mqttClient.loop();
+}
+
+// Offer the pending image to a sensor that has just reported in. Sent on every
+// contact: the sensor only listens after a button-press wake, so an offer sent
+// on a timer wake is simply ignored. That keeps the hub from needing to know
+// which kind of wake it was.
+void offerSensorOta(const uint8_t *mac) {
+  if (!sOtaPending || sOtaRunning) return;
+  if (memcmp(mac, sOtaMac, 6) != 0) return;
+
+  ota_offer_message offer = {};
+  offer.msgType = MSG_OTA_OFFER;
+  offer.schema  = 1;
+
+  uint32_t nowVer = 0;
+  esp_now_get_version(&nowVer);
+  offer.chunkSize = (nowVer >= 2) ? 1024 : 240;
+
+  if (!hexToDigest(sOtaSha, offer.sha256)) return;
+
+  size_t sigLen = 0;
+  if (mbedtls_base64_decode(offer.sig, sizeof(offer.sig), &sigLen,
+                            (const unsigned char *)sOtaSigB64, strlen(sOtaSigB64)) != 0) {
+    Serial.println("[SOTA] Signature is not valid base64");
+    return;
+  }
+  offer.sigLen = (uint8_t)sigLen;
+  strncpy(offer.version, sOtaVersion, sizeof(offer.version));
+
+  // The image size is not known until the first range request, so ask the
+  // server for it before offering -- the sensor needs it to size the transfer.
+  WiFiClient net;
+  HTTPClient http;
+  http.setTimeout(OTA_HTTP_TIMEOUT_MS);
+  http.setConnectTimeout(OTA_HTTP_TIMEOUT_MS);
+  if (!http.begin(net, sOtaUrl)) return;
+  int code = http.GET();
+  int total = http.getSize();
+  http.end();
+  if (code != HTTP_CODE_OK || total <= 0) {
+    Serial.printf("[SOTA] Cannot size image (http %d)\n", code);
+    publishSensorOtaStatus("failed", 0, "image unreachable");
+    return;
+  }
+  offer.imageSize = (uint32_t)total;
+
+  sOtaReqReady = false;
+  esp_now_send(mac, (uint8_t *)&offer, sizeof(offer));
+  Serial.printf("[SOTA] Offered %s (%d bytes, chunk %u)\n",
+                sOtaVersion, total, offer.chunkSize);
+
+  // The sensor answers within milliseconds if it is listening. If it is not --
+  // an ordinary timer wake -- nothing comes back and the offer lapses.
+  unsigned long start = millis();
+  while (!sOtaReqReady && millis() - start < 500) delay(2);
+  if (!sOtaReqReady) return;
+
+  if (!sOtaReqAccept) {
+    const char *why = sensorOtaDeclineName(sOtaReqReason);
+    Serial.printf("[SOTA] Sensor declined: %s\n", why);
+    publishSensorOtaStatus("declined", 0, why);
+    if (sOtaReqReason == 1) sOtaPending = false;   // already has it; stop offering
+    return;
+  }
+
+  sOtaRunning = true;
+  streamImageToSensor(mac, offer.imageSize, offer.chunkSize);
+  sOtaRunning = false;
+}
+
+// Pump the image out chunk by chunk. Rewinding is done with a fresh HTTP range
+// request rather than by buffering: the hub has nowhere to keep a megabyte, and
+// at close range a rewind is rare enough that reopening costs less than the RAM
+// would.
+void streamImageToSensor(const uint8_t *mac, uint32_t imageSize, uint16_t chunkSize) {
+  uint32_t expected = (imageSize + chunkSize - 1) / chunkSize;
+  uint32_t seq = 0;
+  uint8_t  frame[4 + OTA_MAX_CHUNK];
+  unsigned long started = millis();
+  int lastPct = -1;
+
+  publishSensorOtaStatus("sending", 0, nullptr);
+
+  while (seq < expected) {
+    if (millis() - started > 180000UL) {
+      publishSensorOtaStatus("failed", lastPct < 0 ? 0 : lastPct, "timed out");
+      return;
+    }
+
+    // Open a range request at the current position. One connection serves a
+    // whole window; it is reopened only when the sensor asks us to go back.
+    WiFiClient net;
+    HTTPClient http;
+    http.setTimeout(OTA_HTTP_TIMEOUT_MS);
+    http.setConnectTimeout(OTA_HTTP_TIMEOUT_MS);
+    if (!http.begin(net, sOtaUrl)) {
+      publishSensorOtaStatus("failed", 0, "bad url");
+      return;
+    }
+    char range[48];
+    snprintf(range, sizeof(range), "bytes=%u-", (unsigned)(seq * chunkSize));
+    http.addHeader("Range", range);
+    int code = http.GET();
+    if (code != HTTP_CODE_OK && code != HTTP_CODE_PARTIAL_CONTENT) {
+      char err[40];
+      snprintf(err, sizeof(err), "http %d", code);
+      publishSensorOtaStatus("failed", 0, err);
+      http.end();
+      return;
+    }
+
+    WiFiClient *stream = http.getStreamPtr();
+    bool reopen = false;
+
+    while (seq < expected && !reopen) {
+      uint32_t offset = seq * chunkSize;
+      uint16_t want   = (uint16_t)((imageSize - offset > chunkSize) ? chunkSize
+                                                                    : (imageSize - offset));
+      int got = stream->readBytes(frame + 4, want);
+      if (got != (int)want) { reopen = true; break; }   // stream stalled - reopen
+
+      frame[0] = MSG_OTA_DATA;
+      uint16_t s16 = (uint16_t)seq;
+      memcpy(frame + 1, &s16, 2);
+      frame[3] = 0;
+
+      if (esp_now_send(mac, frame, 4 + want) != ESP_OK) {
+        delay(5);
+        continue;   // radio queue full - the sensor has not moved on
+      }
+      seq++;
+
+      // The sensor acknowledges every eight chunks. Waiting for it is what
+      // keeps the two sides in step; without it the radio queue would simply
+      // overrun a node busy writing flash.
+      if ((seq % 8) == 0 || seq == expected) {
+        sOtaAckReady = false;
+        unsigned long waited = millis();
+        while (!sOtaAckReady && millis() - waited < 4000) delay(2);
+
+        if (!sOtaAckReady) { reopen = true; break; }   // silence - resend window
+
+        if (sOtaAckStatus != 0 || sOtaAckNext != (uint16_t)seq) {
+          seq = sOtaAckNext;      // sensor wants an earlier chunk
+          reopen = true;
+          break;
+        }
+
+        int pct = (int)((uint64_t)seq * 100 / expected);
+        if (pct >= lastPct + 10) {
+          lastPct = pct;
+          Serial.printf("[SOTA] %d%%\n", pct);
+          publishSensorOtaStatus("sending", pct, nullptr);
+        }
+      }
+    }
+    http.end();
+  }
+
+  // The sensor verifies and reports before it reboots.
+  sOtaDoneReady = false;
+  unsigned long waited = millis();
+  while (!sOtaDoneReady && millis() - waited < 20000) delay(5);
+
+  if (!sOtaDoneReady) {
+    publishSensorOtaStatus("failed", 100, "no result from sensor");
+    return;
+  }
+  if (sOtaDoneResult == 0) {
+    Serial.println("[SOTA] Sensor accepted the image and is rebooting");
+    publishSensorOtaStatus("installed", 100, nullptr);
+    sOtaPending = false;
+  } else {
+    const char *why = sensorOtaResultName(sOtaDoneResult);
+    Serial.printf("[SOTA] Sensor rejected the image: %s\n", why);
+    publishSensorOtaStatus("failed", 100, why);
+    sOtaPending = false;   // it will fail identically next time
+  }
+}
+
 // Complete an ESP-NOW pairing handshake (used by both auto-accept and cloud-approve paths).
 void completePairing(const uint8_t* mac) {
   esp_now_peer_info_t tempPeer = {};
@@ -2711,6 +3079,29 @@ void OnDataRecv(const esp_now_recv_info_t* esp_now_info,
   if (len < 1) return;
   uint8_t msgType = incomingDataBytes[0];
 
+  // Sensor OTA replies. Short frames handled before the struct_message path,
+  // which would otherwise reject them on length.
+  if (msgType == MSG_OTA_REQ && len >= (int)sizeof(ota_req_message)) {
+    const ota_req_message* r = (const ota_req_message*)incomingDataBytes;
+    sOtaReqAccept = r->accept;
+    sOtaReqReason = r->reason;
+    sOtaReqReady  = true;
+    return;
+  }
+  if (msgType == MSG_OTA_ACK && len >= (int)sizeof(ota_ack_message)) {
+    const ota_ack_message* a2 = (const ota_ack_message*)incomingDataBytes;
+    sOtaAckStatus = a2->status;
+    sOtaAckNext   = a2->nextSeq;
+    sOtaAckReady  = true;
+    return;
+  }
+  if (msgType == MSG_OTA_DONE && len >= (int)sizeof(ota_done_message)) {
+    const ota_done_message* d = (const ota_done_message*)incomingDataBytes;
+    sOtaDoneResult = d->result;
+    sOtaDoneReady  = true;
+    return;
+  }
+
   // MSG_LOG packets are larger than struct_message — dispatch before memcpy.
   if (msgType == MSG_LOG) {
     if (len < (int)sizeof(log_message)) return;
@@ -2821,6 +3212,11 @@ void OnDataRecv(const esp_now_recv_info_t* esp_now_info,
     // The sensor is awake and listening only right now, so any pending config
     // has to go out on this frame.
     pushConfigIfPending(index, esp_now_info->src_addr);
+
+    // Firmware is offered on the same contact. The node only listens after a
+    // button press, so on an ordinary timer wake this simply lapses.
+    otaOfferWanted = true;
+    memcpy(otaOfferMac, esp_now_info->src_addr, 6);
 
     updateSensor(index, incomingData.temp, incomingData.hum,
                  incomingRSSI, incomingData.battery);
@@ -3085,6 +3481,13 @@ void loop() {
   if (otaRequested && !otaInProgress) {
     otaRequested = false;
     performOtaUpdate();
+  }
+
+  // A sensor transfer blocks for seconds, so it runs here rather than in the
+  // ESP-NOW callback that learned the node was awake.
+  if (otaOfferWanted) {
+    otaOfferWanted = false;
+    offerSensorOta(otaOfferMac);
   }
 
   // Flash write kept out of the ESP-NOW callback: an NVS commit there would

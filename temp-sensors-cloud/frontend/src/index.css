@@ -1618,6 +1618,9 @@ button.perm-pill:hover {
   margin: 4px 0 10px;
 }
 
+/* Current reading shown alongside the breaching one, visibly secondary. */
+.rail-alarm-now { opacity: 0.7; }
+
 .rail-alarm-actions {
   display: flex;
   align-items: center;

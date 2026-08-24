@@ -5,6 +5,9 @@
 #include <Preferences.h>
 #include <esp_wifi.h>
 #include <esp_sleep.h>   // Explicit include needed on C6
+#include <esp_ota_ops.h>   // OTA partition write + rollback state
+#include <mbedtls/md.h>      // SHA-256 over the received image
+#include <mbedtls/pk.h>      // ECDSA P-256 signature verification
 
 // --- BOARD REVISION ---
 // Set by platformio.ini build_flags. Controls hardware-specific bits like
@@ -105,7 +108,7 @@
 // release; the cloud uses it to tell which nodes still need updating.
 #define FW_MAJOR 1
 #define FW_MINOR 1
-#define FW_PATCH 4
+#define FW_PATCH 5
 
 // --- SLEEP SETTINGS ---
 #define SLEEP_TIME 900  // Seconds — compiled default, overridden by cloud config
@@ -236,6 +239,72 @@ RTC_DATA_ATTR bool     in_hibernate_mode        = false;
 #define MSG_LOG     3
 #define MSG_CONFIG  4   // Hub -> sensor: new configuration
 
+// --- SENSOR OTA (hub -> sensor firmware update) ---
+// Frames are sized by the hub, which knows whether ESP-NOW v2 (1470 B) is
+// available; the sensor handles whatever length arrives. The offer itself is
+// kept under the v1 250-byte limit because it is the first contact, before
+// either side knows what the other supports.
+#define MSG_OTA_OFFER 5   // hub -> sensor: here is an image
+#define MSG_OTA_REQ   6   // sensor -> hub: accept or decline
+#define MSG_OTA_DATA  7   // hub -> sensor: one chunk
+#define MSG_OTA_ACK   8   // sensor -> hub: next sequence expected
+#define MSG_OTA_DONE  9   // sensor -> hub: final result
+
+#define OTA_MAX_CHUNK      1024   // largest payload the sensor will accept
+#define OTA_DATA_HDR          4   // msgType + seq(2) + reserved
+#define OTA_WINDOW_TIMEOUT_MS 4000
+#define OTA_TOTAL_TIMEOUT_MS  120000
+
+// Decline reasons, reported to the hub. Anything non-zero means the transfer
+// never started.
+#define OTA_DECLINE_VERSION   1
+#define OTA_DECLINE_BATTERY   2
+#define OTA_DECLINE_PARTITION 3
+#define OTA_DECLINE_SIZE      4
+#define OTA_DECLINE_BUSY      5
+
+#define OTA_RESULT_OK          0
+#define OTA_RESULT_HASH        1
+#define OTA_RESULT_SIGNATURE   2
+#define OTA_RESULT_WRITE       3
+#define OTA_RESULT_WRONG_IMAGE 4
+#define OTA_RESULT_TIMEOUT     5
+
+// A brownout midway is survivable -- the old image still boots -- but it wastes
+// a full transfer and the operator's time, so refuse up front instead.
+#define OTA_MIN_BATTERY_PCT 40
+
+typedef struct __attribute__((packed)) {
+  uint8_t  msgType;
+  uint8_t  schema;
+  uint16_t chunkSize;
+  uint32_t imageSize;
+  uint8_t  sha256[32];
+  uint8_t  sigLen;
+  uint8_t  sig[72];
+  char     version[16];
+} ota_offer_message;
+
+typedef struct __attribute__((packed)) {
+  uint8_t msgType;
+  uint8_t accept;
+  uint8_t reason;
+  uint8_t pad;
+} ota_req_message;
+
+typedef struct __attribute__((packed)) {
+  uint8_t  msgType;
+  uint8_t  status;     // 0 = in order, 1 = retransmit from nextSeq
+  uint16_t nextSeq;
+} ota_ack_message;
+
+typedef struct __attribute__((packed)) {
+  uint8_t msgType;
+  uint8_t result;
+  uint8_t pad[2];
+} ota_done_message;
+
+
 
 // --- ESP-NOW ENCRYPTION ---
 // IMPORTANT: These keys must be identical on all devices (hub + all sensors)
@@ -334,6 +403,21 @@ static float g_bat_v = 3.3f; // Set by getBatteryInfo(); used in readNTC() for V
 // 0 means no config has ever been applied and the compiled defaults are in use.
 // Reported to the hub every cycle so the dashboard can tell whether a pending
 // change has actually landed.
+// Public half of the firmware signing key, identical to the one the hub
+// carries. It can verify a signature and never create one, so it is safe in
+// the image and safe to extract from a device.
+static const uint8_t FW_PUBLIC_KEY[] = {
+  0x30, 0x59, 0x30, 0x13, 0x06, 0x07, 0x2A, 0x86, 0x48, 0xCE, 0x3D, 0x02,
+  0x01, 0x06, 0x08, 0x2A, 0x86, 0x48, 0xCE, 0x3D, 0x03, 0x01, 0x07, 0x03,
+  0x42, 0x00, 0x04, 0xDB, 0x0E, 0x6F, 0x8E, 0x68, 0x68, 0x91, 0x13, 0x37,
+  0x01, 0xC0, 0xDF, 0x60, 0x13, 0x37, 0xCC, 0x34, 0xF4, 0xE5, 0xFD, 0xE2,
+  0x56, 0xCB, 0x2A, 0x2D, 0xE8, 0xF8, 0x21, 0xAF, 0x8B, 0xB5, 0x2C, 0xA0,
+  0x5F, 0x76, 0x14, 0x52, 0xE3, 0x31, 0xB3, 0x26, 0x15, 0x44, 0xFB, 0xF4,
+  0xA5, 0x98, 0x17, 0x13, 0xEE, 0xD2, 0x0A, 0x72, 0xB1, 0x71, 0xF1, 0x1F,
+  0x20, 0x60, 0x01, 0x69, 0x65, 0xDC, 0x2C,
+};
+
+
 static uint16_t g_cfg_ver = 0;
 
 // Live configuration. Compiled defaults until the hub pushes something.
@@ -444,6 +528,268 @@ void waitForConfig() {
   }
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// SENSOR OTA RECEIVER
+// ─────────────────────────────────────────────────────────────────────────────
+//
+// The node is reachable only for the brief window after it transmits, so an
+// update is offered then and runs to completion in one go. There is no resume
+// across sleep cycles: at close range the transfer takes seconds, and
+// restarting it costs less than the state needed to resume.
+//
+// Offered on a button-press wake only. A timer wake never listens for one, so
+// the normal duty cycle is untouched and this costs nothing until asked for.
+
+static uint8_t           otaRxBuf[OTA_MAX_CHUNK];
+static volatile uint16_t otaRxLen   = 0;
+static volatile bool     otaRxReady = false;
+static volatile bool     otaActive  = false;
+static volatile bool     otaOffered = false;
+static ota_offer_message otaOffer;
+static uint32_t          otaRxSeq   = 0;
+static uint32_t          otaRxBytes = 0;
+
+// App-level rollback, mirroring the hub. The bootloader on this hardware does
+// not arm its own -- images boot straight to VALID -- so an image that cannot
+// deliver a reading has to be backed out by the firmware itself.
+#define OTA_MAX_BOOT_TRIES 3
+static bool otaUnconfirmed = false;
+
+void otaLoadState() {
+  Preferences p;
+  p.begin("otastate", false);
+  bool    unconf = p.getBool("unconf", false);
+  uint8_t tries  = p.getUChar("tries", 0);
+
+  if (unconf) {
+    tries++;
+    ulog("[OTA] Unconfirmed image, boot attempt %u of %u\n", tries, OTA_MAX_BOOT_TRIES);
+
+    if (tries > OTA_MAX_BOOT_TRIES) {
+      const esp_partition_t *prev = esp_ota_get_next_update_partition(NULL);
+      p.putBool("unconf", false);
+      p.putUChar("tries", 0);
+      p.end();
+      if (prev && esp_ota_set_boot_partition(prev) == ESP_OK) {
+        ulog("[OTA] Giving up on this image - reverting to %s\n", prev->label);
+      } else {
+        ulog("[OTA] Revert failed - staying on the current image\n");
+      }
+      delay(200);
+      ESP.restart();
+    }
+    p.putUChar("tries", tries);
+    otaUnconfirmed = true;
+  }
+  p.end();
+}
+
+// Called once a reading has actually reached the hub. Delivering a reading is
+// the whole job of this firmware, so it is the right bar for calling an image
+// good -- the same bar the hub uses when it reaches the cloud.
+void otaConfirmImage() {
+  if (!otaUnconfirmed) return;
+  otaUnconfirmed = false;
+  Preferences p;
+  p.begin("otastate", false);
+  p.putBool("unconf", false);
+  p.putUChar("tries", 0);
+  p.end();
+  esp_ota_mark_app_valid_cancel_rollback();
+  ulog("[OTA] Image delivered a reading - rollback disarmed\n");
+}
+
+static bool otaVerifySignature(const uint8_t *digest, const uint8_t *sig, size_t sigLen) {
+  mbedtls_pk_context pk;
+  mbedtls_pk_init(&pk);
+  int rc = mbedtls_pk_parse_public_key(&pk, FW_PUBLIC_KEY, sizeof(FW_PUBLIC_KEY));
+  if (rc != 0) {
+    ulog("[OTA] Public key parse failed (-0x%04X)\n", -rc);
+    mbedtls_pk_free(&pk);
+    return false;
+  }
+  rc = mbedtls_pk_verify(&pk, MBEDTLS_MD_SHA256, digest, 32, sig, sigLen);
+  mbedtls_pk_free(&pk);
+  if (rc != 0) {
+    ulog("[OTA] Signature verification FAILED (-0x%04X)\n", -rc);
+    return false;
+  }
+  return true;
+}
+
+// Confirm the incoming bytes really are an ESP-IDF image before writing
+// further. The app descriptor magic sits at a fixed offset in every one, so a
+// wrong file is caught on the first chunk rather than after a full transfer.
+static bool otaImageLooksRight(const uint8_t *head, size_t len) {
+  if (len < 0x30) return true;
+  uint32_t magic;
+  memcpy(&magic, head + 0x20, 4);
+  return magic == 0xABCD5432;
+}
+
+static void otaSendReq(uint8_t accept, uint8_t reason) {
+  ota_req_message m = { MSG_OTA_REQ, accept, reason, 0 };
+  esp_now_send(hubMac, (uint8_t *)&m, sizeof(m));
+}
+
+static void otaSendAck(uint8_t status, uint16_t nextSeq) {
+  ota_ack_message m = { MSG_OTA_ACK, status, nextSeq };
+  esp_now_send(hubMac, (uint8_t *)&m, sizeof(m));
+}
+
+static void otaSendDone(uint8_t result) {
+  ota_done_message m = { MSG_OTA_DONE, result, {0, 0} };
+  esp_now_send(hubMac, (uint8_t *)&m, sizeof(m));
+  delay(60);
+}
+
+// Receive an offered image. Blocks until it finishes, fails or times out; on
+// success it does not return, because the node reboots into the new image.
+static void otaRunTransfer(int batteryPct) {
+  const ota_offer_message *o = &otaOffer;
+
+  char ver[17] = {0};
+  memcpy(ver, o->version, 16);
+  ulog("[OTA] Offered %s, %u bytes, chunk %u\n", ver, (unsigned)o->imageSize, o->chunkSize);
+
+  char myVer[16];
+  snprintf(myVer, sizeof(myVer), "%d.%d.%d", FW_MAJOR, FW_MINOR, FW_PATCH);
+  if (strcmp(ver, myVer) == 0) {
+    ulog("[OTA] Already running %s\n", myVer);
+    otaSendReq(0, OTA_DECLINE_VERSION);
+    return;
+  }
+  if (otaUnconfirmed) {
+    otaSendReq(0, OTA_DECLINE_BUSY);
+    return;
+  }
+  if (batteryPct != 255 && batteryPct < OTA_MIN_BATTERY_PCT) {
+    ulog("[OTA] Battery %d%% too low to update\n", batteryPct);
+    otaSendReq(0, OTA_DECLINE_BATTERY);
+    return;
+  }
+  if (o->chunkSize == 0 || o->chunkSize > OTA_MAX_CHUNK) {
+    otaSendReq(0, OTA_DECLINE_SIZE);
+    return;
+  }
+
+  const esp_partition_t *target = esp_ota_get_next_update_partition(NULL);
+  if (!target)                     { otaSendReq(0, OTA_DECLINE_PARTITION); return; }
+  if (o->imageSize > target->size) { otaSendReq(0, OTA_DECLINE_SIZE);      return; }
+
+  esp_ota_handle_t handle = 0;
+  if (esp_ota_begin(target, o->imageSize, &handle) != ESP_OK) {
+    otaSendReq(0, OTA_DECLINE_PARTITION);
+    return;
+  }
+
+  mbedtls_md_context_t md;
+  mbedtls_md_init(&md);
+  mbedtls_md_setup(&md, mbedtls_md_info_from_type(MBEDTLS_MD_SHA256), 0);
+  mbedtls_md_starts(&md);
+
+  otaRxSeq = 0; otaRxBytes = 0; otaRxLen = 0; otaRxReady = false;
+  otaActive = true;
+  otaSendReq(1, 0);
+
+  uint32_t      expected    = (o->imageSize + o->chunkSize - 1) / o->chunkSize;
+  unsigned long lastRx      = millis();
+  unsigned long start       = millis();
+  uint8_t       result      = OTA_RESULT_TIMEOUT;
+  bool          headChecked = false;
+
+  while (otaRxSeq < expected) {
+    if (millis() - start > OTA_TOTAL_TIMEOUT_MS) break;
+
+    if (!otaRxReady) {
+      if (millis() - lastRx > OTA_WINDOW_TIMEOUT_MS) {
+        otaSendAck(1, (uint16_t)otaRxSeq);
+        lastRx = millis();
+      }
+      delay(2);
+      continue;
+    }
+
+    uint16_t len = otaRxLen;
+    otaRxReady = false;
+    lastRx = millis();
+
+    if (!headChecked) {
+      headChecked = true;
+      if (!otaImageLooksRight(otaRxBuf, len)) {
+        result = OTA_RESULT_WRONG_IMAGE;
+        ulog("[OTA] Rejected: not an ESP-IDF image\n");
+        break;
+      }
+    }
+
+    if (esp_ota_write(handle, otaRxBuf, len) != ESP_OK) { result = OTA_RESULT_WRITE; break; }
+    mbedtls_md_update(&md, otaRxBuf, len);
+    otaRxBytes += len;
+    otaRxSeq++;
+
+    if ((otaRxSeq % 8) == 0 || otaRxSeq == expected) {
+      otaSendAck(0, (uint16_t)otaRxSeq);
+      if ((otaRxSeq % 64) == 0) {
+        ulog("[OTA] %u%%\n", (unsigned)(otaRxBytes * 100 / o->imageSize));
+      }
+    }
+  }
+
+  otaActive = false;
+  uint8_t digest[32];
+  mbedtls_md_finish(&md, digest);
+  mbedtls_md_free(&md);
+
+  if (otaRxSeq >= expected && otaRxBytes == o->imageSize) {
+    if      (memcmp(digest, o->sha256, 32) != 0)             result = OTA_RESULT_HASH;
+    else if (!otaVerifySignature(digest, o->sig, o->sigLen)) result = OTA_RESULT_SIGNATURE;
+    else                                                     result = OTA_RESULT_OK;
+  }
+
+  if (result != OTA_RESULT_OK) {
+    esp_ota_abort(handle);
+    ulog("[OTA] Failed, result %u (%u/%u bytes)\n", result,
+         (unsigned)otaRxBytes, (unsigned)o->imageSize);
+    otaSendDone(result);
+    return;
+  }
+
+  if (esp_ota_end(handle) != ESP_OK || esp_ota_set_boot_partition(target) != ESP_OK) {
+    ulog("[OTA] Staging failed\n");
+    otaSendDone(OTA_RESULT_WRITE);
+    return;
+  }
+
+  {
+    Preferences p;
+    p.begin("otastate", false);
+    p.putBool("unconf", true);
+    p.putUChar("tries", 0);
+    p.end();
+  }
+
+  ulog("[OTA] Verified - rebooting into %s\n", ver);
+  otaSendDone(OTA_RESULT_OK);
+  delay(150);
+  esp_now_deinit();
+  esp_wifi_stop();
+  delay(50);
+  ESP.restart();
+}
+
+// Wait briefly for the hub to offer an image, then run it. Only done on a
+// button wake, which is the deliberate signal that someone wants this node
+// updated.
+void otaMaybeUpdate(int batteryPct) {
+  if (!isPaired) return;
+  unsigned long start = millis();
+  while (!otaOffered && millis() - start < 400) delay(5);
+  if (!otaOffered) return;
+  otaOffered = false;
+  otaRunTransfer(batteryPct);
+}
+
 // --- SAFE DEEP SLEEP ---
 // ESP32-C6 RISC-V requires proper WiFi/ESP-NOW shutdown before sleep
 // Skipping this causes the illegal instruction crash (MCAUSE: 0x18)
@@ -551,6 +897,29 @@ void OnDataRecv(const esp_now_recv_info_t *esp_now_info, const uint8_t *incoming
     ulog("[CFG] Applied v%u: sleep %us, R=%.0f, A=%.4e B=%.4e C=%.4e\n",
          cfg->cfg_ver, cfg->sleep_secs, cfg->r_series,
          cfg->sh_a, cfg->sh_b, cfg->sh_c);
+    return;
+  }
+
+  if (incomingData[0] == MSG_OTA_OFFER && len >= (int)sizeof(ota_offer_message)) {
+    memcpy(&otaOffer, incomingData, sizeof(otaOffer));
+    otaOffered = true;
+    return;
+  }
+
+  // Only the chunk currently being waited for is taken, and only while the
+  // previous one has been consumed. Anything else is dropped and the hub is
+  // told where to resume, which keeps the receive path free of queueing.
+  if (incomingData[0] == MSG_OTA_DATA && otaActive && len > OTA_DATA_HDR) {
+    uint16_t seq;
+    memcpy(&seq, incomingData + 1, 2);
+    if (seq == (uint16_t)otaRxSeq && !otaRxReady) {
+      uint16_t payload = (uint16_t)(len - OTA_DATA_HDR);
+      if (payload <= OTA_MAX_CHUNK) {
+        memcpy(otaRxBuf, incomingData + OTA_DATA_HDR, payload);
+        otaRxLen   = payload;
+        otaRxReady = true;
+      }
+    }
     return;
   }
 
@@ -963,6 +1332,7 @@ void setup() {
   // used the compiled defaults and no pushed calibration ever affected a
   // reading: a probe configured with r_series=47000 was still being computed
   // against 10000. Only NVS access, so it is safe this early.
+  otaLoadState();   // may revert and restart if this image keeps failing
   loadIdentity();
 
   // Read battery BEFORE radio init
@@ -1069,6 +1439,11 @@ void setup() {
       }
       consecutive_failed_wakes = 0;
       in_hibernate_mode = false;
+      otaConfirmImage();   // a delivered reading is what proves an image good
+
+      // Only a button press asks for an update. Timer wakes never listen, so
+      // the duty cycle is unchanged.
+      if (force_rescan_this_cycle) otaMaybeUpdate(bat.percentage);
 
     } else {
       // Failure — bump the counter (RTC memory, persists across sleep).

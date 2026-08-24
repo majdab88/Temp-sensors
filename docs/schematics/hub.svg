@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 620" font-family="Helvetica, Arial, sans-serif" font-size="13">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 660" font-family="Helvetica, Arial, sans-serif" font-size="13">
   <style>
     .wire  { stroke: #111; stroke-width: 2; fill: none; }
     .part  { stroke: #111; stroke-width: 1.8; fill: #fff; }
@@ -12,7 +12,7 @@
   </style>
 
   <!-- Title block -->
-  <rect x="10" y="10" width="980" height="600" fill="none" stroke="#111" stroke-width="1.5"/>
+  <rect x="10" y="10" width="980" height="640" fill="none" stroke="#111" stroke-width="1.5"/>
   <text x="30" y="40" class="title">HUB — XIAO ESP32-C6</text>
   <text x="30" y="60" class="sub">Receives ESP-NOW sensor frames, serves dashboard, BLE provisioning, MQTT uplink.</text>
   <line x1="10" y1="75" x2="990" y2="75" stroke="#111" stroke-width="1"/>
@@ -32,6 +32,7 @@
   <!-- Right pin labels -->
   <text x="610" y="230" text-anchor="end" class="pin">USB-C</text>
   <text x="610" y="260" text-anchor="end" class="pin">(on-board antenna)</text>
+  <text x="610" y="380" text-anchor="end" class="pin">D0 / GPIO0 (ext. button)</text>
 
   <!-- Pin stubs -->
   <line x1="380" y1="225" x2="365" y2="225" class="wire"/>
@@ -42,11 +43,11 @@
   <text x="355" y="220" text-anchor="end" class="net">+5V (USB)</text>
   <text x="355" y="250" text-anchor="end" class="net">GND</text>
 
-  <!-- BOOT Switch -->
+  <!-- BOOT Switch (on-module, external duplicate optional) -->
   <line x1="220" y1="315" x2="220" y2="350" class="wire"/>
   <rect x="195" y="350" width="50" height="35" class="part"/>
   <text x="220" y="372" text-anchor="middle">SW1</text>
-  <text x="220" y="400" text-anchor="middle" class="sub">BOOT / WiFi reset</text>
+  <text x="220" y="400" text-anchor="middle" class="sub">BOOT / reset</text>
   <line x1="220" y1="385" x2="220" y2="420" class="wire"/>
   <!-- Ground symbol -->
   <line x1="205" y1="420" x2="235" y2="420" class="wire"/>
@@ -62,6 +63,37 @@
   <text x="775" y="225" text-anchor="middle">USB-C</text>
   <text x="775" y="245" text-anchor="middle" class="sub">5 V in / programming</text>
   <line x1="700" y1="225" x2="620" y2="225" class="wire"/>
+
+  <!-- External reset / provision button on D0 (GPIO0) -->
+  <line x1="620" y1="375" x2="900" y2="375" class="wire"/>
+  <circle cx="830" cy="375" r="3" class="dot"/>
+  <circle cx="900" cy="375" r="3" class="dot"/>
+  <!-- Pullup R1 to 3V3 -->
+  <line x1="900" y1="375" x2="900" y2="300" class="wire"/>
+  <rect x="890" y="260" width="20" height="40" class="part"/>
+  <line x1="900" y1="260" x2="900" y2="235" class="wire"/>
+  <text x="900" y="228" text-anchor="middle" class="net">3V3</text>
+  <text x="920" y="278" class="pin">R1</text>
+  <text x="920" y="292" class="sub">10 kΩ</text>
+  <!-- Debounce cap C2 -->
+  <line x1="830" y1="375" x2="830" y2="400" class="wire"/>
+  <line x1="815" y1="400" x2="845" y2="400" class="wire"/>
+  <line x1="815" y1="408" x2="845" y2="408" class="wire"/>
+  <text x="810" y="398" text-anchor="end" class="pin">C2</text>
+  <text x="810" y="413" text-anchor="end" class="sub">100 nF</text>
+  <line x1="830" y1="408" x2="830" y2="435" class="wire"/>
+  <line x1="815" y1="435" x2="845" y2="435" class="wire"/>
+  <line x1="820" y1="443" x2="840" y2="443" class="wire"/>
+  <line x1="825" y1="451" x2="835" y2="451" class="wire"/>
+  <!-- Switch SW2 -->
+  <line x1="900" y1="375" x2="900" y2="410" class="wire"/>
+  <rect x="875" y="410" width="50" height="35" class="part"/>
+  <text x="900" y="432" text-anchor="middle">SW2</text>
+  <line x1="900" y1="445" x2="900" y2="475" class="wire"/>
+  <line x1="885" y1="475" x2="915" y2="475" class="wire"/>
+  <line x1="890" y1="483" x2="910" y2="483" class="wire"/>
+  <line x1="895" y1="491" x2="905" y2="491" class="wire"/>
+  <text x="900" y="512" text-anchor="middle" class="sub">Reset / re-provision</text>
 
   <!-- Decoupling cap -->
   <line x1="380" y1="290" x2="320" y2="290" class="wire"/>
@@ -82,9 +114,10 @@
   <circle cx="320" cy="290" r="3" class="dot"/>
 
   <!-- Notes -->
-  <text x="30" y="510" class="sub">NOTES:</text>
-  <text x="30" y="530" class="sub">• Power and program via USB-C on the XIAO (no external regulator required).</text>
-  <text x="30" y="548" class="sub">• GPIO9 BOOT switch is on the XIAO module; the schematic shows an optional external duplicate.</text>
-  <text x="30" y="566" class="sub">• GPIO15 drives the XIAO's built-in LED — no external indicator needed.</text>
-  <text x="30" y="584" class="sub">• Place C1 (100 nF) close to the 3V3 pin for decoupling.</text>
+  <text x="30" y="545" class="sub">NOTES:</text>
+  <text x="30" y="565" class="sub">• Power and program via USB-C on the XIAO (no external regulator required).</text>
+  <text x="30" y="583" class="sub">• SW1 (GPIO9 BOOT) is on the XIAO module; SW2 on D0/GPIO0 is the external panel button. Both are active-low.</text>
+  <text x="30" y="601" class="sub">• Either button: hold 3 s → erase WiFi credentials → reboot into BLE provisioning. Held in BLE mode it also clears cloud creds.</text>
+  <text x="30" y="619" class="sub">• R1 + C2 are optional — only fit them if SW2 sits on a long lead; the C6's internal pullup (~45 kΩ) suffices on a short one.</text>
+  <text x="30" y="637" class="sub">• Place C1 (100 nF) close to the 3V3 pin for decoupling. GPIO15 drives the XIAO's built-in LED — no external indicator needed.</text>
 </svg>

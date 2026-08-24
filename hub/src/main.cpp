@@ -54,7 +54,7 @@ void confirmFirmwareValid();
 #define FW_MINOR 1
 #endif
 #ifndef FW_PATCH
-#define FW_PATCH 2
+#define FW_PATCH 3
 #endif
 #define STR_(x) #x
 #define STR(x)  STR_(x)
@@ -137,8 +137,17 @@ static char  otaRejectedVersion[16] = "";
 #define OTA_BUF_SIZE        1024
 
 // --- XIAO ESP32-C6 PIN DEFINITIONS ---
-#define TRIGGER_PIN 9   // BOOT button
-#define LED_PIN     15  // Built-in LED
+#define TRIGGER_PIN     9   // On-module BOOT button
+#define TRIGGER_PIN_EXT 0   // External reset/provision button on D0 (GPIO0)
+#define LED_PIN         15  // Built-in LED
+
+// Either button drives the same reset/re-provision path. Both are active-low
+// with internal pullups; GPIO0 is not a strap pin, so an external button stuck
+// closed at power-up cannot force the C6 into serial download mode the way a
+// held BOOT button on GPIO9 would.
+static inline bool resetButtonHeld() {
+  return digitalRead(TRIGGER_PIN) == LOW || digitalRead(TRIGGER_PIN_EXT) == LOW;
+}
 
 // --- MESSAGE TYPES ---
 #define MSG_PAIRING 1
@@ -882,10 +891,10 @@ void startBleProvisioning() {
     }
 
     // BOOT button: erase all provisioning data and restart
-    if (digitalRead(TRIGGER_PIN) == LOW) {
+    if (resetButtonHeld()) {
       delay(50);
       unsigned long press = millis();
-      while (digitalRead(TRIGGER_PIN) == LOW) {
+      while (resetButtonHeld()) {
         if (millis() - press > 3000) {
           Serial.println("Factory reset from BLE provisioning mode");
           Preferences wPrefs; wPrefs.begin("wifi",  false); wPrefs.clear(); wPrefs.end();
@@ -2864,11 +2873,11 @@ void onWiFiEvent(WiFiEvent_t event, WiFiEventInfo_t info) {
 // the user can always escape a dead or unreachable saved network — otherwise
 // those blocking waits starve the button and it appears unresponsive.
 void checkReprovisionButton() {
-  if (digitalRead(TRIGGER_PIN) != LOW) return;
+  if (!resetButtonHeld()) return;
   delay(50);  // debounce
   unsigned long startPress = millis();
   Serial.println("Button pressed... (hold 3 s to reset WiFi and re-provision)");
-  while (digitalRead(TRIGGER_PIN) == LOW) {
+  while (resetButtonHeld()) {
     if (millis() - startPress > 3000) {
       Serial.println("\n=== ERASING WiFi CREDENTIALS ===");
       Preferences wPrefs;
@@ -2906,7 +2915,8 @@ void setup() {
   // verification and we reset without confirming, the bootloader rolls back.
   checkOtaPendingVerify();
 
-  pinMode(TRIGGER_PIN, INPUT_PULLUP);
+  pinMode(TRIGGER_PIN,     INPUT_PULLUP);
+  pinMode(TRIGGER_PIN_EXT, INPUT_PULLUP);
   pinMode(LED_PIN, OUTPUT);
   digitalWrite(LED_PIN, LOW);
 

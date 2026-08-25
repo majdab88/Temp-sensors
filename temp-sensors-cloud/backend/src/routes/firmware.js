@@ -227,10 +227,10 @@ router.post(
 
 // POST /api/firmware/:id/stage — tell one hub to install this image
 router.post('/:id/stage', async (req, res) => {
+  // Which address is required depends on what kind of image this is, so the
+  // check cannot happen until the image has been looked up. Validating hub_mac
+  // up front rejected every sensor stage before it was ever considered.
   const { hub_mac } = req.body || {};
-  if (!hub_mac || !MAC_RE.test(hub_mac)) {
-    return res.status(400).json({ error: 'hub_mac must be a MAC address' });
-  }
 
   try {
     const fwRes = await query(
@@ -284,6 +284,9 @@ router.post('/:id/stage', async (req, res) => {
                         needs_button: true });
     }
 
+    if (!hub_mac || !MAC_RE.test(hub_mac)) {
+      return res.status(400).json({ error: 'hub_mac must be a MAC address' });
+    }
     const mac = hub_mac.toUpperCase();
     const devRes = await query('SELECT id, fw_version FROM devices WHERE mac = $1', [mac]);
     if (devRes.rows.length === 0) return res.status(404).json({ error: 'Hub not registered' });

@@ -58,7 +58,7 @@ void confirmFirmwareValid();
 #define FW_MINOR 1
 #endif
 #ifndef FW_PATCH
-#define FW_PATCH 2
+#define FW_PATCH 3
 #endif
 #define STR_(x) #x
 #define STR(x)  STR_(x)

@@ -148,6 +148,22 @@ router.post(
       // existing entry. That is how a mislabelled upload once replaced a
       // known-good image's signature with one that did not match its own bytes,
       // leaving the registry serving an image no hub would accept.
+      // The mirror of the check below: different bytes must not claim a version
+      // that already exists. Forgetting to bump FW_PATCH puts a second, distinct
+      // image into the registry under a label that is already taken, and every
+      // device then reports a version that no longer identifies what it runs.
+      const clash = await query(
+        'SELECT id, sha256 FROM firmware_images WHERE version = $1 AND device_kind = $2 AND sha256 <> $3',
+        [version, kind, sha256]
+      );
+      if (clash.rows.length > 0) {
+        return res.status(409).json({
+          error: `Version ${version} already exists as a different image ` +
+                 `(${clash.rows[0].sha256.slice(0, 12)}…). Bump the version and rebuild, ` +
+                 `or delete that entry if you meant to replace it.`,
+        });
+      }
+
       const existing = await query(
         'SELECT id, version, signature FROM firmware_images WHERE sha256 = $1',
         [sha256]

@@ -66,6 +66,18 @@ export default function Firmware() {
 
     load()
 
+    // The node reports its new version on its first wake after rebooting. The
+    // page is already in the hub room for other reasons, so it can pick that up
+    // rather than waiting for someone to refresh.
+    function onSensorData(data) {
+      if (!data.fw) return
+      setSensors((prev) => prev.map((x) =>
+        x.mac === data.sensor_mac && x.fw_version !== data.fw
+          ? { ...x, fw_version: data.fw }
+          : x
+      ))
+    }
+
     function onSensorOtaStatus(data) {
       setSensors((prev) => prev.map((x) =>
         x.mac === data.sensor_mac
@@ -89,10 +101,12 @@ export default function Firmware() {
 
     socket.on('otaStatus', onOtaStatus)
     socket.on('sensorOtaStatus', onSensorOtaStatus)
+    socket.on('sensorData', onSensorData)
     socket.on('connect', onConnect)
     return () => {
       socket.off('otaStatus', onOtaStatus)
       socket.off('sensorOtaStatus', onSensorOtaStatus)
+      socket.off('sensorData', onSensorData)
       socket.off('connect', onConnect)
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -294,13 +308,19 @@ export default function Firmware() {
                 const busy = sen.ota_state &&
                   !['installed', 'failed', 'declined'].includes(sen.ota_state)
                 const current = sen.fw_version
+                // fw_version only changes once the node reboots and reports,
+                // seconds after it says the image is installed. Trusting that
+                // report closes the gap where the row briefly offers to send
+                // an image the sensor has just taken.
+                const installed = current === img.version ||
+                  (sen.ota_state === 'installed' && sen.ota_version === img.version)
                 return (
                   <div key={sen.mac} style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                     <span className="device-meta" style={{ flex: 1 }}>
                       {sen.name || sen.mac}
                       {current ? ` · v${current}` : ' · version unknown'}
                     </span>
-                    {current === img.version ? (
+                    {installed ? (
                       <span className="chip">installed</span>
                     ) : (
                       <button

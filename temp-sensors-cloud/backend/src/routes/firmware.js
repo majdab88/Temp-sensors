@@ -111,7 +111,26 @@ router.post(
     //
     // esp_app_desc_t is not usable here: under Arduino it carries the core's own
     // build info (arduino-lib-builder), not ours.
-    const TAG = 'TEMPHUB_FW=';
+    // Each build carries a marker naming what it is and which version. Two
+    // things get checked with it, and the second matters more:
+    //
+    //   1. the image agrees with the version it is being uploaded as
+    //   2. a hub image is not being uploaded as sensor firmware, or vice versa
+    //
+    // The second is the dangerous mix-up. A hub image on a sensor would give it
+    // the wrong pins and no deep sleep, and on a v2 board recovering that needs
+    // the enclosure opened and an ESP-PROG attached.
+    const TAGS = { hub: 'TEMPHUB_FW=', sensor: 'TEMPSENS_FW=' };
+    const wrongKind = kind === 'hub' ? 'sensor' : 'hub';
+
+    if (image.indexOf(TAGS[wrongKind]) !== -1) {
+      return res.status(400).json({
+        error: `This is ${wrongKind} firmware, but you are uploading it as a ` +
+               `${kind} image. Check which .bin you picked.`,
+      });
+    }
+
+    const TAG = TAGS[kind];
     const tagAt = image.indexOf(TAG);
     if (tagAt !== -1) {
       const embedded = image

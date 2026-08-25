@@ -30,6 +30,7 @@ export default function Firmware() {
   const [version, setVersion] = useState('')
   const [signature, setSignature] = useState('')
   const [notes, setNotes] = useState('')
+  const [kind, setKind] = useState('hub')
 
   async function load() {
     try {
@@ -105,7 +106,7 @@ export default function Firmware() {
     setBusy(true)
     try {
       const bytes = await file.arrayBuffer()
-      const params = new URLSearchParams({ version, signature, kind: 'hub', notes })
+      const params = new URLSearchParams({ version, signature, kind, notes })
       const res = await api.post(`/firmware?${params}`, bytes, {
         headers: { 'Content-Type': 'application/octet-stream' },
       })
@@ -194,6 +195,19 @@ export default function Firmware() {
         </p>
 
         <form onSubmit={handleUpload}>
+          <div className="form-group">
+            <label>Image is for</label>
+            <select value={kind} onChange={(e) => setKind(e.target.value)}>
+              <option value="hub">Hub</option>
+              <option value="sensor">Sensor</option>
+            </select>
+            <span className="form-hint">
+              Each build carries a marker saying which it is, and the upload is
+              refused if this does not match — a hub image on a sensor would need
+              the enclosure opened to undo.
+            </span>
+          </div>
+
           <div className="form-group">
             <label>Firmware binary (.bin)</label>
             <input

@@ -108,7 +108,16 @@
 // release; the cloud uses it to tell which nodes still need updating.
 #define FW_MAJOR 1
 #define FW_MINOR 1
-#define FW_PATCH 5
+#define FW_PATCH 6
+#define STR_(x) #x
+#define STR(x)  STR_(x)
+
+// Greppable marker so the registry can check an uploaded image really is sensor
+// firmware of the version it is being labelled with. Deliberately distinct from
+// the hub marker: sending a hub image to a sensor would give it the wrong pins
+// and no sleep, and on a v2 board that needs an ESP-PROG to undo.
+// Printed at boot so the linker cannot discard it.
+#define FW_VERSION_TAG "TEMPSENS_FW=" STR(FW_MAJOR) "." STR(FW_MINOR) "." STR(FW_PATCH)
 
 // --- SLEEP SETTINGS ---
 #define SLEEP_TIME 900  // Seconds — compiled default, overridden by cloud config
@@ -1278,6 +1287,7 @@ void setup() {
   Serial.begin(115200);
   delay(500); // C6 needs extra time for serial to stabilize
   ulog("\n=== XIAO ESP32-C6 Sensor (NTC Probe) ===\n");
+  Serial.println(FW_VERSION_TAG);
 
   // If the previous boot ended in a brownout (radio TX pulled VCC below the
   // ESP32-C6's brownout threshold), do NOT try to TX again immediately. That

@@ -29,6 +29,7 @@ router.get('/', async (req, res) => {
       result = await query(
         `SELECT s.id, s.device_id, s.mac, s.name, s.paired_at, s.active,
                 s.fw_version, s.cfg_ver, s.probe_error, s.probe_error_at,
+                s.ota_state, s.ota_version, s.ota_pct, s.ota_error, s.ota_updated_at,
                 d.mac AS hub_mac, d.name AS hub_name, d.org_id,
                 lr.temp, lr.hum, lr.rssi, lr.battery,
                 EXTRACT(EPOCH FROM lr.recorded_at)::bigint AS "lastUpdate"
@@ -42,6 +43,7 @@ router.get('/', async (req, res) => {
       result = await query(
         `SELECT s.id, s.device_id, s.mac, s.name, s.paired_at, s.active,
                 s.fw_version, s.cfg_ver, s.probe_error, s.probe_error_at,
+                s.ota_state, s.ota_version, s.ota_pct, s.ota_error, s.ota_updated_at,
                 d.mac AS hub_mac, d.name AS hub_name,
                 lr.temp, lr.hum, lr.rssi, lr.battery,
                 EXTRACT(EPOCH FROM lr.recorded_at)::bigint AS "lastUpdate"

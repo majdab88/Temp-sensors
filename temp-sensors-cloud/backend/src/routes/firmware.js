@@ -256,14 +256,8 @@ router.post('/:id/stage', async (req, res) => {
       if (sRes.rows.length === 0) return res.status(404).json({ error: 'Sensor not found' });
       const sensor = sRes.rows[0];
 
-      publishSensorOtaCommand(sensor.hub_mac, {
-        sensor_mac: sensor.mac,
-        url: imageUrl(fw.sha256),
-        version: fw.version,
-        sha256: fw.sha256,
-        signature: fw.signature,
-      });
-
+      // Record the intent before handing it to the hub. Publishing first meant a
+      // failed write left the hub holding a job the dashboard had no record of.
       await query(
         `UPDATE sensors
             SET ota_state = 'staged', ota_version = $1, ota_pct = 0,
@@ -271,6 +265,14 @@ router.post('/:id/stage', async (req, res) => {
           WHERE id = $2`,
         [fw.version, sensor.id]
       );
+
+      publishSensorOtaCommand(sensor.hub_mac, {
+        sensor_mac: sensor.mac,
+        url: imageUrl(fw.sha256),
+        version: fw.version,
+        sha256: fw.sha256,
+        signature: fw.signature,
+      });
 
       await audit({
         req, action: 'firmware.stage', targetType: 'sensor', targetId: sensor.id,

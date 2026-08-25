@@ -111,7 +111,26 @@ router.post(
     //
     // esp_app_desc_t is not usable here: under Arduino it carries the core's own
     // build info (arduino-lib-builder), not ours.
-    const TAG = 'TEMPHUB_FW=';
+    // Each build carries a marker naming what it is and which version. Two
+    // things get checked with it, and the second matters more:
+    //
+    //   1. the image agrees with the version it is being uploaded as
+    //   2. a hub image is not being uploaded as sensor firmware, or vice versa
+    //
+    // The second is the dangerous mix-up. A hub image on a sensor would give it
+    // the wrong pins and no deep sleep, and on a v2 board recovering that needs
+    // the enclosure opened and an ESP-PROG attached.
+    const TAGS = { hub: 'TEMPHUB_FW=', sensor: 'TEMPSENS_FW=' };
+    const wrongKind = kind === 'hub' ? 'sensor' : 'hub';
+
+    if (image.indexOf(TAGS[wrongKind]) !== -1) {
+      return res.status(400).json({
+        error: `This is ${wrongKind} firmware, but you are uploading it as a ` +
+               `${kind} image. Check which .bin you picked.`,
+      });
+    }
+
+    const TAG = TAGS[kind];
     const tagAt = image.indexOf(TAG);
     if (tagAt !== -1) {
       const embedded = image
@@ -148,6 +167,22 @@ router.post(
       // existing entry. That is how a mislabelled upload once replaced a
       // known-good image's signature with one that did not match its own bytes,
       // leaving the registry serving an image no hub would accept.
+      // The mirror of the check below: different bytes must not claim a version
+      // that already exists. Forgetting to bump FW_PATCH puts a second, distinct
+      // image into the registry under a label that is already taken, and every
+      // device then reports a version that no longer identifies what it runs.
+      const clash = await query(
+        'SELECT id, sha256 FROM firmware_images WHERE version = $1 AND device_kind = $2 AND sha256 <> $3',
+        [version, kind, sha256]
+      );
+      if (clash.rows.length > 0) {
+        return res.status(409).json({
+          error: `Version ${version} already exists as a different image ` +
+                 `(${clash.rows[0].sha256.slice(0, 12)}…). Bump the version and rebuild, ` +
+                 `or delete that entry if you meant to replace it.`,
+        });
+      }
+
       const existing = await query(
         'SELECT id, version, signature FROM firmware_images WHERE sha256 = $1',
         [sha256]

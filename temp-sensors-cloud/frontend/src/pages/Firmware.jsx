@@ -158,6 +158,21 @@ export default function Firmware() {
     }
   }
 
+  // Staging waits on a physical button press, so a change of mind has to be
+  // undoable without walking to the node.
+  async function handleCancelStage(sen) {
+    try {
+      await api.delete(`/firmware/stage/${sen.id}`)
+      setSensors((prev) => prev.map((x) =>
+        x.mac === sen.mac
+          ? { ...x, ota_state: null, ota_version: null, ota_pct: null, ota_error: null }
+          : x
+      ))
+    } catch (err) {
+      alert(err.response?.data?.error || 'Failed to cancel')
+    }
+  }
+
   async function handleStageSensor(imageId, sensorMac, sensorName, imageVersion) {
     setError(''); setNotice('')
     if (!window.confirm(
@@ -307,6 +322,11 @@ export default function Firmware() {
               {img.device_kind === 'sensor' && sensors.map((sen) => {
                 const busy = sen.ota_state &&
                   !['installed', 'failed', 'declined'].includes(sen.ota_state)
+                // A sensor is staged for one particular image. Without the
+                // version check every image showed that sensor as staged, and
+                // disabled the row that could have replaced it.
+                const busyHere    = busy && sen.ota_version === img.version
+                const transferring = sen.ota_state === 'sending'
                 const current = sen.fw_version
                 // fw_version only changes once the node reboots and reports,
                 // seconds after it says the image is installed. Trusting that
@@ -322,14 +342,27 @@ export default function Firmware() {
                     </span>
                     {installed ? (
                       <span className="chip">installed</span>
+                    ) : busyHere ? (
+                      <>
+                        <span className="chip">
+                          {sen.ota_state}{sen.ota_pct != null ? ` ${sen.ota_pct}%` : ''}
+                        </span>
+                        {!transferring && (
+                          <button
+                            className="btn btn-sm btn-ghost"
+                            title="Cancel this staged image"
+                            onClick={() => handleCancelStage(sen)}
+                          >&#10005;</button>
+                        )}
+                      </>
                     ) : (
                       <button
                         className="btn btn-sm btn-primary"
-                        disabled={busy}
+                        disabled={transferring}
                         title="Delivered when the button on the node is pressed"
                         onClick={() => handleStageSensor(img.id, sen.mac, sen.name, img.version)}
                       >
-                        {busy ? `${sen.ota_state}${sen.ota_pct != null ? ` ${sen.ota_pct}%` : ''}` : 'Send'}
+                        Send
                       </button>
                     )}
                   </div>

@@ -7,7 +7,7 @@ const path    = require('path');
 const { query } = require('../db');
 const { requireAuth, requireSuperadmin } = require('../middleware/auth');
 const { audit } = require('../audit');
-const { publishOtaCommand, publishSensorOtaCommand } = require('../mqtt');
+const { publishOtaCommand, publishSensorOtaCommand, clearSensorOtaCommand } = require('../mqtt');
 
 const router = express.Router();
 router.use(requireAuth);
@@ -350,6 +350,46 @@ router.delete('/:id', async (req, res) => {
   } catch (err) {
     console.error('Delete firmware error:', err.message);
     res.status(500).json({ error: 'Failed to delete firmware' });
+  }
+});
+
+// DELETE /api/firmware/stage/:sensorId - cancel an image staged on a sensor
+//
+// Staging waits on a physical button press, so a change of mind has to be
+// undoable without one. Clearing the retained topic is what actually cancels
+// it: that is the copy a hub restart would otherwise restore.
+router.delete('/stage/:sensorId', async (req, res) => {
+  try {
+    const r = await query(
+      `SELECT s.id, s.mac, s.ota_state, d.mac AS hub_mac
+         FROM sensors s JOIN devices d ON d.id = s.device_id
+        WHERE s.id = $1 AND s.active = TRUE`,
+      [req.params.sensorId]
+    );
+    if (r.rows.length === 0) return res.status(404).json({ error: 'Sensor not found' });
+    const sensor = r.rows[0];
+
+    if (sensor.ota_state === 'sending') {
+      return res.status(409).json({ error: 'Transfer in progress - wait for it to finish' });
+    }
+
+    clearSensorOtaCommand(sensor.hub_mac, sensor.mac);
+    await query(
+      `UPDATE sensors SET ota_state = NULL, ota_version = NULL, ota_pct = NULL,
+                          ota_error = NULL, ota_updated_at = NOW()
+        WHERE id = $1`,
+      [sensor.id]
+    );
+
+    await audit({
+      req, action: 'firmware.unstage', targetType: 'sensor', targetId: sensor.id,
+      details: { sensor_mac: sensor.mac, hub_mac: sensor.hub_mac },
+    });
+
+    res.json({ cancelled: true });
+  } catch (err) {
+    console.error('Unstage error:', err.message);
+    res.status(500).json({ error: err.message || 'Failed to cancel' });
   }
 });
 

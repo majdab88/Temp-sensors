@@ -61,7 +61,7 @@ void confirmFirmwareValid();
 #define FW_MINOR 1
 #endif
 #ifndef FW_PATCH
-#define FW_PATCH 12
+#define FW_PATCH 13
 #endif
 #define STR_(x) #x
 #define STR(x)  STR_(x)
@@ -1302,6 +1302,21 @@ void mqttCallback(char* topic, byte* payload, unsigned int length) {
   // other sensor that was waiting for one.
   if (strncmp(topic, topicSensorOta, strlen(topicSensorOta)) == 0) {
     if (length == 0 || json.indexOf('{') < 0) {
+      // An empty retained message is a cancellation, and it carries no body --
+      // so the sensor it refers to has to come from the topic it arrived on.
+      const char *hex = topic + strlen(topicSensorOta);
+      uint8_t cmac[6];
+      if (strlen(hex) == 12 &&
+          sscanf(hex, "%2hhX%2hhX%2hhX%2hhX%2hhX%2hhX",
+                 &cmac[0], &cmac[1], &cmac[2], &cmac[3], &cmac[4], &cmac[5]) == 6) {
+        int slot = sOtaSlotFor(cmac);
+        if (slot >= 0 && slot != sOtaActive) {
+          sOtaStaged[slot].used = false;
+          Serial.printf("[SOTA] Staged image cancelled for %02X:%02X:%02X:%02X:%02X:%02X\n",
+                        cmac[0], cmac[1], cmac[2], cmac[3], cmac[4], cmac[5]);
+          return;
+        }
+      }
       Serial.println("[SOTA] Retained command cleared");
       return;
     }

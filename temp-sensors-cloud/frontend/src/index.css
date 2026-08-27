@@ -266,6 +266,21 @@ button {
 .chip.stale   { background: transparent; border-color: var(--yellow); color: var(--yellow); }
 .chip.firing  { background: transparent; border: none; color: var(--accent); padding: 0; }
 
+/* Live mode. Deliberately not vermilion -- that colour means alarm here, and a
+   sensor reporting quickly is not a problem. Ink fill reads as "active now",
+   the outline as "asked, not yet answered". */
+.chip.live    { background: var(--text-1); border-color: var(--text-1); color: #fff; }
+.chip.waking  { background: transparent; border-color: var(--text-3); color: var(--text-3); }
+.chip.live .dot { animation: live-pulse 1.6s ease-in-out infinite; }
+
+@keyframes live-pulse { 0%, 100% { opacity: 1 } 50% { opacity: 0.35 } }
+
+@media (prefers-reduced-motion: reduce) {
+  .chip.live .dot { animation: none; }
+}
+
+.sensor-alert-btn.live-on { color: var(--text-1); font-weight: 700; }
+
 .sensor-card-header {
   display: flex;
   align-items: flex-start;

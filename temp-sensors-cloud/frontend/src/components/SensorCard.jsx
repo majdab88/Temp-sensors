@@ -1,4 +1,4 @@
-import React, { useState } from 'react'
+import React, { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import api from '../services/api'
 import AlertRuleModal from './AlertRuleModal'
@@ -75,6 +75,7 @@ export default function SensorCard({ sensor, reading, alert, rule, spark, onRena
   const [showAlert, setShowAlert] = useState(false)
   const [showConfig, setShowConfig] = useState(false)
   const [liveNote, setLiveNote] = useState('')
+  const [nowTs, setNowTs] = useState(() => Date.now())
   // Calibration and reporting cadence affect the integrity of the temperature
   // record, so this is superadmin-only rather than an org-level permission.
   const { user: cfgUser } = useAuth()
@@ -169,10 +170,39 @@ export default function SensorCard({ sensor, reading, alert, rule, spark, onRena
     setTimeout(() => setLiveNote(''), 12000)
   }
 
+  async function stopLive(e) {
+    e.stopPropagation()
+    setLiveNote('stopping…')
+    try {
+      await api.delete(`/sensors/${sensor.id}/live`)
+      setLiveNote('stopped')
+    } catch {
+      setLiveNote('stop failed')
+    }
+    setTimeout(() => setLiveNote(''), 8000)
+  }
+
   function openAlert(e) {
     e.stopPropagation()
     setShowAlert(true)
   }
+
+  // live_until is set only once the hub reports the request reaching the node.
+  // live_requested_at covers the gap before that, which lasts until the sensor
+  // next wakes -- bounded here so a request to a node that never answers stops
+  // claiming to be pending forever.
+  const liveUntil   = sensor.live_until ? new Date(sensor.live_until).getTime() : 0
+  const isLive      = liveUntil > nowTs
+  const liveReqAt   = sensor.live_requested_at ? new Date(sensor.live_requested_at).getTime() : 0
+  const livePending = !isLive && liveReqAt > 0 &&
+                      nowTs - liveReqAt < ((sensor.cfg_sleep_secs || 900) + 120) * 1000
+  const liveLeft    = isLive ? Math.max(0, Math.round((liveUntil - nowTs) / 1000)) : 0
+
+  useEffect(() => {
+    if (!isLive && !livePending) return
+    const t = setInterval(() => setNowTs(Date.now()), 1000)
+    return () => clearInterval(t)
+  }, [isLive, livePending])
 
   return (
     <div
@@ -182,6 +212,8 @@ export default function SensorCard({ sensor, reading, alert, rule, spark, onRena
     >
       <div className="card-eyebrow-row">
         <span className="card-eyebrow">{sensor.hub_name || sensor.hub_mac || 'Sensor'}</span>
+        {isLive && <span className="chip live"><span className="dot">●</span> live {liveLeft}s</span>}
+        {livePending && <span className="chip waking">◌ waking</span>}
         <span className={`chip ${chip.cls}`}>{chip.label}</span>
       </div>
 
@@ -206,11 +238,20 @@ export default function SensorCard({ sensor, reading, alert, rule, spark, onRena
               {canEdit && <button className="sensor-rename-btn" onClick={startEdit} title="Rename sensor">✎</button>}
               {canEdit && <button className="sensor-alert-btn" onClick={openAlert} title="Temperature alerts">🔔</button>}
               {canEdit && (
-                <button
-                  className="sensor-alert-btn"
-                  onClick={requestLive}
-                  title="Ask this sensor to report repeatedly on its next wake"
-                >⏱</button>
+                isLive || livePending ? (
+                  <button
+                    className="sensor-alert-btn live-on"
+                    onClick={stopLive}
+                    title={isLive ? 'Stop reporting and let the sensor sleep'
+                                  : 'Cancel the pending live request'}
+                  >⏹</button>
+                ) : (
+                  <button
+                    className="sensor-alert-btn"
+                    onClick={requestLive}
+                    title="Ask this sensor to report repeatedly on its next wake"
+                  >⏱</button>
+                )
               )}
               {canConfigure && (
                 <button

@@ -30,6 +30,7 @@ router.get('/', async (req, res) => {
         `SELECT s.id, s.device_id, s.mac, s.name, s.paired_at, s.active,
                 s.fw_version, s.cfg_ver, s.probe_error, s.probe_error_at,
                 s.ota_state, s.ota_version, s.ota_pct, s.ota_error, s.ota_updated_at,
+                s.live_until, s.live_interval_s, s.live_requested_at, s.cfg_sleep_secs,
                 d.mac AS hub_mac, d.name AS hub_name, d.org_id,
                 lr.temp, lr.hum, lr.rssi, lr.battery,
                 EXTRACT(EPOCH FROM lr.recorded_at)::bigint AS "lastUpdate"
@@ -44,6 +45,7 @@ router.get('/', async (req, res) => {
         `SELECT s.id, s.device_id, s.mac, s.name, s.paired_at, s.active,
                 s.fw_version, s.cfg_ver, s.probe_error, s.probe_error_at,
                 s.ota_state, s.ota_version, s.ota_pct, s.ota_error, s.ota_updated_at,
+                s.live_until, s.live_interval_s, s.live_requested_at, s.cfg_sleep_secs,
                 d.mac AS hub_mac, d.name AS hub_name,
                 lr.temp, lr.hum, lr.rssi, lr.battery,
                 EXTRACT(EPOCH FROM lr.recorded_at)::bigint AS "lastUpdate"
@@ -161,6 +163,7 @@ router.post('/:id/live', requirePermission('editor'), async (req, res) => {
     const s2 = r.rows[0];
 
     publishLiveRequest(s2.hub_mac, s2.mac, duration, interval);
+    await query('UPDATE sensors SET live_requested_at = NOW() WHERE id = $1', [s2.id]);
 
     await audit({
       req, action: 'sensor.live', targetType: 'sensor', targetId: s2.id,
@@ -177,6 +180,42 @@ router.post('/:id/live', requirePermission('editor'), async (req, res) => {
   } catch (err) {
     console.error('Live request error:', err.message);
     res.status(500).json({ error: err.message || 'Failed to request live mode' });
+  }
+});
+
+// DELETE /api/sensors/:id/live — end a live burst early
+//
+// Sent as a live request with duration 0. The node is awake and reporting every
+// few seconds while live, so unlike a start this is delivered almost at once.
+router.delete('/:id/live', requirePermission('editor'), async (req, res) => {
+  try {
+    const r = await query(
+      `SELECT s.id, s.mac, d.mac AS hub_mac
+         FROM sensors s JOIN devices d ON d.id = s.device_id
+        WHERE s.id = $1 AND s.active = TRUE`,
+      [req.params.id]
+    );
+    if (r.rows.length === 0) return res.status(404).json({ error: 'Sensor not found' });
+    const s2 = r.rows[0];
+
+    publishLiveRequest(s2.hub_mac, s2.mac, 0, 0);
+    // Cleared here rather than waiting for the hub to confirm: if the node is
+    // already asleep no confirmation is coming, and the card should not keep
+    // claiming it is live.
+    await query(
+      'UPDATE sensors SET live_until = NULL, live_requested_at = NULL WHERE id = $1',
+      [s2.id]
+    );
+
+    await audit({
+      req, action: 'sensor.live.stop', targetType: 'sensor', targetId: s2.id,
+      details: { sensor_mac: s2.mac },
+    });
+
+    res.json({ stopped: true });
+  } catch (err) {
+    console.error('Live stop error:', err.message);
+    res.status(500).json({ error: err.message || 'Failed to stop live mode' });
   }
 });
 

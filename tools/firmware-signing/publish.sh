@@ -1,14 +1,23 @@
 #!/usr/bin/env bash
 #
-# Build → sign → upload → (optionally) install a hub firmware release.
+# Build → sign → upload → (optionally) install a firmware release.
 #
 # Run this on the DEV MACHINE, never on the droplet: signing needs the private
 # key, and the private key must never leave this machine.
 #
-# Usage:
+# Hub:
 #   ./publish.sh                          # build, sign, upload
 #   ./publish.sh --install <HUB_MAC>      # ...and stage it on that hub
 #   ./publish.sh --install all            # ...and stage it on every hub
+#
+# Sensor:
+#   ./publish.sh --sensor                 # build, sign, upload
+#   ./publish.sh --sensor --env <name>    # ...from a specific PlatformIO env
+#
+# Staging a sensor image is deliberately not scriptable here: it waits on a
+# button press at the node, so it is chosen per sensor from the dashboard.
+#
+# Either:
 #   ./publish.sh --no-build               # use the existing firmware.bin
 #   ./publish.sh --list                   # just list what is on the server
 #
@@ -31,12 +40,11 @@ API=${API:-}
 ADMIN_USER=${ADMIN_USER:-admin}
 ADMIN_PASS=${ADMIN_PASS:-}
 KEY=${KEY:-fw-signing-key.pem}
-PIO_ENV=${PIO_ENV:-xiao_esp32c6_hub}
 # PlatformIO is not on PATH in Git Bash by default; fall back to its venv.
 PIO=${PIO:-pio}
 command -v "$PIO" >/dev/null 2>&1 || PIO="$HOME/.platformio/penv/Scripts/pio.exe"
-BIN=${BIN:-$REPO_ROOT/hub/.pio/build/$PIO_ENV/firmware.bin}
-SRC=${SRC:-$REPO_ROOT/hub/src/main.cpp}
+# PIO_ENV / BIN / SRC are resolved after the arguments are parsed, since which
+# project they point at depends on --sensor.
 
 die() { echo "error: $*" >&2; exit 1; }
 note() { echo "==> $*"; }
@@ -44,16 +52,41 @@ note() { echo "==> $*"; }
 DO_BUILD=1
 INSTALL_ON=""
 LIST_ONLY=0
+KIND=hub
+ENV_OVERRIDE=""
 while [ $# -gt 0 ]; do
   case "$1" in
+    --sensor)   KIND=sensor ;;
+    --hub)      KIND=hub ;;
+    --env)      shift; ENV_OVERRIDE=${1:-}; [ -n "$ENV_OVERRIDE" ] || die "--env needs a PlatformIO env name" ;;
     --no-build) DO_BUILD=0 ;;
     --install)  shift; INSTALL_ON=${1:-} ; [ -n "$INSTALL_ON" ] || die "--install needs a MAC or 'all'" ;;
     --list)     LIST_ONLY=1 ;;
-    -h|--help)  sed -n '2,20p' "$0"; exit 0 ;;
+    -h|--help)  sed -n '2,26p' "$0"; exit 0 ;;
     *)          die "unknown option: $1" ;;
   esac
   shift
 done
+
+# Resolve what we are building only once the mode is known. The sensor default
+# is the WROOM v2 board -- the only sensor hardware being deployed -- but the
+# other envs still build, so --env picks one.
+if [ "$KIND" = sensor ]; then
+  PROJECT=sensor-ntc
+  PIO_ENV=${ENV_OVERRIDE:-wroom_v2_sensor_ntc}
+else
+  PROJECT=hub
+  # An env-file PIO_ENV is a hub setting; it must not leak into a sensor build.
+  PIO_ENV=${ENV_OVERRIDE:-${PIO_ENV:-xiao_esp32c6_hub}}
+fi
+BIN=${BIN:-$REPO_ROOT/$PROJECT/.pio/build/$PIO_ENV/firmware.bin}
+SRC=${SRC:-$REPO_ROOT/$PROJECT/src/main.cpp}
+
+# Staging a sensor image waits on a button press at the node, so it is chosen
+# per sensor from the dashboard rather than swept across a fleet from here.
+if [ "$KIND" = sensor ] && [ -n "$INSTALL_ON" ]; then
+  die "--install is hub-only; stage a sensor image from the dashboard"
+fi
 
 # The command is retained at the broker, so a hub that is offline now will
 # act on it the moment it reconnects.
@@ -102,7 +135,7 @@ rows = json.load(sys.stdin)
 if not rows:
     print('(no firmware uploaded)')
 for r in rows:
-    print(f\"{r['id']:>4}  {r['version']:<8} {r['size']:>9} B  {r['sha256'][:12]}…  {r.get('notes') or ''}\")
+    print(f\"{r['id']:>4}  {r.get('device_kind','hub'):<7} {r['version']:<8} {r['size']:>9} B  {r['sha256'][:12]}…  {r.get('notes') or ''}\")
 "
   exit 0
 fi
@@ -112,13 +145,13 @@ fi
 read_ver() { grep -E "^#define FW_$1 " "$SRC" | awk '{print $3}'; }
 VER="$(read_ver MAJOR).$(read_ver MINOR).$(read_ver PATCH)"
 [ -n "$VER" ] && [ "$VER" != ".." ] || die "could not read FW_VERSION from $SRC"
-note "version $VER (from $SRC)"
+note "$KIND $VER (from $SRC)"
 
 # --- build -----------------------------------------------------------------
 
 if [ "$DO_BUILD" = 1 ]; then
   note "building $PIO_ENV"
-  ( cd "$REPO_ROOT/hub" && "$PIO" run -e "$PIO_ENV" >/dev/null ) \
+  ( cd "$REPO_ROOT/$PROJECT" && "$PIO" run -e "$PIO_ENV" >/dev/null ) \
     || die "build failed — run '$PIO run -e $PIO_ENV' to see why"
 fi
 [ -f "$BIN" ] || die "no firmware at $BIN (drop --no-build?)"
@@ -141,7 +174,7 @@ SIG=$(node sign.js sign "$KEY" "$BIN" | awk '/^signature:/{print $2}')
 login
 note "uploading $(wc -c < "$BIN") bytes"
 RESP=$(curl -fsS -X POST \
-  "$API/api/firmware?version=$VER&signature=$(urlencode "$SIG")&kind=hub&notes=$(urlencode "${NOTES:-published by publish.sh}")" \
+  "$API/api/firmware?version=$VER&signature=$(urlencode "$SIG")&kind=$KIND&notes=$(urlencode "${NOTES:-published by publish.sh}")" \
   -H "Authorization: Bearer $TOKEN" \
   -H 'Content-Type: application/octet-stream' \
   --data-binary @"$BIN")

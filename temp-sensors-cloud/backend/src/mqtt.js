@@ -35,6 +35,7 @@ function initMqtt(io) {
       'sensors/+/ota/status',        // hub OTA progress
       'sensors/+/config/state',      // sensor config applied / pending
       'sensors/+/sensor-ota/status', // sensor firmware transfer progress
+      'sensors/+/live/state',        // hub confirms a live request reached the node
       'sensors/+/pairing/request',
       'sensors/+/pairing/status',   // hub acks pairing mode enable/disable
       'sensors/+/sync/request',
@@ -90,6 +91,8 @@ async function handleMessage(topic, payload) {
     await handleConfigState(hubMac, data);
   } else if (parts[2] === 'sensor-ota' && parts[3] === 'status') {
     await handleSensorOtaStatus(hubMac, data);
+  } else if (parts[2] === 'live' && parts[3] === 'state') {
+    await handleLiveState(hubMac, data);
   }
 }
 
@@ -479,6 +482,42 @@ function publishSensorOtaCommand(hubMac, cmd) {
 /**
  * Record how a sensor firmware transfer is going.
  */
+// The hub reports a live request reaching the node. Until it does, the sensor
+// is still asleep and the dashboard can only say the request is queued -- which
+// is a different thing from the sensor being awake, and the distinction is the
+// whole point of the indicator.
+async function handleLiveState(hubMac, data) {
+  const mac = (data.sensor_mac || '').toUpperCase();
+  if (!mac) return;
+  const started  = data.state === 'started';
+  const duration = Number.isInteger(data.duration_s) ? data.duration_s : 0;
+  const interval = Number.isInteger(data.interval_s) ? data.interval_s : null;
+
+  try {
+    const r = await query(
+      `UPDATE sensors
+          SET live_until       = CASE WHEN $1 THEN NOW() + ($2 || ' seconds')::interval
+                                      ELSE NULL END,
+              live_interval_s  = CASE WHEN $1 THEN $3 ELSE NULL END,
+              live_requested_at = NULL
+        WHERE mac = $4
+        RETURNING id, live_until, live_interval_s`,
+      [started, String(duration), interval, mac]
+    );
+    if (r.rows.length === 0) return;
+
+    _io.to(`hub:${hubMac.toUpperCase()}`).emit('liveState', {
+      hub_mac: hubMac.toUpperCase(), sensor_mac: mac,
+      state: started ? 'started' : 'stopped',
+      live_until: r.rows[0].live_until,
+      interval_s: r.rows[0].live_interval_s,
+    });
+  } catch (err) {
+    console.error('Live state error:', err.message);
+  }
+
+}
+
 async function handleSensorOtaStatus(hubMac, data) {
   const mac = (data.sensor_mac || '').toUpperCase();
   if (!mac) return;

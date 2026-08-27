@@ -35,6 +35,7 @@ void offerSensorOta(const uint8_t* mac);
 bool buildSensorOtaOffer();
 void streamImageToSensor(const uint8_t* mac, uint32_t imageSize, uint16_t chunkSize);
 void publishSensorOtaStatus(const char* state, int pct, const char* err);
+void publishLiveState(const uint8_t* mac, uint16_t durationS, uint16_t intervalS);
 static bool hexToDigest(const char* hex, uint8_t* out);
 void saveSensorConfig(int idx);
 void loadSensorConfig(int idx);
@@ -59,7 +60,7 @@ void confirmFirmwareValid();
 #define FW_MINOR 1
 #endif
 #ifndef FW_PATCH
-#define FW_PATCH 7
+#define FW_PATCH 8
 #endif
 #define STR_(x) #x
 #define STR(x)  STR_(x)
@@ -516,6 +517,7 @@ char topicCfgState[72];     // Hub → Cloud: config applied / pending
 char topicSensorOta[80];    // Cloud → Hub: stage an image on a sensor
 char topicSensorOtaStatus[80]; // Hub → Cloud: sensor OTA progress
 char topicLiveReq[80];      // Cloud → Hub: ask a sensor to stay awake
+char topicLiveState[80];    // Hub → Cloud: a live request reached the node
 
 bool cloudConfigured = false;  // true when MQTT credentials exist in NVS
 int  lastMqttState   = 0;     // PubSubClient state after last connectCloud() attempt
@@ -1233,6 +1235,7 @@ void buildTopics() {
   snprintf(topicSensorOta,       sizeof(topicSensorOta),       "sensors/%s/sensor-ota/command", hubMacStr);
   snprintf(topicSensorOtaStatus, sizeof(topicSensorOtaStatus), "sensors/%s/sensor-ota/status",  hubMacStr);
   snprintf(topicLiveReq,         sizeof(topicLiveReq),         "sensors/%s/live/request",       hubMacStr);
+  snprintf(topicLiveState,       sizeof(topicLiveState),       "sensors/%s/live/state",         hubMacStr);
   Serial.printf("[MQTT] Hub MAC: %s\n", hubMacStr);
 }
 
@@ -1250,14 +1253,16 @@ void mqttCallback(char* topic, byte* payload, unsigned int length) {
                &mac[0], &mac[1], &mac[2], &mac[3], &mac[4], &mac[5]) != 6) return;
     int dur = jsonGetInt(json, "duration_s");
     int iv  = jsonGetInt(json, "interval_s");
-    if (dur <= 0 || iv <= 0) return;
+    // duration 0 is a stop: the node breaks out of its burst and sleeps. It is
+    // awake and reporting every few seconds while live, so this lands quickly.
+    if (dur < 0 || (dur > 0 && iv <= 0)) return;
 
     memcpy(livePendingMac, mac, 6);
     liveDuration = (uint16_t)dur;
     liveInterval = (uint16_t)iv;
     liveePending = true;
-    Serial.printf("[LIVE] Queued for %s - delivered on its next reading\n",
-                  macStr.c_str());
+    Serial.printf("[LIVE] %s queued for %s - delivered on its next reading\n",
+                  dur == 0 ? "Stop" : "Start", macStr.c_str());
     return;
   }
 
@@ -1865,7 +1870,7 @@ void saveOfflineBuffer() {
   bp.begin("buf", false);
 
   if (bufCount == 0) {
-    bp.remove("q");
+    if (bp.isKey("q")) bp.remove("q");   // remove() logs an error if absent
   } else {
     int n = bufCount > OFFLINE_PERSIST_MAX ? OFFLINE_PERSIST_MAX : bufCount;
     static BufferedReading tmp[OFFLINE_PERSIST_MAX];
@@ -2451,6 +2456,23 @@ static const char *sensorOtaDeclineName(uint8_t r) {
     case 5: return "previous image not confirmed";
     default: return "declined";
   }
+}
+
+// Tell the cloud a live request actually reached the node. Without this the
+// dashboard can only say it asked -- it cannot say the sensor is awake, which
+// is the part someone watching a live reading needs to know.
+void publishLiveState(const uint8_t *mac, uint16_t durationS, uint16_t intervalS) {
+  if (!cloudConfigured || !mqttClient.connected()) return;
+  char macStr[18];
+  snprintf(macStr, sizeof(macStr), "%02X:%02X:%02X:%02X:%02X:%02X",
+           mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
+  char payload[160];
+  snprintf(payload, sizeof(payload),
+    "{\"sensor_mac\":\"%s\",\"state\":\"%s\",\"duration_s\":%u,\"interval_s\":%u}",
+    macStr, durationS == 0 ? "stopped" : "started",
+    (unsigned)durationS, (unsigned)intervalS);
+  mqttClient.publish(topicLiveState, payload);
+  mqttClient.loop();
 }
 
 void publishSensorOtaStatus(const char *state, int pct, const char *err) {
@@ -3326,7 +3348,8 @@ void OnDataRecv(const esp_now_recv_info_t* esp_now_info,
       lm.interval_s = liveInterval;
       if (esp_now_send(esp_now_info->src_addr, (uint8_t*)&lm, sizeof(lm)) == ESP_OK) {
         liveePending = false;
-        Serial.println("[LIVE] Sent");
+        Serial.println(liveDuration == 0 ? "[LIVE] Stop sent" : "[LIVE] Sent");
+        publishLiveState(esp_now_info->src_addr, liveDuration, liveInterval);
       }
     }
 

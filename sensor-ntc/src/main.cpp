@@ -108,7 +108,7 @@
 // release; the cloud uses it to tell which nodes still need updating.
 #define FW_MAJOR 1
 #define FW_MINOR 1
-#define FW_PATCH 7
+#define FW_PATCH 8
 #define STR_(x) #x
 #define STR(x)  STR_(x)
 
@@ -847,10 +847,20 @@ void runLiveBurst() {
 
   ulog("[LIVE] Reporting every %us for %us\n", iv, dur);
   unsigned long start = millis();
-  int sent = 0;
+  int  sent    = 0;
+  bool stopped = false;
 
   while ((millis() - start) < (unsigned long)dur * 1000UL) {
-    delay((unsigned long)iv * 1000UL);
+    // Wait in slices rather than one long delay: the hub can cancel a burst by
+    // sending a live message with duration 0, and someone who pressed stop
+    // should not wait out the rest of the interval to see it take effect.
+    unsigned long until = millis() + (unsigned long)iv * 1000UL;
+    while ((long)(until - millis()) > 0) {
+      if (g_liveRequested && g_liveDuration == 0) { stopped = true; break; }
+      delay(50);
+    }
+    if (stopped) break;
+
     if (!readSensor()) continue;
 
     BatteryInfo b = getBatteryInfo();
@@ -858,7 +868,10 @@ void runLiveBurst() {
     myData.battery = (uint8_t)b.percentage;
     if (sendDataWithRetry()) sent++;
   }
-  ulog("[LIVE] Done, %d extra reading%s sent\n", sent, sent == 1 ? "" : "s");
+
+  g_liveRequested = false;
+  ulog("[LIVE] %s, %d extra reading%s sent\n",
+       stopped ? "Stopped by request" : "Done", sent, sent == 1 ? "" : "s");
 }
 
 // --- SAFE DEEP SLEEP ---

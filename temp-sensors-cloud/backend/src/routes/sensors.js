@@ -147,7 +147,7 @@ router.delete('/:id', requirePermission('editor'), async (req, res) => {
 // wake it was going to have anyway, so the answer arrives within one reporting
 // interval rather than instantly.
 router.post('/:id/live', requirePermission('editor'), async (req, res) => {
-  const duration = Math.min(Math.max(parseInt(req.body?.duration_s, 10) || 120, 30), 300);
+  const duration = Math.min(Math.max(parseInt(req.body?.duration_s, 10) || 180, 30), 300);
   // The hub discards readings arriving within 5 s of each other to filter TX
   // retries, so anything faster than that would be thrown away.
   const interval = Math.min(Math.max(parseInt(req.body?.interval_s, 10) || 10, 6), 60);

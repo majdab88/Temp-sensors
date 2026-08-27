@@ -59,7 +59,7 @@ void confirmFirmwareValid();
 #define FW_MINOR 1
 #endif
 #ifndef FW_PATCH
-#define FW_PATCH 6
+#define FW_PATCH 7
 #endif
 #define STR_(x) #x
 #define STR(x)  STR_(x)
@@ -2522,6 +2522,12 @@ void offerSensorOta(const uint8_t *mac) {
 
   const ota_offer_message &offer = sOtaOffer;
 
+  // Claimed before the offer goes out, not after the accept comes back. The
+  // handshake is as timing-critical as the transfer itself: another sensor
+  // reporting in this window would otherwise publish to MQTT from the receive
+  // callback, and that blocking write stalls the very frame we are waiting for.
+  sOtaRunning = true;
+
   sOtaReqReady = false;
   esp_now_send(mac, (const uint8_t *)&offer, sizeof(offer));
   Serial.printf("[SOTA] Offered %s (%u bytes, chunk %u)\n",
@@ -2531,17 +2537,24 @@ void offerSensorOta(const uint8_t *mac) {
   // an ordinary timer wake -- nothing comes back and the offer lapses.
   unsigned long start = millis();
   while (!sOtaReqReady && millis() - start < 1200) delay(2);
-  if (!sOtaReqReady) return;
+
+  if (!sOtaReqReady) {
+    Serial.println("[SOTA] No answer - node was not listening for an offer");
+    sOtaRunning = false;
+    flushOfflineBuffer();
+    return;
+  }
 
   if (!sOtaReqAccept) {
     const char *why = sensorOtaDeclineName(sOtaReqReason);
     Serial.printf("[SOTA] Sensor declined: %s\n", why);
     publishSensorOtaStatus("declined", 0, why);
     if (sOtaReqReason == 1) sOtaPending = false;   // already has it; stop offering
+    sOtaRunning = false;
+    flushOfflineBuffer();
     return;
   }
 
-  sOtaRunning = true;
   streamImageToSensor(mac, offer.imageSize, offer.chunkSize);
   sOtaRunning = false;
   flushOfflineBuffer();   // readings that arrived while the radio was busy

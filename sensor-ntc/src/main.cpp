@@ -108,7 +108,7 @@
 // release; the cloud uses it to tell which nodes still need updating.
 #define FW_MAJOR 1
 #define FW_MINOR 1
-#define FW_PATCH 8
+#define FW_PATCH 9
 #define STR_(x) #x
 #define STR(x)  STR_(x)
 
@@ -676,10 +676,16 @@ static void otaSendAck(uint8_t status, uint16_t nextSeq) {
   esp_now_send(hubMac, (uint8_t *)&m, sizeof(m));
 }
 
+// Sent more than once on purpose. Chunks are acknowledged and so recover from
+// a loss, but the result is the last thing said before the node reboots -- if
+// that single frame drops, a transfer that installed correctly looks to the hub
+// like one that died at 99%. Duplicates are harmless; the hub reads the first.
 static void otaSendDone(uint8_t result) {
   ota_done_message m = { MSG_OTA_DONE, result, {0, 0} };
-  esp_now_send(hubMac, (uint8_t *)&m, sizeof(m));
-  delay(60);
+  for (int i = 0; i < 3; i++) {
+    esp_now_send(hubMac, (uint8_t *)&m, sizeof(m));
+    delay(80);
+  }
 }
 
 // Receive an offered image. Blocks until it finishes, fails or times out; on

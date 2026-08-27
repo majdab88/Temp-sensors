@@ -60,7 +60,7 @@ void confirmFirmwareValid();
 #define FW_MINOR 1
 #endif
 #ifndef FW_PATCH
-#define FW_PATCH 8
+#define FW_PATCH 9
 #endif
 #define STR_(x) #x
 #define STR(x)  STR_(x)
@@ -2671,13 +2671,19 @@ void streamImageToSensor(const uint8_t *mac, uint32_t imageSize, uint16_t chunkS
     http.end();
   }
 
-  // The sensor verifies and reports before it reboots.
+  // The sensor hashes the image, verifies the signature, validates the written
+  // partition and writes NVS before answering, so this waits on flash work
+  // rather than on the radio -- hence the margin over the 4 s chunk window.
   sOtaDoneReady = false;
   unsigned long waited = millis();
-  while (!sOtaDoneReady && millis() - waited < 20000) delay(5);
+  while (!sOtaDoneReady && millis() - waited < 45000) delay(5);
 
   if (!sOtaDoneReady) {
-    publishSensorOtaStatus("failed", 100, "no result from sensor");
+    // Silence here does not mean the image failed: the result is a single
+    // unacknowledged frame, and the node reboots straight after sending it. It
+    // may well be running the new image. Its next reading settles the question.
+    Serial.println("[SOTA] No result from sensor - check the version it reports next");
+    publishSensorOtaStatus("failed", 100, "no result - may have installed anyway");
     return;
   }
   if (sOtaDoneResult == 0) {

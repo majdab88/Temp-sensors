@@ -146,11 +146,16 @@ router.delete('/:id', requirePermission('editor'), async (req, res) => {
 // often enough to matter would cost most of the battery. This instead extends a
 // wake it was going to have anyway, so the answer arrives within one reporting
 // interval rather than instantly.
+//
+// The node does not stay awake for the session -- it keeps deep-sleeping
+// between readings, just for less time. Five minutes awake costs about 3.3 mAh;
+// the same five minutes as ten short wakes costs about 0.4 mAh.
 router.post('/:id/live', requirePermission('editor'), async (req, res) => {
-  const duration = Math.min(Math.max(parseInt(req.body?.duration_s, 10) || 180, 30), 300);
-  // The hub discards readings arriving within 5 s of each other to filter TX
-  // retries, so anything faster than that would be thrown away.
-  const interval = Math.min(Math.max(parseInt(req.body?.interval_s, 10) || 10, 6), 60);
+  const duration = Math.min(Math.max(parseInt(req.body?.duration_s, 10) || 300, 60), 300);
+  // Each live reading is a full wake -- boot, read, transmit, sleep -- costing
+  // a second or two. Intervals near that spend the session on overhead rather
+  // than on readings, which is what the floor is protecting.
+  const interval = Math.min(Math.max(parseInt(req.body?.interval_s, 10) || 30, 20), 120);
 
   try {
     const r = await query(

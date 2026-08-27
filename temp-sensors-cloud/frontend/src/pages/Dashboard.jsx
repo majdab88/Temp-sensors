@@ -166,7 +166,9 @@ export default function Dashboard() {
       const ts   = new Date(data.ts).getTime()
       const prev = lastReadingAt.current[data.sensor_mac]
       lastReadingAt.current[data.sensor_mac] = ts
-      if (prev && ts - prev > 0 && ts - prev < 90000) {
+      // The shortest configurable reporting interval is 5 minutes, so any gap
+      // under 150 s can only be a live session.
+      if (prev && ts - prev > 0 && ts - prev < 150000) {
         setLiveSeen((m) => ({ ...m, [data.sensor_mac]: Date.now() }))
       }
 

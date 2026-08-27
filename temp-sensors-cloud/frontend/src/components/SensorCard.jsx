@@ -167,7 +167,9 @@ export default function SensorCard({ sensor, reading, alert, rule, spark, liveSe
       const res = await api.post(`/sensors/${sensor.id}/live`, {})
       setLiveLocal({ requestedAt: Date.now() })
       const mins = Math.round((res.data.starts_within_secs || 900) / 60)
-      setLiveNote(`queued — starts on the sensor's next wake (up to ~${mins} min, `
+      const n = Math.round(res.data.duration_s / res.data.interval_s)
+      setLiveNote(`queued — ${n} readings, one every ${res.data.interval_s}s. `
+                + `Starts on the sensor's next wake (up to ~${mins} min, `
                 + `or press its button to start now)`)
     } catch {
       setLiveNote('request failed')
@@ -203,7 +205,10 @@ export default function SensorCard({ sensor, reading, alert, rule, spark, liveSe
   // Two independent signals. live_until is what the hub confirmed; liveSeenAt
   // is the node reporting faster than its own interval, which is the behaviour
   // itself rather than a report of it. Either one is enough.
-  const seenLive    = !liveLocal?.cleared && liveSeenAt > 0 && nowTs - liveSeenAt < 45000
+  // Held for a little over one live interval, so the chip does not blink out
+  // between readings while the node is asleep between them.
+  const liveGrace   = Math.max(45000, (Number(sensor.live_interval_s) || 30) * 1500)
+  const seenLive    = !liveLocal?.cleared && liveSeenAt > 0 && nowTs - liveSeenAt < liveGrace
   const isLive      = liveUntil > nowTs || seenLive
   const liveReqAt   = liveLocal?.cleared ? 0
                       : sensor.live_requested_at ? new Date(sensor.live_requested_at).getTime()

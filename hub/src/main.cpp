@@ -60,7 +60,7 @@ void confirmFirmwareValid();
 #define FW_MINOR 1
 #endif
 #ifndef FW_PATCH
-#define FW_PATCH 8
+#define FW_PATCH 10
 #endif
 #define STR_(x) #x
 #define STR(x)  STR_(x)
@@ -2595,7 +2595,14 @@ void streamImageToSensor(const uint8_t *mac, uint32_t imageSize, uint16_t chunkS
 
   publishSensorOtaStatus("sending", 0, nullptr);
 
-  while (seq < expected) {
+  // Armed before the first chunk, not after the last. The sensor sends its
+  // result as soon as it has every chunk, which can be while the hub is still
+  // resending a tail it thinks was missed; clearing this afterwards would throw
+  // that result away.
+  sOtaDoneReady = false;
+  int tailRetries = 0;
+
+  while (seq < expected && !sOtaDoneReady) {
     if (millis() - started > 180000UL) {
       publishSensorOtaStatus("failed", lastPct < 0 ? 0 : lastPct, "timed out");
       return;
@@ -2626,7 +2633,7 @@ void streamImageToSensor(const uint8_t *mac, uint32_t imageSize, uint16_t chunkS
     WiFiClient *stream = http.getStreamPtr();
     bool reopen = false;
 
-    while (seq < expected && !reopen) {
+    while (seq < expected && !reopen && !sOtaDoneReady) {
       uint32_t offset = seq * chunkSize;
       uint16_t want   = (uint16_t)((imageSize - offset > chunkSize) ? chunkSize
                                                                     : (imageSize - offset));
@@ -2650,9 +2657,23 @@ void streamImageToSensor(const uint8_t *mac, uint32_t imageSize, uint16_t chunkS
       if ((seq % 8) == 0 || seq == expected) {
         sOtaAckReady = false;
         unsigned long waited = millis();
-        while (!sOtaAckReady && millis() - waited < 4000) delay(2);
+        // Deliberately longer than the sensor's 4 s resend interval. When the
+        // two are equal the hub gives up in the same instant the sensor is
+        // about to ask for what it missed, and the two sides never meet.
+        while (!sOtaAckReady && millis() - waited < 9000) delay(2);
 
-        if (!sOtaAckReady) { reopen = true; break; }   // silence - resend window
+        if (!sOtaAckReady) {
+          // Silence at the end of the image is not completion. The loop below
+          // would exit on seq == expected and leave the sensor waiting for
+          // chunks it never got, so rewind and offer the tail again -- it
+          // ignores anything it already holds, and asks for what it needs.
+          if (seq >= expected && ++tailRetries <= 4) {
+            Serial.printf("[SOTA] No final ack - resending the tail (%d)\n", tailRetries);
+            seq = (seq > 8) ? seq - 8 : 0;
+          }
+          reopen = true;
+          break;
+        }
 
         if (sOtaAckStatus != 0 || sOtaAckNext != (uint16_t)seq) {
           seq = sOtaAckNext;      // sensor wants an earlier chunk
@@ -2671,13 +2692,18 @@ void streamImageToSensor(const uint8_t *mac, uint32_t imageSize, uint16_t chunkS
     http.end();
   }
 
-  // The sensor verifies and reports before it reboots.
-  sOtaDoneReady = false;
+  // The sensor hashes the image, verifies the signature, validates the written
+  // partition and writes NVS before answering, so this waits on flash work
+  // rather than on the radio -- hence the margin over the 4 s chunk window.
   unsigned long waited = millis();
-  while (!sOtaDoneReady && millis() - waited < 20000) delay(5);
+  while (!sOtaDoneReady && millis() - waited < 45000) delay(5);
 
   if (!sOtaDoneReady) {
-    publishSensorOtaStatus("failed", 100, "no result from sensor");
+    // Silence here does not mean the image failed: the result is a single
+    // unacknowledged frame, and the node reboots straight after sending it. It
+    // may well be running the new image. Its next reading settles the question.
+    Serial.println("[SOTA] No result from sensor - check the version it reports next");
+    publishSensorOtaStatus("failed", 100, "no result - may have installed anyway");
     return;
   }
   if (sOtaDoneResult == 0) {

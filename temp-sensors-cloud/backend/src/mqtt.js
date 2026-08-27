@@ -473,9 +473,15 @@ function publishLiveRequest(hubMac, sensorMac, durationS, intervalS) {
  * be days away. The hub holds it and offers it on every contact until the
  * sensor takes it or reports that it already has that version.
  */
+// One retained topic per sensor. Each is staged and installed independently,
+// and a shared topic retains only the last thing written to it -- so staging a
+// second sensor discarded the first the moment the hub restarted.
+const sensorOtaTopic = (hubMac, sensorMac) =>
+  `sensors/${hubMac.toUpperCase()}/sensor-ota/command/${String(sensorMac).toUpperCase().replace(/:/g, '')}`;
+
 function publishSensorOtaCommand(hubMac, cmd) {
   if (!client || !client.connected) throw new Error('MQTT client not connected');
-  client.publish(`sensors/${hubMac.toUpperCase()}/sensor-ota/command`,
+  client.publish(sensorOtaTopic(hubMac, cmd.sensor_mac),
                  JSON.stringify({ ...cmd, sig: cmd.signature }), { retain: true });
 }
 
@@ -556,7 +562,7 @@ async function handleSensorOtaStatus(hubMac, data) {
       (state === 'declined' && error === 'already on this version');
 
     if (settled) {
-      client.publish(`sensors/${hubMac.toUpperCase()}/sensor-ota/command`, '', { retain: true });
+      client.publish(sensorOtaTopic(hubMac, mac), '', { retain: true });
     }
   } catch (err) {
     console.error('Sensor OTA status error:', err.message);

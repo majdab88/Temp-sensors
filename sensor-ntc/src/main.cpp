@@ -108,7 +108,7 @@
 // release; the cloud uses it to tell which nodes still need updating.
 #define FW_MAJOR 1
 #define FW_MINOR 1
-#define FW_PATCH 6
+#define FW_PATCH 7
 #define STR_(x) #x
 #define STR(x)  STR_(x)
 
@@ -258,6 +258,36 @@ RTC_DATA_ATTR bool     in_hibernate_mode        = false;
 #define MSG_OTA_DATA  7   // hub -> sensor: one chunk
 #define MSG_OTA_ACK   8   // sensor -> hub: next sequence expected
 #define MSG_OTA_DONE  9   // sensor -> hub: final result
+
+// --- LIVE MODE (hub -> sensor, one shot) ---
+// A sleeping node cannot be woken on demand: its radio is off, and listening
+// often enough to matter would cost most of the battery. What it can do is stay
+// awake a little longer on a wake it was going to have anyway, and report
+// repeatedly while it is up.
+//
+// Deliberately not part of the config message. cfg_ver is a fingerprint of the
+// settings, and a transient "stay awake" flag would change it, then need a
+// second change to clear it. This is a separate instruction that is acted on
+// once and never stored.
+#define MSG_LIVE 10
+
+// The hub discards readings arriving within 5 s of each other, to filter TX
+// retries, so a live interval has to sit clear of that.
+#define LIVE_MIN_INTERVAL_S 6
+#define LIVE_MAX_DURATION_S 300
+
+typedef struct __attribute__((packed)) {
+  uint8_t  msgType;
+  uint8_t  pad;
+  uint16_t duration_s;
+  uint16_t interval_s;
+  uint16_t reserved;
+} live_message;
+
+static volatile bool     g_liveRequested = false;
+static volatile uint16_t g_liveDuration  = 0;
+static volatile uint16_t g_liveInterval  = 0;
+
 
 #define OTA_MAX_CHUNK      1024   // largest payload the sensor will accept
 #define OTA_DATA_HDR          4   // msgType + seq(2) + reserved
@@ -532,7 +562,7 @@ bool shCoefficientsSane(float a, float b, float c) {
 void waitForConfig() {
   if (!isPaired) return;
   unsigned long start = millis();
-  while (!g_configApplied && millis() - start < CFG_WAIT_MS) {
+  while (!g_configApplied && !g_liveRequested && millis() - start < CFG_WAIT_MS) {
     delay(2);
   }
 }
@@ -799,6 +829,38 @@ void otaMaybeUpdate(int batteryPct) {
   otaRunTransfer(batteryPct);
 }
 
+
+bool        readSensor();
+BatteryInfo getBatteryInfo();
+bool        sendDataWithRetry();
+
+// Stay awake and keep reporting. Costs one burst of radio on a wake that was
+// happening regardless -- roughly 2.7 mAh for two minutes, against a 3000 mAh
+// pack -- rather than a standing duty cycle.
+void runLiveBurst() {
+  uint16_t dur = g_liveDuration;
+  uint16_t iv  = g_liveInterval;
+  g_liveRequested = false;
+
+  if (dur == 0 || dur > LIVE_MAX_DURATION_S) return;
+  if (iv < LIVE_MIN_INTERVAL_S) iv = LIVE_MIN_INTERVAL_S;
+
+  ulog("[LIVE] Reporting every %us for %us\n", iv, dur);
+  unsigned long start = millis();
+  int sent = 0;
+
+  while ((millis() - start) < (unsigned long)dur * 1000UL) {
+    delay((unsigned long)iv * 1000UL);
+    if (!readSensor()) continue;
+
+    BatteryInfo b = getBatteryInfo();
+    myData.msgType = MSG_DATA;
+    myData.battery = (uint8_t)b.percentage;
+    if (sendDataWithRetry()) sent++;
+  }
+  ulog("[LIVE] Done, %d extra reading%s sent\n", sent, sent == 1 ? "" : "s");
+}
+
 // --- SAFE DEEP SLEEP ---
 // ESP32-C6 RISC-V requires proper WiFi/ESP-NOW shutdown before sleep
 // Skipping this causes the illegal instruction crash (MCAUSE: 0x18)
@@ -807,7 +869,11 @@ void goToSleep(int seconds) {
   Serial.flush();         // Ensure serial output completes
 
   sendLogToHub();         // Ship the wake-cycle log to the hub via ESP-NOW
-  waitForConfig();        // Brief window for a config the hub may be pushing
+  waitForConfig();        // Brief window for a config or live request
+
+  // Run here, with the radio still up, so live mode costs no extra listening
+  // on a wake where nobody asked for it.
+  if (g_liveRequested) runLiveBurst();
   esp_now_deinit();       // Then deinit ESP-NOW
   esp_wifi_stop();        // Stop WiFi radio
   delay(100);             // Allow shutdown to settle
@@ -906,6 +972,14 @@ void OnDataRecv(const esp_now_recv_info_t *esp_now_info, const uint8_t *incoming
     ulog("[CFG] Applied v%u: sleep %us, R=%.0f, A=%.4e B=%.4e C=%.4e\n",
          cfg->cfg_ver, cfg->sleep_secs, cfg->r_series,
          cfg->sh_a, cfg->sh_b, cfg->sh_c);
+    return;
+  }
+
+  if (incomingData[0] == MSG_LIVE && len >= (int)sizeof(live_message)) {
+    const live_message *lm = (const live_message *)incomingData;
+    g_liveDuration  = lm->duration_s;
+    g_liveInterval  = lm->interval_s;
+    g_liveRequested = true;
     return;
   }
 

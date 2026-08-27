@@ -74,6 +74,7 @@ export default function SensorCard({ sensor, reading, alert, rule, spark, onRena
   const [deleting, setDeleting] = useState(false)
   const [showAlert, setShowAlert] = useState(false)
   const [showConfig, setShowConfig] = useState(false)
+  const [liveNote, setLiveNote] = useState('')
   // Calibration and reporting cadence affect the integrity of the temperature
   // record, so this is superadmin-only rather than an org-level permission.
   const { user: cfgUser } = useAuth()
@@ -153,6 +154,21 @@ export default function SensorCard({ sensor, reading, alert, rule, spark, onRena
     }
   }
 
+  // A sleeping node cannot be woken on demand, so this extends a wake it was
+  // going to have anyway. The wait is up to one reporting interval.
+  async function requestLive(e) {
+    e.stopPropagation()
+    setLiveNote('requesting…')
+    try {
+      const res = await api.post(`/sensors/${sensor.id}/live`, {})
+      const mins = Math.round((res.data.starts_within_secs || 900) / 60)
+      setLiveNote(`live for ${res.data.duration_s}s, starts within ~${mins} min`)
+    } catch {
+      setLiveNote('request failed')
+    }
+    setTimeout(() => setLiveNote(''), 12000)
+  }
+
   function openAlert(e) {
     e.stopPropagation()
     setShowAlert(true)
@@ -189,6 +205,13 @@ export default function SensorCard({ sensor, reading, alert, rule, spark, onRena
               <div className="sensor-name">{sensor.name || sensor.mac}</div>
               {canEdit && <button className="sensor-rename-btn" onClick={startEdit} title="Rename sensor">✎</button>}
               {canEdit && <button className="sensor-alert-btn" onClick={openAlert} title="Temperature alerts">🔔</button>}
+              {canEdit && (
+                <button
+                  className="sensor-alert-btn"
+                  onClick={requestLive}
+                  title="Ask this sensor to report repeatedly on its next wake"
+                >⏱</button>
+              )}
               {canConfigure && (
                 <button
                   className="sensor-rename-btn"
@@ -235,6 +258,8 @@ export default function SensorCard({ sensor, reading, alert, rule, spark, onRena
         )}
         <BatteryIcon level={reading?.battery} />
       </div>
+
+      {liveNote && <div className="device-meta">{liveNote}</div>}
 
       {showConfig && (
         <SensorConfigModal sensor={sensor} onClose={() => setShowConfig(false)} />

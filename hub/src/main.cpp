@@ -58,7 +58,7 @@ void confirmFirmwareValid();
 #define FW_MINOR 1
 #endif
 #ifndef FW_PATCH
-#define FW_PATCH 3
+#define FW_PATCH 4
 #endif
 #define STR_(x) #x
 #define STR(x)  STR_(x)
@@ -195,6 +195,28 @@ static inline bool resetButtonHeld() {
 #define MSG_OTA_DATA  7   // hub -> sensor: one chunk
 #define MSG_OTA_ACK   8   // sensor -> hub: next sequence expected
 #define MSG_OTA_DONE  9   // sensor -> hub: final result
+
+// --- LIVE MODE (hub -> sensor, one shot) ---
+// Kept out of the config message on purpose: cfg_ver is a fingerprint of the
+// settings, and a transient flag would change it and then need a second change
+// to clear. This is acted on once and never stored.
+#define MSG_LIVE 10
+
+typedef struct __attribute__((packed)) {
+  uint8_t  msgType;
+  uint8_t  pad;
+  uint16_t duration_s;
+  uint16_t interval_s;
+  uint16_t reserved;
+} live_message;
+
+// One request at a time, delivered on the sensor's next contact of any kind --
+// unlike firmware, which needs a button press, because this only asks the node
+// to stay awake rather than to rewrite itself.
+static bool     liveePending = false;
+static uint8_t  livePendingMac[6];
+static uint16_t liveDuration = 0;
+static uint16_t liveInterval = 0;
 
 #define OTA_MAX_CHUNK      1024   // largest payload the sensor will accept
 #define OTA_DATA_HDR          4   // msgType + seq(2) + reserved
@@ -485,6 +507,7 @@ char topicCfgSet[72];       // Cloud → Hub: desired sensor config
 char topicCfgState[72];     // Hub → Cloud: config applied / pending
 char topicSensorOta[80];    // Cloud → Hub: stage an image on a sensor
 char topicSensorOtaStatus[80]; // Hub → Cloud: sensor OTA progress
+char topicLiveReq[80];      // Cloud → Hub: ask a sensor to stay awake
 
 bool cloudConfigured = false;  // true when MQTT credentials exist in NVS
 int  lastMqttState   = 0;     // PubSubClient state after last connectCloud() attempt
@@ -1201,12 +1224,34 @@ void buildTopics() {
   snprintf(topicCfgState,    sizeof(topicCfgState),    "sensors/%s/config/state",     hubMacStr);
   snprintf(topicSensorOta,       sizeof(topicSensorOta),       "sensors/%s/sensor-ota/command", hubMacStr);
   snprintf(topicSensorOtaStatus, sizeof(topicSensorOtaStatus), "sensors/%s/sensor-ota/status",  hubMacStr);
+  snprintf(topicLiveReq,         sizeof(topicLiveReq),         "sensors/%s/live/request",       hubMacStr);
   Serial.printf("[MQTT] Hub MAC: %s\n", hubMacStr);
 }
 
 // Called by PubSubClient when a subscribed message arrives.
 void mqttCallback(char* topic, byte* payload, unsigned int length) {
   String json = String((char*)payload, length);
+
+  // ── Live mode request from cloud ──────────────────────────────────────────
+  if (strcmp(topic, topicLiveReq) == 0) {
+    if (length == 0 || json.indexOf('{') < 0) return;   // retained clear
+    String macStr = jsonGetStr(json, "sensor_mac");
+    uint8_t mac[6];
+    if (macStr.length() != 17 ||
+        sscanf(macStr.c_str(), "%hhX:%hhX:%hhX:%hhX:%hhX:%hhX",
+               &mac[0], &mac[1], &mac[2], &mac[3], &mac[4], &mac[5]) != 6) return;
+    int dur = jsonGetInt(json, "duration_s");
+    int iv  = jsonGetInt(json, "interval_s");
+    if (dur <= 0 || iv <= 0) return;
+
+    memcpy(livePendingMac, mac, 6);
+    liveDuration = (uint16_t)dur;
+    liveInterval = (uint16_t)iv;
+    liveePending = true;
+    Serial.printf("[LIVE] Queued for %s - delivered on its next reading\n",
+                  macStr.c_str());
+    return;
+  }
 
   // ── Sensor firmware from cloud ────────────────────────────────────────────
   if (strcmp(topic, topicSensorOta) == 0) {
@@ -1781,6 +1826,7 @@ bool connectCloud() {
   mqttClient.subscribe(topicOtaCmd);
   mqttClient.subscribe(topicCfgSet);
   mqttClient.subscribe(topicSensorOta);
+  mqttClient.subscribe(topicLiveReq);
 
   // Publish retained online status so the dashboard sees us immediately.
   // fw is what the cloud compares against the firmware registry to decide
@@ -3221,6 +3267,19 @@ void OnDataRecv(const esp_now_recv_info_t* esp_now_info,
     // The sensor is awake and listening only right now, so any pending config
     // has to go out on this frame.
     pushConfigIfPending(index, esp_now_info->src_addr);
+
+    // A live request rides the same window as a config push, so it costs the
+    // node no extra listening. Delivered on any wake, not just a button press.
+    if (liveePending && memcmp(esp_now_info->src_addr, livePendingMac, 6) == 0) {
+      live_message lm = {};
+      lm.msgType    = MSG_LIVE;
+      lm.duration_s = liveDuration;
+      lm.interval_s = liveInterval;
+      if (esp_now_send(esp_now_info->src_addr, (uint8_t*)&lm, sizeof(lm)) == ESP_OK) {
+        liveePending = false;
+        Serial.println("[LIVE] Sent");
+      }
+    }
 
     // Firmware is offered on the same contact. The node only listens after a
     // button press, so on an ordinary timer wake this simply lapses.

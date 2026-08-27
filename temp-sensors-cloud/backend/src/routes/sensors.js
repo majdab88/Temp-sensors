@@ -4,7 +4,7 @@ const express = require('express');
 const { query } = require('../db');
 const { requireAuth, isSuperadminUnscoped } = require('../middleware/auth');
 const { requirePermission } = require('../middleware/permissions');
-const { publishSensorRemove, pushSyncToHub } = require('../mqtt');
+const { publishSensorRemove, pushSyncToHub, publishLiveRequest } = require('../mqtt');
 const { audit } = require('../audit');
 
 const router = express.Router();
@@ -135,6 +135,48 @@ router.delete('/:id', requirePermission('editor'), async (req, res) => {
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'Database error' });
+  }
+});
+
+// POST /api/sensors/:id/live — ask a node to stay awake and report repeatedly
+//
+// A sleeping sensor cannot be woken on demand: its radio is off, and listening
+// often enough to matter would cost most of the battery. This instead extends a
+// wake it was going to have anyway, so the answer arrives within one reporting
+// interval rather than instantly.
+router.post('/:id/live', requirePermission('editor'), async (req, res) => {
+  const duration = Math.min(Math.max(parseInt(req.body?.duration_s, 10) || 120, 30), 300);
+  // The hub discards readings arriving within 5 s of each other to filter TX
+  // retries, so anything faster than that would be thrown away.
+  const interval = Math.min(Math.max(parseInt(req.body?.interval_s, 10) || 10, 6), 60);
+
+  try {
+    const r = await query(
+      `SELECT s.id, s.mac, s.name, s.cfg_sleep_secs, d.mac AS hub_mac
+         FROM sensors s JOIN devices d ON d.id = s.device_id
+        WHERE s.id = $1 AND s.active = TRUE`,
+      [req.params.id]
+    );
+    if (r.rows.length === 0) return res.status(404).json({ error: 'Sensor not found' });
+    const s2 = r.rows[0];
+
+    publishLiveRequest(s2.hub_mac, s2.mac, duration, interval);
+
+    await audit({
+      req, action: 'sensor.live', targetType: 'sensor', targetId: s2.id,
+      details: { sensor_mac: s2.mac, duration_s: duration, interval_s: interval },
+    });
+
+    res.json({
+      requested: true,
+      duration_s: duration,
+      interval_s: interval,
+      // The node picks this up on its next wake, so that is the wait.
+      starts_within_secs: s2.cfg_sleep_secs || 900,
+    });
+  } catch (err) {
+    console.error('Live request error:', err.message);
+    res.status(500).json({ error: err.message || 'Failed to request live mode' });
   }
 });
 

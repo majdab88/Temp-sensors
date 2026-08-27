@@ -450,6 +450,20 @@ async function handleOtaStatus(hubMac, data) {
 }
 
 /**
+ * Ask a sensor to stay awake and report repeatedly on its next wake.
+ *
+ * Not retained: this is only useful while someone is watching, and a request
+ * that surfaced hours later would drain the node for nobody. If the sensor does
+ * not wake within the window, the request is simply dropped.
+ */
+function publishLiveRequest(hubMac, sensorMac, durationS, intervalS) {
+  if (!client || !client.connected) throw new Error('MQTT client not connected');
+  client.publish(`sensors/${hubMac.toUpperCase()}/live/request`,
+                 JSON.stringify({ sensor_mac: sensorMac.toUpperCase(),
+                                  duration_s: durationS, interval_s: intervalS }));
+}
+
+/**
  * Stage a firmware image on a sensor, addressed to its hub.
  *
  * Retained, because delivery waits for a button press on the node -- which may
@@ -592,4 +606,4 @@ function publishSensorRemove(hubMac, sensorMac) {
   console.log(`[MQTT] Sent sensor/remove for ${sensorMac} to hub ${hubMac}`);
 }
 
-module.exports = { initMqtt, publishPairingResponse, publishPairingEnable, publishSensorRemove, getHubStatus, publishOtaCommand, publishSensorConfig, publishSensorOtaCommand, pushSyncToHub: handleSyncRequest };
+module.exports = { initMqtt, publishPairingResponse, publishPairingEnable, publishSensorRemove, getHubStatus, publishOtaCommand, publishSensorConfig, publishSensorOtaCommand, publishLiveRequest, pushSyncToHub: handleSyncRequest };

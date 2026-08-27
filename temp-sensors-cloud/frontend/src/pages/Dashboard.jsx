@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useCallback } from 'react'
+import React, { useEffect, useRef, useState, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
 import SensorCard from '../components/SensorCard'
 import api from '../services/api'
@@ -37,6 +37,8 @@ export default function Dashboard() {
   const [alerts, setAlerts] = useState({})     // active breaches, keyed by sensor MAC
   const [rules, setRules] = useState({})       // alert rules, keyed by sensor id
   const [sparks, setSparks] = useState({})     // 24h temp series, keyed by sensor MAC
+  const [liveSeen, setLiveSeen] = useState({}) // mac -> when it was last seen reporting at burst rate
+  const lastReadingAt = useRef({})            // mac -> previous reading time, to measure the gap
   const [events, setEvents] = useState([])     // recent alert transitions
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
@@ -158,6 +160,16 @@ export default function Dashboard() {
 
     // Live updates from socket
     function onSensorData(data) {
+      // A node reporting far faster than its own interval is live, whatever the
+      // hub did or did not manage to tell us about it. The confirmation is one
+      // message that can be missed; the readings are the thing itself.
+      const ts   = new Date(data.ts).getTime()
+      const prev = lastReadingAt.current[data.sensor_mac]
+      lastReadingAt.current[data.sensor_mac] = ts
+      if (prev && ts - prev > 0 && ts - prev < 90000) {
+        setLiveSeen((m) => ({ ...m, [data.sensor_mac]: Date.now() }))
+      }
+
       setReadings((prev) => ({
         ...prev,
         [data.sensor_mac]: {
@@ -341,6 +353,7 @@ export default function Dashboard() {
                   alert={alerts[sensor.mac] || null}
                   rule={rules[sensor.id] || null}
                   spark={sparks[sensor.mac] || null}
+                  liveSeenAt={liveSeen[sensor.mac] || 0}
                   onRename={handleRename}
                   onDelete={handleDelete}
                   canEdit={canEdit}

@@ -65,7 +65,7 @@ function Sparkline({ points, alarm }) {
   )
 }
 
-export default function SensorCard({ sensor, reading, alert, rule, spark, onRename, onDelete, canEdit = true }) {
+export default function SensorCard({ sensor, reading, alert, rule, spark, liveSeenAt = 0, onRename, onDelete, canEdit = true }) {
   const navigate = useNavigate()
   const toast = useToast()
   const [editing, setEditing] = useState(false)
@@ -200,7 +200,11 @@ export default function SensorCard({ sensor, reading, alert, rule, spark, onRena
   const sleepSecs   = Number(sensor.cfg_sleep_secs) || 900
   const liveUntil   = !liveLocal?.cleared && sensor.live_until
                         ? new Date(sensor.live_until).getTime() : 0
-  const isLive      = liveUntil > nowTs
+  // Two independent signals. live_until is what the hub confirmed; liveSeenAt
+  // is the node reporting faster than its own interval, which is the behaviour
+  // itself rather than a report of it. Either one is enough.
+  const seenLive    = !liveLocal?.cleared && liveSeenAt > 0 && nowTs - liveSeenAt < 45000
+  const isLive      = liveUntil > nowTs || seenLive
   const liveReqAt   = liveLocal?.cleared ? 0
                       : sensor.live_requested_at ? new Date(sensor.live_requested_at).getTime()
                       : liveLocal?.requestedAt || 0
@@ -238,7 +242,11 @@ export default function SensorCard({ sensor, reading, alert, rule, spark, onRena
     >
       <div className="card-eyebrow-row">
         <span className="card-eyebrow">{sensor.hub_name || sensor.hub_mac || 'Sensor'}</span>
-        {isLive && <span className="chip live"><span className="dot">●</span> live {liveLeft}s</span>}
+        {isLive && (
+          <span className="chip live">
+            <span className="dot">●</span> live{liveLeft > 0 ? ` ${liveLeft}s` : ''}
+          </span>
+        )}
         {livePending && (
           <span className="chip waking" title="Waiting for the sensor's next wake — press its button to start now">
             ◌ waking{nextWakeIn ? ` ${nextWakeIn}` : ''}

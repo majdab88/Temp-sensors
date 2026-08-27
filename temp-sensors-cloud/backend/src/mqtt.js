@@ -479,6 +479,13 @@ function publishLiveRequest(hubMac, sensorMac, durationS, intervalS) {
 const sensorOtaTopic = (hubMac, sensorMac) =>
   `sensors/${hubMac.toUpperCase()}/sensor-ota/command/${String(sensorMac).toUpperCase().replace(/:/g, '')}`;
 
+// Cancel a staged image: an empty retained message both drops it from the
+// broker and tells the hub to free the slot holding it.
+function clearSensorOtaCommand(hubMac, sensorMac) {
+  if (!client || !client.connected) throw new Error('MQTT client not connected');
+  client.publish(sensorOtaTopic(hubMac, sensorMac), '', { retain: true });
+}
+
 function publishSensorOtaCommand(hubMac, cmd) {
   if (!client || !client.connected) throw new Error('MQTT client not connected');
   client.publish(sensorOtaTopic(hubMac, cmd.sensor_mac),
@@ -667,4 +674,4 @@ function publishSensorRemove(hubMac, sensorMac) {
   console.log(`[MQTT] Sent sensor/remove for ${sensorMac} to hub ${hubMac}`);
 }
 
-module.exports = { initMqtt, publishPairingResponse, publishPairingEnable, publishSensorRemove, getHubStatus, publishOtaCommand, publishSensorConfig, publishSensorOtaCommand, publishLiveRequest, pushSyncToHub: handleSyncRequest };
+module.exports = { clearSensorOtaCommand, initMqtt, publishPairingResponse, publishPairingEnable, publishSensorRemove, getHubStatus, publishOtaCommand, publishSensorConfig, publishSensorOtaCommand, publishLiveRequest, pushSyncToHub: handleSyncRequest };

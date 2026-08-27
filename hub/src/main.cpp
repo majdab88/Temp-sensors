@@ -2699,11 +2699,18 @@ void streamImageToSensor(const uint8_t *mac, uint32_t imageSize, uint16_t chunkS
   while (!sOtaDoneReady && millis() - waited < 45000) delay(5);
 
   if (!sOtaDoneReady) {
-    // Silence here does not mean the image failed: the result is a single
-    // unacknowledged frame, and the node reboots straight after sending it. It
-    // may well be running the new image. Its next reading settles the question.
-    Serial.println("[SOTA] No result from sensor - check the version it reports next");
-    publishSensorOtaStatus("failed", 100, "no result - may have installed anyway");
+    // Two different silences. If the tail was resent and still never
+    // acknowledged, the sensor is missing chunks and cannot have installed
+    // anything. If the transfer ran clean to the end, the only thing lost is
+    // the result frame, and the node may well be running the new image -- its
+    // next reading settles that one.
+    if (tailRetries > 0) {
+      Serial.println("[SOTA] Sensor stopped acknowledging - image incomplete, not installed");
+      publishSensorOtaStatus("failed", 100, "incomplete - sensor stopped acknowledging");
+    } else {
+      Serial.println("[SOTA] No result from sensor - check the version it reports next");
+      publishSensorOtaStatus("failed", 100, "no result - may have installed anyway");
+    }
     return;
   }
   if (sOtaDoneResult == 0) {

@@ -60,7 +60,7 @@ void confirmFirmwareValid();
 #define FW_MINOR 1
 #endif
 #ifndef FW_PATCH
-#define FW_PATCH 10
+#define FW_PATCH 11
 #endif
 #define STR_(x) #x
 #define STR(x)  STR_(x)
@@ -155,6 +155,7 @@ static bool     sOtaRunning = false;
 
 // Set by the ESP-NOW callback when a sensor reports in; acted on from loop().
 static volatile bool otaOfferWanted = false;
+static volatile unsigned long otaOfferSentAt = 0;
 static uint8_t       otaOfferMac[6];
 
 // Set from the ESP-NOW callback while a transfer is in flight.
@@ -2535,30 +2536,16 @@ bool buildSensorOtaOffer() {
   return true;
 }
 
-// Hand the prepared offer to a sensor that has just reported in, and run the
-// transfer if it accepts. Sent on every contact: the sensor only listens after
-// a button-press wake, so an offer sent on a timer wake is simply ignored.
+// Wait for the node's answer to an offer already sent from the receive
+// callback, and run the transfer if it accepts. Only this part is deferred to
+// loop(), because only this part blocks for seconds.
 void offerSensorOta(const uint8_t *mac) {
-  if (!sOtaPending || sOtaRunning || !sOtaOfferReady) return;
-  if (memcmp(mac, sOtaMac, 6) != 0) return;
-
+  if (!sOtaRunning) return;             // claimed when the offer went out
   const ota_offer_message &offer = sOtaOffer;
 
-  // Claimed before the offer goes out, not after the accept comes back. The
-  // handshake is as timing-critical as the transfer itself: another sensor
-  // reporting in this window would otherwise publish to MQTT from the receive
-  // callback, and that blocking write stalls the very frame we are waiting for.
-  sOtaRunning = true;
-
-  sOtaReqReady = false;
-  esp_now_send(mac, (const uint8_t *)&offer, sizeof(offer));
-  Serial.printf("[SOTA] Offered %s (%u bytes, chunk %u)\n",
-                sOtaVersion, (unsigned)offer.imageSize, offer.chunkSize);
-
-  // The sensor answers within milliseconds if it is listening. If it is not --
-  // an ordinary timer wake -- nothing comes back and the offer lapses.
-  unsigned long start = millis();
-  while (!sOtaReqReady && millis() - start < 1200) delay(2);
+  // Measured from when the offer was sent, not from when loop() reached here:
+  // whatever the callback did afterwards has already spent the node's patience.
+  while (!sOtaReqReady && millis() - otaOfferSentAt < 1200) delay(2);
 
   if (!sOtaReqReady) {
     Serial.println("[SOTA] No answer - node was not listening for an offer");
@@ -2699,11 +2686,18 @@ void streamImageToSensor(const uint8_t *mac, uint32_t imageSize, uint16_t chunkS
   while (!sOtaDoneReady && millis() - waited < 45000) delay(5);
 
   if (!sOtaDoneReady) {
-    // Silence here does not mean the image failed: the result is a single
-    // unacknowledged frame, and the node reboots straight after sending it. It
-    // may well be running the new image. Its next reading settles the question.
-    Serial.println("[SOTA] No result from sensor - check the version it reports next");
-    publishSensorOtaStatus("failed", 100, "no result - may have installed anyway");
+    // Two different silences. If the tail was resent and still never
+    // acknowledged, the sensor is missing chunks and cannot have installed
+    // anything. If the transfer ran clean to the end, the only thing lost is
+    // the result frame, and the node may well be running the new image -- its
+    // next reading settles that one.
+    if (tailRetries > 0) {
+      Serial.println("[SOTA] Sensor stopped acknowledging - image incomplete, not installed");
+      publishSensorOtaStatus("failed", 100, "incomplete - sensor stopped acknowledging");
+    } else {
+      Serial.println("[SOTA] No result from sensor - check the version it reports next");
+      publishSensorOtaStatus("failed", 100, "no result - may have installed anyway");
+    }
     return;
   }
   if (sOtaDoneResult == 0) {
@@ -3381,8 +3375,26 @@ void OnDataRecv(const esp_now_recv_info_t* esp_now_info,
 
     // Firmware is offered on the same contact. The node only listens after a
     // button press, so on an ordinary timer wake this simply lapses.
-    otaOfferWanted = true;
-    memcpy(otaOfferMac, esp_now_info->src_addr, 6);
+    //
+    // Sent from here rather than deferred to loop(): the node stops listening
+    // 400 ms after it transmits, and updateSensor() below publishes over TLS,
+    // which can block for longer than that on its own. Only the transfer, which
+    // takes seconds, waits for loop().
+    if (sOtaPending && sOtaOfferReady && !sOtaRunning &&
+        memcmp(esp_now_info->src_addr, sOtaMac, 6) == 0) {
+      sOtaReqReady = false;
+      esp_now_send(esp_now_info->src_addr, (const uint8_t *)&sOtaOffer, sizeof(sOtaOffer));
+      otaOfferSentAt = millis();
+      Serial.printf("[SOTA] Offered %s (%u bytes, chunk %u)\n",
+                    sOtaVersion, (unsigned)sOtaOffer.imageSize, sOtaOffer.chunkSize);
+
+      // Claims the radio and the network for the handshake, which also stops
+      // this frame's own reading being published -- it is buffered instead and
+      // flushed when the transfer finishes.
+      sOtaRunning    = true;
+      otaOfferWanted = true;
+      memcpy(otaOfferMac, esp_now_info->src_addr, 6);
+    }
 
     updateSensor(index, incomingData.temp, incomingData.hum,
                  incomingRSSI, incomingData.battery);

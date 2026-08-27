@@ -163,7 +163,8 @@ export default function SensorCard({ sensor, reading, alert, rule, spark, onRena
     try {
       const res = await api.post(`/sensors/${sensor.id}/live`, {})
       const mins = Math.round((res.data.starts_within_secs || 900) / 60)
-      setLiveNote(`live for ${res.data.duration_s}s, starts within ~${mins} min`)
+      setLiveNote(`queued — starts on the sensor's next wake (up to ~${mins} min, `
+                + `or press its button to start now)`)
     } catch {
       setLiveNote('request failed')
     }
@@ -198,6 +199,18 @@ export default function SensorCard({ sensor, reading, alert, rule, spark, onRena
                       nowTs - liveReqAt < ((sensor.cfg_sleep_secs || 900) + 120) * 1000
   const liveLeft    = isLive ? Math.max(0, Math.round((liveUntil - nowTs) / 1000)) : 0
 
+  // The sleep interval is fixed, so the wake a queued request is waiting for is
+  // predictable from the last reading. "Waking" on its own reads as indefinite;
+  // a number turns the same wait into something you can decide to sit through.
+  const nextWakeIn = (() => {
+    if (!livePending || !sensor.lastUpdate) return null
+    const due = (sensor.lastUpdate + (sensor.cfg_sleep_secs || 900)) * 1000
+    const secs = Math.round((due - nowTs) / 1000)
+    if (secs <= 30) return 'any moment'
+    if (secs < 90)  return `~${secs}s`
+    return `~${Math.round(secs / 60)}m`
+  })()
+
   useEffect(() => {
     if (!isLive && !livePending) return
     const t = setInterval(() => setNowTs(Date.now()), 1000)
@@ -213,7 +226,11 @@ export default function SensorCard({ sensor, reading, alert, rule, spark, onRena
       <div className="card-eyebrow-row">
         <span className="card-eyebrow">{sensor.hub_name || sensor.hub_mac || 'Sensor'}</span>
         {isLive && <span className="chip live"><span className="dot">●</span> live {liveLeft}s</span>}
-        {livePending && <span className="chip waking">◌ waking</span>}
+        {livePending && (
+          <span className="chip waking" title="Waiting for the sensor's next wake — press its button to start now">
+            ◌ waking{nextWakeIn ? ` ${nextWakeIn}` : ''}
+          </span>
+        )}
         <span className={`chip ${chip.cls}`}>{chip.label}</span>
       </div>
 

@@ -108,7 +108,7 @@
 // release; the cloud uses it to tell which nodes still need updating.
 #define FW_MAJOR 1
 #define FW_MINOR 1
-#define FW_PATCH 10
+#define FW_PATCH 11
 #define STR_(x) #x
 #define STR(x)  STR_(x)
 
@@ -1546,9 +1546,11 @@ void setup() {
       in_hibernate_mode = false;
       otaConfirmImage();   // a delivered reading is what proves an image good
 
-      // Only a button press asks for an update. Timer wakes never listen, so
-      // the duty cycle is unchanged.
-      if (force_rescan_this_cycle) otaMaybeUpdate(bat.percentage);
+      // A button press asks for an update; so does a live session, which is
+      // someone watching this node right now and contacting the hub every
+      // half minute. Ordinary timer wakes still never listen, so the duty
+      // cycle of a node nobody is looking at is unchanged.
+      if (force_rescan_this_cycle || liveCyclesLeft > 0) otaMaybeUpdate(bat.percentage);
 
     } else {
       // Failure — bump the counter (RTC memory, persists across sleep).

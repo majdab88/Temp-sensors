@@ -61,7 +61,7 @@ void confirmFirmwareValid();
 #define FW_MINOR 1
 #endif
 #ifndef FW_PATCH
-#define FW_PATCH 13
+#define FW_PATCH 14
 #endif
 #define STR_(x) #x
 #define STR(x)  STR_(x)
@@ -2606,7 +2606,13 @@ void offerSensorOta(const uint8_t *mac) {
 
   // Measured from when the offer was sent, not from when loop() reached here:
   // whatever the callback did afterwards has already spent the node's patience.
-  while (!sOtaReqReady && millis() - otaOfferSentAt < 1200) delay(2);
+  //
+  // Seconds, not milliseconds, because accepting is not a quick decision: the
+  // node calls esp_ota_begin() first, which erases a megabyte of flash, and
+  // only then answers. A window sized for a radio round trip missed the reply
+  // every time the target partition was not already blank -- and left the node
+  // waiting for chunks from a hub that had given up on it.
+  while (!sOtaReqReady && millis() - otaOfferSentAt < 8000) delay(2);
 
   if (!sOtaReqReady) {
     Serial.println("[SOTA] No answer - node was not listening for an offer");

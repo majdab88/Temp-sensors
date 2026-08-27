@@ -108,7 +108,7 @@
 // release; the cloud uses it to tell which nodes still need updating.
 #define FW_MAJOR 1
 #define FW_MINOR 1
-#define FW_PATCH 9
+#define FW_PATCH 10
 #define STR_(x) #x
 #define STR(x)  STR_(x)
 
@@ -189,6 +189,13 @@
 // should be attempted again, so that's the correct behavior.
 RTC_DATA_ATTR uint32_t consecutive_failed_wakes = 0;
 RTC_DATA_ATTR bool     in_hibernate_mode        = false;
+
+// A live session is a temporarily shorter sleep interval, not a stretch of
+// staying awake. Held in RTC memory so it survives deep sleep but not a power
+// cycle -- pulling the battery should not leave a node in a fast-reporting
+// state nobody asked for.
+RTC_DATA_ATTR uint16_t liveCyclesLeft = 0;
+RTC_DATA_ATTR uint16_t liveIntervalS  = 0;
 
 // --- COMMUNICATION CHANNEL ---
 #define ESPNOW_CHANNEL 0          // 0 = auto-detect
@@ -271,9 +278,10 @@ RTC_DATA_ATTR bool     in_hibernate_mode        = false;
 // once and never stored.
 #define MSG_LIVE 10
 
-// The hub discards readings arriving within 5 s of each other, to filter TX
-// retries, so a live interval has to sit clear of that.
-#define LIVE_MIN_INTERVAL_S 6
+// Each live reading is a full wake: boot, read, transmit, sleep -- one to two
+// seconds of it. Intervals near that spend most of the session on overhead
+// rather than on readings, which is what a floor this high is protecting.
+#define LIVE_MIN_INTERVAL_S 20
 #define LIVE_MAX_DURATION_S 300
 
 typedef struct __attribute__((packed)) {
@@ -840,44 +848,28 @@ bool        readSensor();
 BatteryInfo getBatteryInfo();
 bool        sendDataWithRetry();
 
-// Stay awake and keep reporting. Costs one burst of radio on a wake that was
-// happening regardless -- roughly 2.7 mAh for two minutes, against a 3000 mAh
-// pack -- rather than a standing duty cycle.
-void runLiveBurst() {
+// Schedule a live session. The node does not stay awake for it: it sleeps
+// between readings exactly as it always does, just for less time. Five minutes
+// spent awake costs about 3.3 mAh; the same five minutes as ten short wakes
+// costs about 0.4 mAh, and the readings arrive on the same cadence either way.
+static void applyLiveRequest() {
+  g_liveRequested = false;
   uint16_t dur = g_liveDuration;
   uint16_t iv  = g_liveInterval;
-  g_liveRequested = false;
 
-  if (dur == 0 || dur > LIVE_MAX_DURATION_S) return;
-  if (iv < LIVE_MIN_INTERVAL_S) iv = LIVE_MIN_INTERVAL_S;
-
-  ulog("[LIVE] Reporting every %us for %us\n", iv, dur);
-  unsigned long start = millis();
-  int  sent    = 0;
-  bool stopped = false;
-
-  while ((millis() - start) < (unsigned long)dur * 1000UL) {
-    // Wait in slices rather than one long delay: the hub can cancel a burst by
-    // sending a live message with duration 0, and someone who pressed stop
-    // should not wait out the rest of the interval to see it take effect.
-    unsigned long until = millis() + (unsigned long)iv * 1000UL;
-    while ((long)(until - millis()) > 0) {
-      if (g_liveRequested && g_liveDuration == 0) { stopped = true; break; }
-      delay(50);
-    }
-    if (stopped) break;
-
-    if (!readSensor()) continue;
-
-    BatteryInfo b = getBatteryInfo();
-    myData.msgType = MSG_DATA;
-    myData.battery = (uint8_t)b.percentage;
-    if (sendDataWithRetry()) sent++;
+  if (dur == 0) {                       // stop
+    if (liveCyclesLeft) ulog("[LIVE] Stopped by request\n");
+    liveCyclesLeft = 0;
+    return;
   }
+  if (dur > LIVE_MAX_DURATION_S) dur = LIVE_MAX_DURATION_S;
+  if (iv  < LIVE_MIN_INTERVAL_S) iv  = LIVE_MIN_INTERVAL_S;
 
-  g_liveRequested = false;
-  ulog("[LIVE] %s, %d extra reading%s sent\n",
-       stopped ? "Stopped by request" : "Done", sent, sent == 1 ? "" : "s");
+  liveIntervalS  = iv;
+  liveCyclesLeft = dur / iv;
+  if (liveCyclesLeft == 0) liveCyclesLeft = 1;
+  ulog("[LIVE] %u reading%s, one every %us\n",
+       liveCyclesLeft, liveCyclesLeft == 1 ? "" : "s", iv);
 }
 
 // --- SAFE DEEP SLEEP ---
@@ -890,9 +882,19 @@ void goToSleep(int seconds) {
   sendLogToHub();         // Ship the wake-cycle log to the hub via ESP-NOW
   waitForConfig();        // Brief window for a config or live request
 
-  // Run here, with the radio still up, so live mode costs no extra listening
-  // on a wake where nobody asked for it.
-  if (g_liveRequested) runLiveBurst();
+  // Handled here, with the radio still up, so live mode costs no extra
+  // listening on a wake where nobody asked for it.
+  if (g_liveRequested) applyLiveRequest();
+
+  // A live session shortens the next sleep rather than replacing it. Counted
+  // down here so a session that is interrupted -- flat battery, hub gone --
+  // expires on its own instead of leaving the node reporting fast forever.
+  if (liveCyclesLeft > 0 && liveIntervalS >= LIVE_MIN_INTERVAL_S) {
+    liveCyclesLeft--;
+    seconds = liveIntervalS;
+    Serial.printf("[LIVE] %u reading%s left after this one\n",
+                  liveCyclesLeft, liveCyclesLeft == 1 ? "" : "s");
+  }
   esp_now_deinit();       // Then deinit ESP-NOW
   esp_wifi_stop();        // Stop WiFi radio
   delay(100);             // Allow shutdown to settle

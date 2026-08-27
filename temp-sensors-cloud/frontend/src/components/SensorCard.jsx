@@ -76,6 +76,9 @@ export default function SensorCard({ sensor, reading, alert, rule, spark, onRena
   const [showConfig, setShowConfig] = useState(false)
   const [liveNote, setLiveNote] = useState('')
   const [nowTs, setNowTs] = useState(() => Date.now())
+  // Shows the chip on click instead of waiting for the next poll. Cleared
+  // once the server's own state says something.
+  const [liveLocal, setLiveLocal] = useState(null)
   // Calibration and reporting cadence affect the integrity of the temperature
   // record, so this is superadmin-only rather than an org-level permission.
   const { user: cfgUser } = useAuth()
@@ -162,6 +165,7 @@ export default function SensorCard({ sensor, reading, alert, rule, spark, onRena
     setLiveNote('requesting…')
     try {
       const res = await api.post(`/sensors/${sensor.id}/live`, {})
+      setLiveLocal({ requestedAt: Date.now() })
       const mins = Math.round((res.data.starts_within_secs || 900) / 60)
       setLiveNote(`queued — starts on the sensor's next wake (up to ~${mins} min, `
                 + `or press its button to start now)`)
@@ -176,6 +180,7 @@ export default function SensorCard({ sensor, reading, alert, rule, spark, onRena
     setLiveNote('stopping…')
     try {
       await api.delete(`/sensors/${sensor.id}/live`)
+      setLiveLocal({ cleared: true })
       setLiveNote('stopped')
     } catch {
       setLiveNote('stop failed')
@@ -192,19 +197,27 @@ export default function SensorCard({ sensor, reading, alert, rule, spark, onRena
   // live_requested_at covers the gap before that, which lasts until the sensor
   // next wakes -- bounded here so a request to a node that never answers stops
   // claiming to be pending forever.
-  const liveUntil   = sensor.live_until ? new Date(sensor.live_until).getTime() : 0
+  const sleepSecs   = Number(sensor.cfg_sleep_secs) || 900
+  const liveUntil   = !liveLocal?.cleared && sensor.live_until
+                        ? new Date(sensor.live_until).getTime() : 0
   const isLive      = liveUntil > nowTs
-  const liveReqAt   = sensor.live_requested_at ? new Date(sensor.live_requested_at).getTime() : 0
+  const liveReqAt   = liveLocal?.cleared ? 0
+                      : sensor.live_requested_at ? new Date(sensor.live_requested_at).getTime()
+                      : liveLocal?.requestedAt || 0
   const livePending = !isLive && liveReqAt > 0 &&
-                      nowTs - liveReqAt < ((sensor.cfg_sleep_secs || 900) + 120) * 1000
+                      nowTs - liveReqAt < (sleepSecs + 120) * 1000
   const liveLeft    = isLive ? Math.max(0, Math.round((liveUntil - nowTs) / 1000)) : 0
 
   // The sleep interval is fixed, so the wake a queued request is waiting for is
   // predictable from the last reading. "Waking" on its own reads as indefinite;
   // a number turns the same wait into something you can decide to sit through.
   const nextWakeIn = (() => {
-    if (!livePending || !sensor.lastUpdate) return null
-    const due = (sensor.lastUpdate + (sensor.cfg_sleep_secs || 900)) * 1000
+    // From the reading itself, not from the sensor row: lastUpdate arrives as a
+    // bigint, which node-postgres hands over as a string, and adding seconds to
+    // a string concatenates instead of adding.
+    const lastAt = reading?.recorded_at ? new Date(reading.recorded_at).getTime() : 0
+    if (!livePending || !lastAt) return null
+    const due = lastAt + sleepSecs * 1000
     const secs = Math.round((due - nowTs) / 1000)
     if (secs <= 30) return 'any moment'
     if (secs < 90)  return `~${secs}s`

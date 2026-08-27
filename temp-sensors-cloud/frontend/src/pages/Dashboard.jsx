@@ -184,6 +184,20 @@ export default function Dashboard() {
       }
     }
 
+    // Live mode starting or ending is a hub-reported transition like any other.
+    // Without this the card keeps claiming the sensor is still waking until
+    // something else triggers a refetch.
+    function onLiveState(d) {
+      setSensors((prev) => prev.map((s) =>
+        s.mac === d.sensor_mac
+          ? { ...s,
+              live_until:        d.state === 'started' ? d.live_until : null,
+              live_interval_s:   d.state === 'started' ? d.interval_s : null,
+              live_requested_at: null }
+          : s
+      ))
+    }
+
     // Alert transitions — keep a map of active breaches; 'recovered' clears one.
     function onAlert(a) {
       setAlerts((prev) => {
@@ -205,11 +219,13 @@ export default function Dashboard() {
 
     socket.on('sensorData', onSensorData)
     socket.on('alert', onAlert)
+    socket.on('liveState', onLiveState)
     socket.on('connect', onConnect)
 
     return () => {
       socket.off('sensorData', onSensorData)
       socket.off('alert', onAlert)
+      socket.off('liveState', onLiveState)
       socket.off('connect', onConnect)
       hubsJoined.forEach((mac) => socket.emit('leave', mac))
     }

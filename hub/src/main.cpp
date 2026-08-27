@@ -58,7 +58,7 @@ void confirmFirmwareValid();
 #define FW_MINOR 1
 #endif
 #ifndef FW_PATCH
-#define FW_PATCH 4
+#define FW_PATCH 5
 #endif
 #define STR_(x) #x
 #define STR(x)  STR_(x)
@@ -2525,6 +2525,7 @@ void offerSensorOta(const uint8_t *mac) {
   sOtaRunning = true;
   streamImageToSensor(mac, offer.imageSize, offer.chunkSize);
   sOtaRunning = false;
+  flushOfflineBuffer();   // readings that arrived while the radio was busy
 }
 
 // Pump the image out chunk by chunk. Rewinding is done with a fresh HTTP range
@@ -2695,8 +2696,15 @@ void publishSensorData(int idx) {
     strftime(ts, sizeof(ts), "%Y-%m-%dT%H:%M:%SZ", &utcTm);
   }
 
-  if (!cloudConfigured || !mqttClient.connected()) {
-    // MQTT offline — store the reading in the circular buffer for later flush.
+  // A sensor firmware transfer streams over HTTP from loop(), and this runs in
+  // the ESP-NOW callback -- so publishing here would put a second network
+  // operation in a second task alongside it. That is what hung a transfer at
+  // 59% when another sensor happened to report mid-stream.
+  //
+  // The reading is not lost: the offline buffer already exists for exactly this
+  // shape of problem, and is flushed when the transfer finishes.
+  if (!cloudConfigured || !mqttClient.connected() || sOtaRunning) {
+    // MQTT offline or busy — store the reading in the circular buffer.
     BufferedReading& r = offlineBuf[bufHead];
     memcpy(r.mac, s.mac, 6);
     r.temp    = s.temp;
@@ -3254,6 +3262,15 @@ void OnDataRecv(const esp_now_recv_info_t* esp_now_info,
     int index = findSensor(esp_now_info->src_addr);
     if (index == -1) {
       Serial.println(" | Unknown sensor — ignoring. Re-pair to register.");
+      return;
+    }
+
+    // Everything below talks to the radio or the cloud, and a transfer in
+    // flight owns both. Skipping it costs one cycle: config, live and firmware
+    // offers are all retried on the sensor's next contact.
+    if (sOtaRunning) {
+      updateSensor(index, incomingData.temp, incomingData.hum,
+                   incomingRSSI, incomingData.battery);
       return;
     }
 

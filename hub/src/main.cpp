@@ -32,6 +32,7 @@ void handleLogChunk(const uint8_t* mac, const log_message* msg);
 int  findSensor(const uint8_t* mac);
 void publishOtaStatus(const char* state, int pct, const char* err);
 void offerSensorOta(const uint8_t* mac);
+bool buildSensorOtaOffer();
 void streamImageToSensor(const uint8_t* mac, uint32_t imageSize, uint16_t chunkSize);
 void publishSensorOtaStatus(const char* state, int pct, const char* err);
 static bool hexToDigest(const char* hex, uint8_t* out);
@@ -58,7 +59,7 @@ void confirmFirmwareValid();
 #define FW_MINOR 1
 #endif
 #ifndef FW_PATCH
-#define FW_PATCH 5
+#define FW_PATCH 6
 #endif
 #define STR_(x) #x
 #define STR(x)  STR_(x)
@@ -252,6 +253,13 @@ typedef struct __attribute__((packed)) {
   uint8_t  sig[72];
   char     version[16];
 } ota_offer_message;
+
+// The offer frame is built when the command is staged, not when the sensor
+// appears. Sizing the image needs an HTTP round trip, and the node listens for
+// only a few hundred milliseconds after transmitting -- long enough to receive a
+// frame that is already prepared, nowhere near long enough to fetch one first.
+static ota_offer_message sOtaOffer;
+static bool              sOtaOfferReady = false;
 
 typedef struct __attribute__((packed)) {
   uint8_t msgType;
@@ -1281,6 +1289,11 @@ void mqttCallback(char* topic, byte* payload, unsigned int length) {
     ver.toCharArray(sOtaVersion, sizeof(sOtaVersion));
     sha.toCharArray(sOtaSha,     sizeof(sOtaSha));
     sig.toCharArray(sOtaSigB64,  sizeof(sOtaSigB64));
+    sOtaOfferReady = buildSensorOtaOffer();
+    if (!sOtaOfferReady) {
+      publishSensorOtaStatus("failed", 0, "image unreachable");
+      return;
+    }
     sOtaPending = true;
     Serial.printf("[SOTA] Staged %s for %s - waiting for a button press on the node\n",
                   sOtaVersion, macStr.c_str());
@@ -2459,14 +2472,8 @@ void publishSensorOtaStatus(const char *state, int pct, const char *err) {
   mqttClient.loop();
 }
 
-// Offer the pending image to a sensor that has just reported in. Sent on every
-// contact: the sensor only listens after a button-press wake, so an offer sent
-// on a timer wake is simply ignored. That keeps the hub from needing to know
-// which kind of wake it was.
-void offerSensorOta(const uint8_t *mac) {
-  if (!sOtaPending || sOtaRunning) return;
-  if (memcmp(mac, sOtaMac, 6) != 0) return;
-
+// Prepare the frame the sensor will be sent. Done once, at staging time.
+bool buildSensorOtaOffer() {
   ota_offer_message offer = {};
   offer.msgType = MSG_OTA_OFFER;
   offer.schema  = 1;
@@ -2475,13 +2482,13 @@ void offerSensorOta(const uint8_t *mac) {
   esp_now_get_version(&nowVer);
   offer.chunkSize = (nowVer >= 2) ? 1024 : 240;
 
-  if (!hexToDigest(sOtaSha, offer.sha256)) return;
+  if (!hexToDigest(sOtaSha, offer.sha256)) return false;
 
   size_t sigLen = 0;
   if (mbedtls_base64_decode(offer.sig, sizeof(offer.sig), &sigLen,
                             (const unsigned char *)sOtaSigB64, strlen(sOtaSigB64)) != 0) {
     Serial.println("[SOTA] Signature is not valid base64");
-    return;
+    return false;
   }
   offer.sigLen = (uint8_t)sigLen;
   strncpy(offer.version, sOtaVersion, sizeof(offer.version));
@@ -2492,26 +2499,38 @@ void offerSensorOta(const uint8_t *mac) {
   HTTPClient http;
   http.setTimeout(OTA_HTTP_TIMEOUT_MS);
   http.setConnectTimeout(OTA_HTTP_TIMEOUT_MS);
-  if (!http.begin(net, sOtaUrl)) return;
+  if (!http.begin(net, sOtaUrl)) return false;
   int code = http.GET();
   int total = http.getSize();
   http.end();
   if (code != HTTP_CODE_OK || total <= 0) {
     Serial.printf("[SOTA] Cannot size image (http %d)\n", code);
-    publishSensorOtaStatus("failed", 0, "image unreachable");
-    return;
+    return false;
   }
   offer.imageSize = (uint32_t)total;
 
+  sOtaOffer = offer;
+  return true;
+}
+
+// Hand the prepared offer to a sensor that has just reported in, and run the
+// transfer if it accepts. Sent on every contact: the sensor only listens after
+// a button-press wake, so an offer sent on a timer wake is simply ignored.
+void offerSensorOta(const uint8_t *mac) {
+  if (!sOtaPending || sOtaRunning || !sOtaOfferReady) return;
+  if (memcmp(mac, sOtaMac, 6) != 0) return;
+
+  const ota_offer_message &offer = sOtaOffer;
+
   sOtaReqReady = false;
-  esp_now_send(mac, (uint8_t *)&offer, sizeof(offer));
-  Serial.printf("[SOTA] Offered %s (%d bytes, chunk %u)\n",
-                sOtaVersion, total, offer.chunkSize);
+  esp_now_send(mac, (const uint8_t *)&offer, sizeof(offer));
+  Serial.printf("[SOTA] Offered %s (%u bytes, chunk %u)\n",
+                sOtaVersion, (unsigned)offer.imageSize, offer.chunkSize);
 
   // The sensor answers within milliseconds if it is listening. If it is not --
   // an ordinary timer wake -- nothing comes back and the offer lapses.
   unsigned long start = millis();
-  while (!sOtaReqReady && millis() - start < 500) delay(2);
+  while (!sOtaReqReady && millis() - start < 1200) delay(2);
   if (!sOtaReqReady) return;
 
   if (!sOtaReqAccept) {

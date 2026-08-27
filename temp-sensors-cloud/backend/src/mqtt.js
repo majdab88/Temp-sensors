@@ -537,9 +537,25 @@ async function handleSensorOtaStatus(hubMac, data) {
         WHERE mac = $5`,
       [state, data.version ?? null, pct, error, mac]
     );
-    // Installed or failed, the command has done its job; a failed image fails
-    // identically on retry, so leaving it retained would loop forever.
-    if (state === 'installed' || state === 'failed') {
+    // The retained command is what survives a hub reboot -- staging otherwise
+    // lives only in the hub's RAM, and clearing it too eagerly leaves the
+    // dashboard showing an image staged on a hub that no longer has it.
+    //
+    // So clear it only when retrying is pointless: the image installed, or the
+    // node rejected the image itself and would reject it identically next time.
+    // A transfer that never finished is not that -- a missed button press, a
+    // node that stopped acknowledging, an unreachable image all succeed on a
+    // second attempt, which is exactly when the command needs to still be there.
+    const PERMANENT = [
+      'sha256 mismatch', 'signature invalid', 'not a valid image',
+      'image too large', 'no usable partition',
+    ];
+    const settled =
+      state === 'installed' ||
+      (state === 'failed'   && PERMANENT.includes(error)) ||
+      (state === 'declined' && error === 'already on this version');
+
+    if (settled) {
       client.publish(`sensors/${hubMac.toUpperCase()}/sensor-ota/command`, '', { retain: true });
     }
   } catch (err) {

@@ -247,11 +247,32 @@ export default function SensorCard({ sensor, reading, alert, rule, spark, liveSe
     if (isLive && liveLocal?.requestedAt) setLiveLocal(null)
   }, [isLive, liveLocal])
 
+  // The card behaves like a link, so it should honour the ways people open
+  // links: middle-click and ctrl/cmd-click go to a new tab. Being a div is an
+  // implementation detail -- it cannot be an anchor while it contains buttons.
+  const historyHref = `/history?sensor=${sensor.id}`
+
+  function openHistory(e) {
+    if (e.button === 1 || e.ctrlKey || e.metaKey || e.shiftKey) {
+      window.open(historyHref, '_blank', 'noopener')
+    } else {
+      navigate(historyHref)
+    }
+  }
+
   return (
     <div
       className={`sensor-card${alert ? ' breached' : ''}`}
-      onClick={editing ? undefined : () => navigate(`/history?sensor=${sensor.id}`)}
-      title={editing ? undefined : 'Click to view history'}
+      onClick={editing ? undefined : openHistory}
+      // Middle-click reaches onAuxClick, not onClick; the mousedown handler is
+      // what stops the browser starting an autoscroll instead.
+      onAuxClick={editing ? undefined : (e) => {
+        if (e.button === 1) { e.preventDefault(); openHistory(e) }
+      }}
+      onMouseDown={editing ? undefined : (e) => {
+        if (e.button === 1) e.preventDefault()
+      }}
+      title={editing ? undefined : 'Click to view history — middle-click for a new tab'}
     >
       <div className="card-eyebrow-row">
         <span className="card-eyebrow">{sensor.hub_name || sensor.hub_mac || 'Sensor'}</span>

@@ -162,16 +162,23 @@ async function handleSensorData(hubMac, data) {
     [fwVal, cfgVal, sensorId]
   ).catch((err) => console.error('Version update error:', err.message));
 
-  // Retire a live request the hub never confirmed. It is cleared on delivery,
-  // but a confirmation that goes missing leaves the row claiming a session is
-  // pending with nothing left to deliver it -- the request was published
-  // unretained, so it is genuinely gone. A sensor reporting later than its own
-  // interval is proof the wake it was waiting for has already been and gone.
+  // Retire a live request the wake it was waiting for has already passed.
+  //
+  // A request is delivered on the node's next contact, and the hub reports that
+  // delivery before it forwards the reading -- so by the time a reading is being
+  // handled here, a successful delivery has already set live_until. A reading
+  // with no live session running therefore means this contact came and went
+  // without the request reaching the node, and waiting is pointless: the request
+  // is published unretained, so there is nothing left to deliver.
+  //
+  // The five seconds guard the narrow case of a reading crossing the request in
+  // flight, which would otherwise cancel it before the hub had even queued it.
   query(
     `UPDATE sensors
         SET live_requested_at = NULL
       WHERE id = $1 AND live_requested_at IS NOT NULL
-        AND live_requested_at < NOW() - ((COALESCE(cfg_sleep_secs, 900) + 120) || ' seconds')::interval`,
+        AND live_requested_at < NOW() - INTERVAL '5 seconds'
+        AND (live_until IS NULL OR live_until < NOW())`,
     [sensorId]
   ).catch((err) => console.error('Live request expiry error:', err.message));
 

@@ -214,7 +214,12 @@ export default function SensorCard({ sensor, reading, alert, rule, spark, liveSe
   const liveReqAt   = liveLocal?.cleared ? 0
                       : sensor.live_requested_at ? new Date(sensor.live_requested_at).getTime()
                       : liveLocal?.requestedAt || 0
-  const livePending = !isLive && liveReqAt > 0 &&
+  // A reading that arrives after the request, without a session starting, is
+  // the wake the request was waiting for -- it came and went. Keeping "waking"
+  // up for a further quarter of an hour after that describes nothing.
+  const readingAt   = reading?.recorded_at ? new Date(reading.recorded_at).getTime() : 0
+  const missedWake  = liveReqAt > 0 && readingAt > liveReqAt + 5000
+  const livePending = !isLive && liveReqAt > 0 && !missedWake &&
                       nowTs - liveReqAt < (sleepSecs + 120) * 1000
   const liveLeft    = isLive ? Math.max(0, Math.round((liveUntil - nowTs) / 1000)) : 0
 

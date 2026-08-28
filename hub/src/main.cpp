@@ -61,7 +61,7 @@ void confirmFirmwareValid();
 #define FW_MINOR 1
 #endif
 #ifndef FW_PATCH
-#define FW_PATCH 14
+#define FW_PATCH 15
 #endif
 #define STR_(x) #x
 #define STR(x)  STR_(x)
@@ -212,13 +212,38 @@ typedef struct __attribute__((packed)) {
   uint16_t reserved;
 } live_message;
 
-// One request at a time, delivered on the sensor's next contact of any kind --
-// unlike firmware, which needs a button press, because this only asks the node
-// to stay awake rather than to rewrite itself.
-static bool     liveePending = false;
-static uint8_t  livePendingMac[6];
-static uint16_t liveDuration = 0;
-static uint16_t liveInterval = 0;
+// One request per sensor, delivered on that node's next contact of any kind --
+// unlike firmware, which needs a button press, because this only changes how
+// often the node reports rather than rewriting it.
+//
+// Per sensor rather than one at a time: asking two nodes to go live is an
+// ordinary thing to do from a dashboard listing all of them, and with a single
+// slot the second request quietly replaced the first, which then waited for a
+// delivery that was never going to come.
+#define LIVE_MAX_PENDING 10   // kept equal to MAX_SENSORS, asserted below
+
+struct PendingLive {
+  bool     used;
+  uint8_t  mac[6];
+  uint16_t duration_s;
+  uint16_t interval_s;
+};
+static PendingLive livePending[LIVE_MAX_PENDING];
+
+static int liveSlotFor(const uint8_t *mac) {
+  for (int i = 0; i < LIVE_MAX_PENDING; i++)
+    if (livePending[i].used && memcmp(livePending[i].mac, mac, 6) == 0) return i;
+  return -1;
+}
+
+// A second request for the same sensor replaces its own, so repeated clicks
+// cannot fill the table.
+static int liveSlotClaim(const uint8_t *mac) {
+  int i = liveSlotFor(mac);
+  if (i >= 0) return i;
+  for (i = 0; i < LIVE_MAX_PENDING; i++) if (!livePending[i].used) return i;
+  return -1;
+}
 
 #define OTA_MAX_CHUNK      1024   // largest payload the sensor will accept
 #define OTA_DATA_HDR          4   // msgType + seq(2) + reserved
@@ -412,6 +437,8 @@ volatile int   incomingRSSI = 0;
 
 // --- SENSOR DATA STORAGE ---
 #define MAX_SENSORS 10
+static_assert(LIVE_MAX_PENDING == MAX_SENSORS,
+              "every tracked sensor needs a live request slot");
 static_assert(SOTA_MAX_STAGED == MAX_SENSORS,
               "every tracked sensor needs a staging slot");
 
@@ -1287,10 +1314,15 @@ void mqttCallback(char* topic, byte* payload, unsigned int length) {
     // awake and reporting every few seconds while live, so this lands quickly.
     if (dur < 0 || (dur > 0 && iv <= 0)) return;
 
-    memcpy(livePendingMac, mac, 6);
-    liveDuration = (uint16_t)dur;
-    liveInterval = (uint16_t)iv;
-    liveePending = true;
+    int lslot = liveSlotClaim(mac);
+    if (lslot < 0) {
+      Serial.println("[LIVE] No free request slot");
+      return;
+    }
+    memcpy(livePending[lslot].mac, mac, 6);
+    livePending[lslot].duration_s = (uint16_t)dur;
+    livePending[lslot].interval_s = (uint16_t)iv;
+    livePending[lslot].used = true;
     Serial.printf("[LIVE] %s queued for %s - delivered on its next reading\n",
                   dur == 0 ? "Stop" : "Start", macStr.c_str());
     return;
@@ -3428,15 +3460,17 @@ void OnDataRecv(const esp_now_recv_info_t* esp_now_info,
 
     // A live request rides the same window as a config push, so it costs the
     // node no extra listening. Delivered on any wake, not just a button press.
-    if (liveePending && memcmp(esp_now_info->src_addr, livePendingMac, 6) == 0) {
+    int lslot = liveSlotFor(esp_now_info->src_addr);
+    if (lslot >= 0) {
+      PendingLive &pl = livePending[lslot];
       live_message lm = {};
       lm.msgType    = MSG_LIVE;
-      lm.duration_s = liveDuration;
-      lm.interval_s = liveInterval;
+      lm.duration_s = pl.duration_s;
+      lm.interval_s = pl.interval_s;
       if (esp_now_send(esp_now_info->src_addr, (uint8_t*)&lm, sizeof(lm)) == ESP_OK) {
-        liveePending = false;
-        Serial.println(liveDuration == 0 ? "[LIVE] Stop sent" : "[LIVE] Sent");
-        publishLiveState(esp_now_info->src_addr, liveDuration, liveInterval);
+        pl.used = false;
+        Serial.println(pl.duration_s == 0 ? "[LIVE] Stop sent" : "[LIVE] Sent");
+        publishLiveState(esp_now_info->src_addr, pl.duration_s, pl.interval_s);
       }
     }
 

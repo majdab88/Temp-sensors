@@ -205,9 +205,10 @@ export default function SensorCard({ sensor, reading, alert, rule, spark, liveSe
   // Two independent signals. live_until is what the hub confirmed; liveSeenAt
   // is the node reporting faster than its own interval, which is the behaviour
   // itself rather than a report of it. Either one is enough.
-  // Held for a little over one live interval, so the chip does not blink out
-  // between readings while the node is asleep between them.
-  const liveGrace   = Math.max(45000, (Number(sensor.live_interval_s) || 30) * 1500)
+  // Three intervals, not one. The node sleeps between live readings, so a
+  // single late or lost one is ordinary -- and at one interval of grace it
+  // dropped the chip mid-session every time that happened.
+  const liveGrace   = Math.max(90000, (Number(sensor.live_interval_s) || 30) * 3000)
   const seenLive    = !liveLocal?.cleared && liveSeenAt > 0 && nowTs - liveSeenAt < liveGrace
   const isLive      = liveUntil > nowTs || seenLive
   const liveReqAt   = liveLocal?.cleared ? 0
@@ -238,6 +239,13 @@ export default function SensorCard({ sensor, reading, alert, rule, spark, liveSe
     const t = setInterval(() => setNowTs(Date.now()), 1000)
     return () => clearInterval(t)
   }, [isLive, livePending])
+
+  // The click-time flag exists only to cover the wait before the session
+  // starts. Left in place once it has, it outlives the session and puts the
+  // card back into "waking" for a quarter of an hour after live mode ended.
+  useEffect(() => {
+    if (isLive && liveLocal?.requestedAt) setLiveLocal(null)
+  }, [isLive, liveLocal])
 
   return (
     <div

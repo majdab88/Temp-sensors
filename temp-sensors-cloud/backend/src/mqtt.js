@@ -162,6 +162,27 @@ async function handleSensorData(hubMac, data) {
     [fwVal, cfgVal, sensorId]
   ).catch((err) => console.error('Version update error:', err.message));
 
+  // Retire a live request the hub never confirmed. It is cleared on delivery,
+  // but a confirmation that goes missing leaves the row claiming a session is
+  // pending with nothing left to deliver it -- the request was published
+  // unretained, so it is genuinely gone. A sensor reporting later than its own
+  // interval is proof the wake it was waiting for has already been and gone.
+  query(
+    `UPDATE sensors
+        SET live_requested_at = NULL
+      WHERE id = $1 AND live_requested_at IS NOT NULL
+        AND live_requested_at < NOW() - ((COALESCE(cfg_sleep_secs, 900) + 120) || ' seconds')::interval`,
+    [sensorId]
+  ).catch((err) => console.error('Live request expiry error:', err.message));
+
+  // Likewise a session whose end has passed: nothing reports the end of one, so
+  // without this the row stays "live" until something else writes to it.
+  query(
+    `UPDATE sensors SET live_until = NULL, live_interval_s = NULL
+      WHERE id = $1 AND live_until IS NOT NULL AND live_until < NOW()`,
+    [sensorId]
+  ).catch((err) => console.error('Live expiry error:', err.message));
+
   // Re-send the desired config whenever what the sensor reports does not match
   // what the cloud wants.
   //

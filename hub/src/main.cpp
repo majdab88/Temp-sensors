@@ -61,7 +61,7 @@ void confirmFirmwareValid();
 #define FW_MINOR 1
 #endif
 #ifndef FW_PATCH
-#define FW_PATCH 15
+#define FW_PATCH 16
 #endif
 #define STR_(x) #x
 #define STR(x)  STR_(x)
@@ -1395,8 +1395,15 @@ void mqttCallback(char* topic, byte* payload, unsigned int length) {
     // An empty retained payload is how the cloud deletes a config command once
     // it has landed. It is not a malformed command — same lesson as the OTA
     // topic, which reported these as failures until it was fixed.
+    //
+    // The cloud republishes this clear on every reading that confirms a config,
+    // deliberately: a clear that goes missing leaves the command replaying to
+    // the hub forever. So it arrives constantly and almost always refers to
+    // nothing. Only say so when something was actually waiting.
     if (length == 0 || json.indexOf('{') < 0) {
-      Serial.println("[CFG] Retained command cleared");
+      bool anyPending = false;
+      for (int i = 0; i < sensorCount; i++) if (sensors[i].cfgPending) anyPending = true;
+      if (anyPending) Serial.println("[CFG] Retained command cleared");
       return;
     }
 

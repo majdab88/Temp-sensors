@@ -2,10 +2,19 @@
 
 Hub firmware OTA, and remote sensor configuration from the dashboard.
 
-Status: **Phase 0 and Phase 1 implemented.** Version reporting is live; hub OTA
-is built and builds clean, but has not yet been exercised against real hardware —
-see the bench tests in §7 before trusting it on a hub you cannot reach.
-Phase 2 (sensor config) is still a proposal.
+Status: **All phases implemented and proven on hardware**, plus sensor firmware
+OTA, which this document originally deferred (Appendix A) and which was
+subsequently built.
+
+Working end to end: version reporting, hub OTA, hub rollback, remote sensor
+configuration, sensor firmware OTA, sensor rollback, and live mode. Both
+rollback paths have been deliberately triggered with a failing image and
+observed to revert.
+
+The scope table and Appendix A below are kept as a record of the reasoning at
+the time, not as a description of what exists. Read `CLAUDE.md` for the
+invariants that came out of building it — several of them cost multiple attempts
+to get right and are not in this document.
 
 ---
 

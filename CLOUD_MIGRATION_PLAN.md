@@ -1,5 +1,12 @@
 # Cloud Migration Plan — Temp-sensors System
 
+> **Status: implemented and deployed.** The cloud stack, MQTT bridge,
+> PostgreSQL history, React dashboard, BLE provisioning and the Expo mobile
+> app all exist and are running. WiFiManager has been removed from the hub.
+>
+> This document is kept as the design record. Where it and the code differ,
+> the code is right.
+
 ## Goal
 
 Migrate from a fully local system to a custom, self-hosted cloud solution that provides:

@@ -1,22 +1,29 @@
 # CLAUDE.md — AI Assistant Guide for Temp-sensors
 
-This file provides guidance for AI assistants (Claude, Copilot, etc.) working in this repository. It documents the current project state, intended conventions, and development workflows.
+Guidance for AI assistants working in this repository: what exists, why it is
+built the way it is, and which mistakes have already been made here.
 
 ---
 
 ## Project Overview
 
-**Repository:** `Temp-sensors`
-**Owner:** majdab88
-**Hardware:** XIAO ESP32-C6 (hub + sensor nodes)
-**Sensor:** Sensirion SHT40 (±0.2°C, high-precision temperature & humidity) **or** NTC thermistor probe (temperature-only variant)
-**Protocol:** ESP-NOW (peer-to-peer, no router required for sensor communication)
+**Repository:** `Temp-sensors` · **Owner:** majdab88
+**Hardware:** ESP32-C6 — XIAO carrier (v1) or bare WROOM-1U on a custom PCB (v2)
+**Sensor:** Sensirion SHT40 (±0.2 °C, temperature + humidity) **or** NTC thermistor probe (temperature only)
+**Protocol:** ESP-NOW between sensors and hub; MQTT/TLS between hub and cloud
 
-This is a wireless temperature/humidity monitoring system. One **hub** station receives sensor data via ESP-NOW, serves a live web dashboard, and connects to WiFi. Up to 10 **sensor** nodes wake from deep sleep, read their sensor, transmit to the hub, and go back to sleep.
+Battery sensor nodes wake from deep sleep, take a reading, transmit to a hub over
+ESP-NOW, and sleep again. The hub relays readings to a self-hosted cloud over
+MQTT, which stores history, raises temperature alarms, and serves a web dashboard
+and a mobile app. Deployment target is cold-chain monitoring: coolers and
+freezers, where a node may be physically hard to reach for years.
 
-Two sensor node variants exist:
-- **`sensor/`** — SHT40 (I2C), measures temperature + humidity
-- **`sensor-ntc/`** — NTC thermistor probe (ADC), measures temperature only; `hum` field is always `-999`
+Two sensor variants:
+
+- **`sensor/`** — SHT40 over I2C; temperature + humidity
+- **`sensor-ntc/`** — NTC probe on the ADC; temperature only, `hum` always `-999`
+
+The NTC variant is the one being deployed and the one that receives active work.
 
 ---
 
@@ -24,83 +31,245 @@ Two sensor node variants exist:
 
 ```
 Temp-sensors/
-├── hub/                     # PlatformIO project — hub firmware
-│   ├── platformio.ini
-│   └── src/
-│       └── main.cpp         # Hub firmware (receiver + web dashboard)
-├── sensor/                  # PlatformIO project — sensor node firmware (SHT40)
-│   ├── platformio.ini
-│   └── src/
-│       └── main.cpp         # Sensor node firmware (SHT40 + deep sleep)
-├── sensor-ntc/              # PlatformIO project — NTC probe sensor variant
-│   ├── platformio.ini
-│   └── src/
-│       └── main.cpp         # NTC probe firmware (ADC + Steinhart-Hart + deep sleep)
-├── Temp32_hub.ino           # Original Arduino IDE source (kept for reference)
-├── Temp32_sensor.ino        # Original Arduino IDE source (kept for reference)
-├── tools/
-│   └── firmware-signing/    # ECDSA keygen + image signing for OTA (sign.js)
-├── OTA_UPDATE_PLAN.md       # Hub firmware OTA + remote sensor config plan
-├── CLOUD_MIGRATION_PLAN.md  # Plan to migrate to custom cloud + BLE provisioning
-├── LORAWAN_MIGRATION_PLAN.md # Optional/future: migrate ESP-NOW to LoRaWAN + ChirpStack
-├── README.md                # Project title placeholder
-└── CLAUDE.md                # This file
+├── hub/                      # PlatformIO — hub firmware (ESP-NOW ↔ MQTT bridge)
+├── sensor/                   # PlatformIO — SHT40 sensor node
+├── sensor-ntc/               # PlatformIO — NTC probe sensor node (active variant)
+├── temp-sensors-cloud/       # Self-hosted cloud stack (docker compose)
+│   ├── backend/              #   Node.js API + MQTT bridge + Socket.IO
+│   │   └── src/routes/       #   firmware.js, sensors.js, ...
+│   ├── frontend/             #   React dashboard (Vite)
+│   ├── postgres/             #   Schema + numbered migrations (init.sql, NN-*.sql)
+│   ├── mosquitto/            #   Broker config, TLS
+│   └── nginx/                #   Reverse proxy, certbot
+├── temp-sensors-app/         # React Native / Expo mobile app
+├── tools/firmware-signing/   # sign.js (ECDSA P-256) + publish.sh (build→sign→upload)
+├── docs/schematics/          # Board schematics (sensor-ntc-v2.svg)
+├── BattDebug/                # Battery measurement scratch sketches
+├── ble-provision.html        # Browser-based BLE provisioning test page
+├── OTA_UPDATE_PLAN.md        # Remote management design (mostly implemented)
+├── CLOUD_MIGRATION_PLAN.md   # Cloud + BLE provisioning design (implemented)
+├── LORAWAN_MIGRATION_PLAN.md # ESP-NOW → LoRaWAN (not started)
+├── Temp32_hub.ino            # Original Arduino IDE source (historical reference)
+├── Temp32_sensor.ino         # Original Arduino IDE source (historical reference)
+└── CLAUDE.md                 # This file
 ```
+
+> The `.ino` files at the root are **history, not the build**. All firmware work
+> happens in the PlatformIO projects.
 
 ---
 
 ## Architecture
 
 ```
-[Sensor Node 1]  ──ESP-NOW──┐
-[Sensor Node 2]  ──ESP-NOW──┤──► [Hub (ESP32-C6)] ──WiFi──► Web Browser
-        ...                 │       (web dashboard)
-[Sensor Node N]  ──ESP-NOW──┘       (JSON API)
+[Sensor 1..N] ──ESP-NOW──► [Hub ESP32-C6] ──MQTT/TLS──► [Cloud]
+  deep sleep,               BLE provisioning            Mosquitto
+  wakes to report           local web dashboard         Node.js backend
+                            offline buffer              PostgreSQL
+                                                        React dashboard
+                                                        Expo mobile app
 ```
 
-> **Planned migration:** `CLOUD_MIGRATION_PLAN.md` documents a full migration to
-> a custom cloud backend with MQTT, PostgreSQL, a React web dashboard, and a
-> React Native mobile app. The mobile app will replace WiFiManager with
-> **BLE provisioning** (NimBLE-Arduino) so end users never need to type an IP
-> address. The firmware below reflects the **current implemented state**.
->
-> **Optional future migration:** `LORAWAN_MIGRATION_PLAN.md` documents a potential
-> migration from ESP-NOW to LoRaWAN + ChirpStack for longer range. The hub becomes
-> a single-channel LoRa gateway (ESP32-C6 + SX1262), sensors use RadioLib LoRaWAN,
-> and ChirpStack handles device management. Sensors remain tied to their hub by MAC ID.
+Everything above is **implemented and deployed**. The cloud runs on a
+DigitalOcean droplet under docker compose. `LORAWAN_MIGRATION_PLAN.md` remains
+untouched and speculative — see *Plan Documents* below before treating any plan
+file as a description of reality.
 
-### Hub (`Temp32_hub.ino`)
-- Connects to WiFi via **WiFiManager** (captive portal AP on first boot). *(Planned: replaced by BLE provisioning — see CLOUD_MIGRATION_PLAN.md)*
-- Receives sensor data via **ESP-NOW** (encrypted with shared PMK/LMK).
-- Serves an HTML dashboard at `http://<IP>/` (auto-refreshes every 10 s).
-- Serves a JSON API at `http://<IP>/api/sensors`.
-- Tracks up to **10 sensors** by MAC address; marks sensors offline after 10 min.
-- Syncs time via **NTP** (`pool.ntp.org`, UTC+2).
-- After pairing, upgrades each sensor peer from unencrypted broadcast to encrypted (LMK) via `esp_now_mod_peer()`.
-- Hold BOOT (GPIO 9) **or** the external D0 button (GPIO 0) for 3 s to erase WiFi credentials and restart.
+### Hub (`hub/src/main.cpp`)
 
-### Sensor (`Temp32_sensor.ino`)
-- Wakes from **deep sleep**, reads the SHT40, sends data to hub, sleeps again.
-- Sleep interval: `SLEEP_TIME` (default 20 s; use 300+ for production).
-- Persists hub MAC address in **NVS** (`Preferences`) across reboots.
-- **Pairing mode**: broadcast → hub replies → sensor saves MAC → restart.
-- Hold the D0 button (GPIO 0) for 3 s to erase pairing and enter pairing mode.
-  - GPIO 0 (D0) is an **LP GPIO** on the C6 and **supports deep sleep wakeup** via `esp_deep_sleep_enable_gpio_wakeup()`. Pressing the button wakes the device from sleep, after which `checkFactoryReset()` runs and detects the held press.
-- Retries transmission up to `MAX_RETRIES` (5) times before sleeping.
-- Properly deinits ESP-NOW and WiFi before deep sleep (required on ESP32-C6 RISC-V to avoid illegal instruction crash, `MCAUSE: 0x18`).
-- Data-mode peer registered as **encrypted** (`peerInfo.encrypt = true` + LMK).
+- **BLE provisioning** via NimBLE (replaced WiFiManager). The mobile app or
+  `ble-provision.html` pushes WiFi credentials; no captive portal, no IP typing.
+- Receives sensor data over ESP-NOW, encrypted with a shared PMK/LMK.
+- Publishes readings to the cloud over MQTT/TLS; **buffers to NVS when offline**
+  (`OFFLINE_BUFFER_SIZE` 50) and flushes on reconnect.
+- Serves a local dashboard and JSON API for on-site use without the cloud.
+- Tracks up to `MAX_SENSORS` (10) sensors by MAC; syncs its list with the cloud.
+- Syncs time via NTP (UTC+2, +1 h DST).
+- Relays remote management to sensors: config, live mode, firmware.
+- Takes its **own** firmware over the air, signed and rollback-protected.
+- Hold BOOT (GPIO 9) or external D0 (GPIO 0) for 3 s to erase credentials.
+
+### Sensor (`sensor-ntc/src/main.cpp`)
+
+- Wakes from deep sleep, reads the probe, transmits, sleeps. `loop()` is
+  intentionally empty — everything happens in `setup()`.
+- Sleep interval `g_sleepSecs`, default `SLEEP_TIME` 900 s, settable from the
+  dashboard within `CFG_SLEEP_MIN`–`CFG_SLEEP_MAX` (300–3600 s).
+- Persists hub MAC and configuration in NVS across reboots.
+- **Pairing:** broadcast → hub replies → sensor saves MAC → restart.
+- Hold D0 (GPIO 0) for 3 s to erase pairing. Works from deep sleep: the button
+  wakes the node, then `checkFactoryReset()` sees the held press.
+- Retries transmission `MAX_RETRIES` (5) times, then counts a failed wake.
+  After `MAX_FAILED_WAKES_BEFORE_HIBERNATE` (4) it hibernates to button-only
+  wake rather than burning current on an unreachable hub.
+- Accepts remote configuration, live mode, and signed firmware over ESP-NOW.
+- Deinits ESP-NOW and stops WiFi before deep sleep — mandatory on the C6.
 
 ### Message Protocol
+
+All structs must be **byte-for-byte identical** on hub and sensors. New fields
+are appended only; `OnDataRecv` accepts the legacy length and zero-fills, so a
+pre-1.0 sensor reporting `0.0.0` is simply one that has not been updated.
+
 ```c
 typedef struct struct_message {
-  uint8_t msgType;  // MSG_PAIRING (1) or MSG_DATA (2)
-  float temp;
-  float hum;
+  uint8_t  msgType;
+  float    temp;
+  float    hum;      // -999 on the NTC variant, and on a probe fault
+  uint8_t  battery;  // 0–100 %; 255 = read error
+  uint8_t  fw_major; // 0.0.0 = pre-1.0 sensor
+  uint8_t  fw_minor;
+  uint8_t  fw_patch;
+  uint16_t cfg_ver;  // config applied on the sensor; 0 = compiled defaults
 } struct_message;
 ```
 
+| ID | Name | Direction | Purpose |
+|----|------|-----------|---------|
+| 1 | `MSG_PAIRING` | both | Pairing handshake (unencrypted broadcast) |
+| 2 | `MSG_DATA` | sensor → hub | A reading |
+| 3 | `MSG_LOG` | sensor → hub | Remote log, chunked text |
+| 4 | `MSG_CONFIG` | hub → sensor | Interval + calibration |
+| 5 | `MSG_OTA_OFFER` | hub → sensor | Image available: size, hash, signature |
+| 6 | `MSG_OTA_REQ` | sensor → hub | Accept, or decline with a reason |
+| 7 | `MSG_OTA_DATA` | hub → sensor | One chunk |
+| 8 | `MSG_OTA_ACK` | sensor → hub | Next sequence expected |
+| 9 | `MSG_OTA_DONE` | sensor → hub | Final result |
+| 10 | `MSG_LIVE` | hub → sensor | Report faster for a while; `duration_s = 0` stops |
+
 ---
 
+## Remote Management
+
+All of it is implemented and proven on hardware. The design notes live in
+`OTA_UPDATE_PLAN.md`; the invariants that were learned the hard way are here,
+because breaking one of them silently breaks a feature that still looks fine in
+the logs.
+
+### The listening window — the constraint everything else follows from
+
+A sleeping node has its radio off. It cannot be reached on demand, and listening
+often enough to be reachable would cost most of the battery. Every remote
+instruction rides the **few hundred milliseconds after the node transmits**.
+
+This has consequences that are not obvious:
+
+- **Never do network I/O between receiving a reading and answering it.** The
+  ESP-NOW receive callback runs in the WiFi task. An MQTT publish there is a
+  blocking TLS write that routinely outlasts the node's listening window, and
+  anything sent afterwards arrives at a sensor that has gone back to sleep. This
+  caused three separate "the node is not listening" bugs. Anything the node must
+  receive is sent **from the callback, before `updateSensor()`**; anything slow
+  runs later from `loop()`.
+- **Prepare before you need it.** A firmware offer is built when the image is
+  *staged*, not when the sensor appears — building it needs an HTTP round trip
+  to size the image, which does not fit in the window.
+- Config and live requests reach a node on **any** wake. Firmware needs a
+  **button press**, or an active live session (see below), because installing an
+  image is a bigger commitment than changing a setting.
+
+### Remote configuration
+
+Sleep interval and the four calibration values (`sh_a`, `sh_b`, `sh_c`,
+`r_series`), superadmin only, pushed from the dashboard. The node validates
+before applying: bounds on each value, plus `shCoefficientsSane()`, which checks
+the coefficients actually produce a falling NTC curve. **A rejected config is
+silent from the cloud's point of view** — the sensor keeps reporting its old
+`cfg_ver` and the cloud re-queues. The hub's serial log gives the reason.
+
+`cfg_ver` is a fingerprint of the values, not a counter.
+
+### Live mode
+
+Asks a node to report every 30 s for 5 minutes, then return to normal.
+
+It is a **temporarily shorter sleep interval, not a period of staying awake**.
+The node keeps deep-sleeping between readings. Five minutes held awake costs
+about 3.3 mAh; the same five minutes as ten short wakes costs about 0.4 mAh.
+The count lives in RTC memory, so it survives sleep but not a power cycle, and
+it counts **down** so a session whose end is never delivered still ends.
+
+A live session is also a good time to change calibration: the change lands
+within one interval instead of one reporting period, and you watch the result.
+
+### Firmware OTA
+
+Both hub and sensor, ECDSA P-256 signed, verified on-device before the new slot
+is ever made bootable. The hub downloads over plain HTTP by design — the
+signature is what protects the image, not the transport.
+
+**Rollback is application-level, not bootloader-level.** The ESP-IDF bootloader
+rollback never arms on this hardware: images boot straight to `VALID` rather than
+`PENDING_VERIFY`, despite `CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE` being set. This
+was discovered by testing, after being wrongly asserted from reading the config.
+Both sides therefore count boots and revert themselves:
+
+- **Hub** — reverts unless it reaches the cloud within `OTA_VERIFY_WINDOW_MS`
+  (5 min), after `OTA_MAX_BOOT_TRIES` (3) attempts. Proven on hardware.
+- **Sensor** — reverts unless a reading is *delivered*, after
+  `OTA_MAX_BOOT_TRIES` (3) boots. A button press is a boot, so the revert can be
+  forced in minutes. Proven on hardware with the `rollbacktest` build.
+
+Both projects have a deliberately-broken `*_rollbacktest` env, versioned
+`x.x.99`, whose only purpose is to fail so the revert can be observed. **Use
+them.** Both rollback paths only became trustworthy once they had been seen to
+work, and one of them was broken exactly where it was assumed to be fine.
+
+### State is per sensor, never per hub
+
+Firmware staging and live requests are **per-sensor actions driven from a
+dashboard that lists every sensor**. Both were originally single hub-wide
+variables, and both produced the same failure: staging or requesting for a
+second sensor silently discarded the first, which then waited forever for
+something that had already been thrown away — while the dashboard, which tracks
+state per sensor in the database, went on showing it as pending.
+
+The retained MQTT command topics are **also per sensor** for the same reason: a
+shared topic retains only the last message written to it, so a hub restart came
+back having forgotten every sensor but one.
+
+If you add another per-sensor remote action, give it a slot per sensor and its
+own retained topic. This mistake has been made twice.
+
+### Timeouts on the two sides must not be equal
+
+The hub waits for acknowledgements; the sensor re-asks after silence. When both
+used 4000 ms they expired together, and the hub concluded the transfer was
+finished at exactly the moment the node was about to ask for the missing piece.
+The hub's wait is now deliberately longer than the sensor's retry interval.
+
+Related: **accepting an image takes seconds, not milliseconds.** The node calls
+`esp_ota_begin()` first, which erases about a megabyte of flash, and only then
+answers. The accept window is 8 s for that reason. A window sized for a radio
+round trip missed the answer every time the target partition was not already
+blank — which is why the same update could fail repeatedly and then succeed
+right after a power cycle.
+
+### Publishing an image
+
+```bash
+cd tools/firmware-signing
+./publish.sh                    # hub: build → sign → upload
+./publish.sh --install all      # ...and stage on every hub
+./publish.sh --sensor           # sensor image (wroom_v2 by default)
+./publish.sh --sensor --env <name>
+./publish.sh --list             # what is on the server
+```
+
+Build, sign and upload happen **in one step on purpose**. Rebuilding is not
+reproducible — the ESP-IDF app descriptor embeds the build time — so a signature
+produced from a separate build will not match. The script also URL-encodes the
+signature: base64 contains `+`, which decodes to a space in a query string, and
+the node downloads the entire image before rejecting it.
+
+The version comes from the **tag compiled into the binary**, not from the source,
+so a `build_flags` override (as `rollbacktest` uses) is published under the
+version it actually is.
+
+Staging a sensor image is **not** scriptable: it waits on a button press, so it
+is chosen per sensor from the dashboard.
+
+---
 ## Hardware Pin Definitions
 
 ### Hub (XIAO ESP32-C6)
@@ -213,6 +382,13 @@ for hands-free flashing.
 | Strap (must be high) | 8 | 10 kΩ pullup to 3V3 |
 | Strap (log) | 15 | Floats — internal pullup keeps it high, default boot-log-enabled |
 
+> **The divider is the other way round on v2.** v1 puts the NTC on the high
+> side (`3.3 V → NTC → ADC → series R → GND switch`); the v2 PCB puts it on the
+> low side. `BOARD_REV` selects `NTC_ON_LOW_SIDE`, which picks the resistance
+> formula — `r_series * adcV / (vcc - adcV)` on v2 rather than the v1 form.
+> Getting this backwards is not subtle in the field but is invisible in review:
+> it read 2–4 °C as 40.87 °C.
+
 GPIO14 (the XIAO RF-switch antenna-select pin) is **not used** on v2 — the WROOM-1U
 routes its antenna pin directly to a u.FL connector. The firmware block that drives
 GPIO3/14 at boot must be deleted when running on v2 hardware.
@@ -269,43 +445,68 @@ Set the **ESP-PROG VDD jumper to 3.3 V** before connecting; 5 V will damage the 
 ### Hub
 | Constant | Value | Notes |
 |----------|-------|-------|
-| `MAX_SENSORS` | 10 | Maximum paired sensors |
+| `MAX_SENSORS` | 10 | Also the size of the staging and live-request tables |
+| `OFFLINE_BUFFER_SIZE` | 50 | Readings held in NVS while MQTT is down |
+| `OTA_MAX_BOOT_TRIES` | 3 | Attempts before reverting to the other slot |
+| `OTA_VERIFY_WINDOW_MS` | 300000 | 5 min per attempt → ~15 min to revert |
 | `NTP_SYNC_INTERVAL` | 86400000 ms | Re-sync every 24 h |
-| `gmtOffset_sec` | 7200 | UTC+2 |
-| `daylightOffset_sec` | 3600 | +1 h DST |
-| WiFiManager AP SSID | `Temp-sensor-Hub` | First-boot captive portal |
-| WiFiManager AP pass | `12345678` | |
+| `gmtOffset_sec` / `daylightOffset_sec` | 7200 / 3600 | UTC+2, +1 h DST |
 
 ### Sensor (both variants)
 | Constant | Value | Notes |
 |----------|-------|-------|
-| `SLEEP_TIME` | 900 s | 15 min; adjust as needed |
-| `MAX_RETRIES` | 5 | TX retry attempts |
-| `RETRY_DELAY_MS` | 100 ms | Delay between retries |
-| `TX_TIMEOUT_MS` | 500 ms | Wait for ACK callback |
-| `ESPNOW_CHANNEL` | 0 | Auto-detect channel |
+| `SLEEP_TIME` | 900 s | Compiled default; overridden by cloud config |
+| `CFG_SLEEP_MIN` / `MAX` | 300 / 3600 s | Accepted range for a pushed interval |
+| `MAX_RETRIES` | 5 | TX attempts per wake |
+| `RETRY_DELAY_MS` | 100 ms | Between retries |
+| `TX_TIMEOUT_MS` | 500 ms | Wait for the ACK callback |
+| `MAX_FAILED_WAKES_BEFORE_HIBERNATE` | 4 | ≈ 1 h of outage before button-only sleep |
+| `ESPNOW_CHANNEL` | 0 | Auto-detect |
+| `LIVE_MIN_INTERVAL_S` | 20 | Below this a wake is mostly overhead |
+| `LIVE_MAX_DURATION_S` | 300 | 5 min |
+| `OTA_MIN_BATTERY_PCT` | 40 | Below this an image is declined |
+| `OTA_MAX_BOOT_TRIES` | 3 | Boots without a delivered reading before reverting |
 
 ### NTC variant only (`sensor-ntc/`)
 | Constant | Value | Notes |
 |----------|-------|-------|
 | `NTC_SH_A` | 2.535e-3 | Steinhart-Hart A — cold-range fit, not a textbook value |
-| `NTC_SH_B` | 3.01e-5 | Steinhart-Hart B — fitted from (-18.2 °C/81911 Ω, -7.2 °C/47214 Ω, +4 °C/26811 Ω) |
-| `NTC_SH_C` | 7.23e-7 | Steinhart-Hart C — SHT40 reference, cold-board operation |
-| `SERIES_RESISTOR` | 10000 Ω | Fixed series resistor — use ≥1 % tolerance |
+| `NTC_SH_B` | 3.01e-5 | Fitted from (−18.2 °C/81911 Ω, −7.2 °C/47214 Ω, +4 °C/26811 Ω) |
+| `NTC_SH_C` | 7.23e-7 | SHT40 reference, cold-board operation |
+| `SERIES_RESISTOR` | 10000 Ω | Use the **measured** value of the resistor on the board |
 | `NTC_SAMPLES` | 20 | ADC readings averaged per measurement |
-| `NTC_PIN` | 1 | ADC GPIO — adjust if PCB differs |
-| `NTC_ENABLE_PIN` | 22 | GND switch GPIO — adjust if PCB differs |
+| `CFG_COEF_ABS_MAX` | 1e-1 | Magnitude bound on A/B/C |
+| `CFG_RSERIES_MIN` / `MAX` | 1000 / 1000000 Ω | Deliberately wide — 47 kΩ and 100 kΩ are both in use |
+| `BOARD_REV` | 1 or 2 | Selects pins **and** divider orientation |
 
-### Encryption (both files)
+All four calibration values are settable per sensor from the dashboard; the
+compiled values are only defaults. Bounds on A/B/C are magnitude-only and are
+backed by a physical check (`shCoefficientsSane`) rather than narrow numeric
+ranges — an earlier invented range rejected a legitimate negative `B`.
+
+### Encryption
 | Item | Detail |
 |------|--------|
-| `PMK_KEY[16]` | Primary Master Key — must be identical on hub and all sensors |
-| `LMK_KEY[16]` | Local Master Key — used to encrypt unicast data frames |
-| Set via | `esp_now_set_pmk(PMK_KEY)` after `esp_now_init()` |
-| Data peers | Registered with `encrypt = true` and `lmk` set to `LMK_KEY` |
-| Pairing | Still uses unencrypted broadcast; hub upgrades peer via `esp_now_mod_peer()` immediately after sending the pairing reply |
+| `PMK_KEY[16]` | Primary Master Key — identical on hub and every sensor |
+| `LMK_KEY[16]` | Local Master Key — encrypts unicast data frames |
+| Set via | `esp_now_set_pmk()` after `esp_now_init()` |
+| Data peers | `encrypt = true` with `lmk` set |
+| Pairing | Unencrypted broadcast by design; the hub upgrades the peer with `esp_now_mod_peer()` immediately after replying |
 
-> **Important:** Change `PMK_KEY` and `LMK_KEY` in both files to your own secret values before deploying. All devices in the same network must share the same keys.
+> The committed `PMK_KEY`/`LMK_KEY` are placeholders. Replace them before
+> production, on the hub and every sensor together — a mismatch looks exactly
+> like a sensor that has stopped reporting.
+
+### Firmware signing
+
+`FW_PUBLIC_KEY[]` in `hub/src/main.cpp` and `sensor-ntc/src/main.cpp` is the
+**public** half of the OTA signing key: safe in git, safe to read off a device.
+The private key lives only on the dev machine as
+`tools/firmware-signing/fw-signing-key.pem`.
+
+> **If the private key is lost, no hub or sensor can ever be updated over the
+> air again.** Rotating it means shipping the new key inside an image signed
+> with the old one, or the fleet is stranded. Keep an offline backup.
 
 ---
 
@@ -314,138 +515,209 @@ Set the **ESP-PROG VDD jumper to 3.3 V** before connecting; 5 V will damage the 
 | Item | Detail |
 |------|--------|
 | Language | C++ (Arduino framework) |
-| Target MCU | Seeed XIAO ESP32-C6 |
-| Arduino core | ESP32 Arduino core (Espressif) |
-| Build system | **PlatformIO** (`hub/platformio.ini`, `sensor/platformio.ini`) |
-| Board ID | `seeed_xiao_esp32c6` |
-| **Partition scheme** | **`min_spiffs.csv`** (hub only) — two 1920 KiB OTA slots (`app0`/`app1`), required for firmware OTA; set via `board_build.partitions` in `platformio.ini`. Replaced `huge_app.csv`, which had a single app slot and could not support OTA. `nvs` is at the same offset in both, so reflashing preserves credentials — **do not `erase_flash`** when migrating a provisioned hub. Sensors use the default table, which already has `app0`/`app1`. |
-| Optimize | `-Os` (Smallest Code) — set via `build_flags` in `platformio.ini` |
+| Target | ESP32-C6 (RISC-V) |
+| Core | pioarduino platform-espressif32 |
+| Build | **PlatformIO** — one project per device |
+| Boards | `seeed_xiao_esp32c6` (v1), `esp32-c6-devkitm-1` + `board_build.variant = esp32c6` (v2 WROOM-1U) |
+| Partitions | **`min_spiffs.csv`** on the hub — two 1920 KiB OTA slots. Replaced `huge_app.csv`, which had one app slot and could not support OTA. `nvs` sits at the same offset in both, so reflashing preserves credentials: **do not `erase_flash`** when migrating a provisioned hub. Sensors use the default table, which already has `app0`/`app1`. |
+| Optimize | `-Os` |
+
+### PlatformIO environments
+
+| Env | Purpose |
+|-----|---------|
+| `xiao_esp32c6_hub` | Hub |
+| `xiao_esp32c6_hub_rollbacktest` | Hub built to fail, for testing revert |
+| `xiao_esp32c6_sensor_ntc` | NTC sensor on XIAO (v1) |
+| `xiao_with_regulator_sensor_ntc` | v1 with external regulator |
+| `wroom_v2_sensor_ntc` | **Deployed sensor hardware** |
+| `wroom_v2_sensor_ntc_rollbacktest` | Sensor built to fail, for testing revert |
+
+`FW_MAJOR`/`FW_MINOR`/`FW_PATCH` are wrapped in `#ifndef` in both firmwares so a
+build env can override them. Adding a `-DFW_PATCH=` to an env that lacks those
+guards silently produces an image labelled with the wrong version.
 
 ### Required Libraries
 | Library | Source | Used in |
 |---------|--------|---------|
-| `WiFi.h` | Built-in (ESP32 core) | Both |
-| `esp_now.h` | Built-in (ESP32 core) | Both |
-| `esp_wifi.h` | Built-in (ESP32 core) | Both |
-| `esp_sleep.h` | Built-in (ESP32 core) | Sensor |
-| `Wire.h` | Built-in (ESP32 core) | Sensor |
-| `Preferences.h` | Built-in (ESP32 core) | Sensor |
-| `WebServer.h` | Built-in (ESP32 core) | Hub |
-| `time.h` | Built-in (ESP32 core) | Hub |
-| **WiFiManager** | Third-party (tzapu/WiFiManager) | Hub *(planned: replaced by NimBLE-Arduino)* |
-| **SensirionI2cSht4x** | Third-party (Sensirion Arduino Core) | Sensor |
-| **NimBLE-Arduino** | Third-party (h2zero/NimBLE-Arduino) | Hub *(planned: BLE provisioning)* |
-| **PubSubClient** | Third-party (knolleary/pubsubclient) | Hub *(planned: MQTT cloud uplink)* |
+| `WiFi.h`, `esp_now.h`, `esp_wifi.h`, `esp_sleep.h`, `Preferences.h`, `Wire.h`, `WebServer.h`, `time.h` | ESP32 core | as applicable |
+| `esp_ota_ops.h`, `mbedtls/*` | ESP-IDF, via the core | OTA verify + signing |
+| **NimBLE-Arduino** (`h2zero/NimBLE-Arduino@^2.0.0`) | Third-party | Hub — BLE provisioning |
+| **PubSubClient** (`knolleary/PubSubClient@^2.8`) | Third-party | Hub — MQTT |
+| **SensirionI2cSht4x** | Third-party | `sensor/` only |
 
-Install third-party libraries via Arduino Library Manager or `platformio.ini`.
+WiFiManager is **no longer used** — BLE provisioning replaced it.
 
 ---
 
 ## Development Workflow
 
-1. Edit firmware in Arduino IDE or PlatformIO.
-2. Select board: **XIAO ESP32-C6** (or `Seeed Studio XIAO ESP32C6`).
-3. Flash hub first; it creates a WiFi AP (`Temp-sensor-Hub`) on first boot.
-4. Flash sensor; it broadcasts a pairing request and saves the hub's MAC.
-5. After pairing, sensors deep-sleep and send readings on each wake cycle.
-6. Monitor output via Serial (115200 baud).
+### Firmware
 
-### Flashing v2 sensor-ntc hardware (bare WROOM-1U board)
+1. Edit in the relevant PlatformIO project.
+2. `pio run -e <env>` to build.
+3. Deploy over the air with `publish.sh` (see *Remote Management*), or flash
+   over USB / ESP-PROG for a node that has no working image.
 
-The v2 PCB has no USB-C — flash it with an **Espressif ESP-PROG** plugged into the
-2×3 IDC `J_PROG` header.
+### Flashing v2 sensor-ntc hardware (bare WROOM-1U)
 
-1. Set the ESP-PROG VDD jumper to **3.3 V** (5 V will damage the C6).
-2. Plug the ESP-PROG's UART ribbon into `J_PROG` (pin 1 = EN, marked on silkscreen).
-3. Plug the ESP-PROG USB into the dev PC.
-4. `pio run -e <env> -t upload` — no buttons need to be pressed; ESP-PROG drives
-   EN + BOOT through its built-in auto-reset circuit.
-5. `pio device monitor` reuses the same ESP-PROG as a 115200-baud serial console.
+The v2 PCB has no USB-C. Flash with an **Espressif ESP-PROG** on the 2×3 IDC
+`J_PROG` header.
 
-The board does not include an LDO or USB protection — the ESP-PROG can power the
-board through pin 2 (3V3) for bench testing, **but the battery should be disconnected**
-while doing so to avoid back-feeding the cell.
+1. Set the ESP-PROG VDD jumper to **3.3 V** — 5 V will damage the C6.
+2. Plug the UART ribbon into `J_PROG` (pin 1 = EN, marked on silkscreen).
+3. `pio run -e wroom_v2_sensor_ntc -t upload` — no buttons; ESP-PROG drives EN
+   and BOOT through its auto-reset circuit.
+4. `pio device monitor` reuses the same ESP-PROG at 115200 baud.
 
-### First-Time Setup (Current — WiFiManager)
-1. Flash hub → connect to `Temp-sensor-Hub` AP → enter your WiFi credentials.
-2. Hub prints its IP to Serial; open `http://<IP>/` in a browser.
-3. Flash sensor(s) → they auto-pair to the hub.
+The ESP-PROG can power the board through pin 2 (3V3) for bench work, but
+**disconnect the battery first** to avoid back-feeding the cell.
 
-### First-Time Setup (Planned — BLE provisioning)
-1. Flash hub → open mobile app → tap "Add Device" → select `TempHub-XXXXXX`.
-2. Enter WiFi SSID + password in the app; app pushes credentials via BLE.
-3. Hub connects to WiFi + cloud; app shows "Done!".
-4. Flash sensor(s) → they auto-pair (or approve pairing via app/dashboard).
+### Cloud
+
+Runs on the droplet at `~/Temp-sensors/temp-sensors-cloud/` under docker compose.
+
+```bash
+git pull
+docker compose up -d --build backend       # backend changes
+cd frontend && npm run build               # frontend changes
+```
+
+`docker compose restart` does **not** pick up volume or environment changes —
+use `up -d`, which recreates the container.
+
+**Migrations are not automatic.** Files in `postgres/` run only on a fresh
+volume, so every numbered migration since the first deploy has to be applied by
+hand:
+
+```bash
+set -a; . ./.env; set +a
+docker compose exec -T postgres psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" < postgres/NN-name.sql
+```
+
+A missing column fails the whole `SELECT`, which surfaces as the entire
+dashboard reporting "Failed to load sensors" rather than one absent field.
+
+### First-time setup
+
+1. Flash the hub → provision WiFi over BLE from the mobile app or
+   `ble-provision.html`.
+2. Flash a sensor → it broadcasts a pairing request and stores the hub MAC.
+3. Approve the sensor from the dashboard if pairing approval is enabled.
 
 ### Resetting
-- **Hub WiFi (current):** Hold BOOT (GPIO 9) or external D0 (GPIO 0) for 3 s → WiFiManager portal reopens.
-- **Hub WiFi (planned BLE):** Hold BOOT (GPIO 9) or external D0 (GPIO 0) for 3 s → NVS erased → device re-enters BLE provisioning mode.
-- **Sensor pairing:** Hold D0 (GPIO 0) for 3 s → NVS erased → pairing mode. Works from deep sleep — the button wakes the device, then `checkFactoryReset()` detects the held press.
+
+- **Hub:** hold BOOT (GPIO 9) or external D0 (GPIO 0) for 3 s → NVS erased →
+  BLE provisioning again.
+- **Sensor:** hold D0 (GPIO 0) for 3 s → pairing erased → pairing mode. Works
+  from deep sleep: the button wakes the node, then the held press is detected.
 
 ---
 
-## Branch Strategy
+## Branch Strategy and Git Conventions
 
 | Branch | Purpose |
 |--------|---------|
-| `master` / `main` | Stable, production-ready code |
-| `claude/<session-id>` | AI-assisted feature/documentation branches |
+| `main` | Stable; deployed from |
+| `claude/<topic>` | AI-assisted work |
 
-- All AI-generated changes are developed on `claude/`-prefixed branches.
-- Pull requests from `claude/` branches must be reviewed before merging.
-
----
-
-## Git Conventions
-
-- **Commit messages** should be clear and imperative, e.g. `Fix deep sleep crash on ESP32-C6`.
-- **Small, focused commits** — one logical change per commit.
-- **No force-pushes** to `master`/`main`.
-- **No committing secrets** — WiFi passwords, API keys must never be committed.
+- Branch from **`origin/main`**, not local `main`, and open the PR against
+  `main`. A PR based on another feature branch merges into that branch and
+  never reaches `main`.
+- **Check the PR state before pushing a follow-up** (`gh pr view <n> --json
+  state`). Pushing to a branch whose PR has merged orphans the commit — it looks
+  delivered and is not. This happened repeatedly before it was written down.
+- Small, focused commits; imperative subject lines.
+- Never commit secrets: WiFi credentials, MQTT passwords, the signing key.
+- No force-pushes to `main`.
 
 ---
 
 ## Key Conventions for AI Assistants
 
 ### General
-- **Read before editing.** Never propose or apply changes to files you have not yet read.
-- **Minimal changes.** Only make changes that are directly requested or clearly necessary.
-- **No speculative engineering.** Do not add error handling or abstractions for hypothetical requirements.
-- **Delete, don't rename.** If something is unused, remove it entirely.
+- **Read before editing.** Never change a file you have not read.
+- **Minimal, requested changes.** No speculative abstractions or error handling
+  for hypothetical cases.
+- **Delete, don't deprecate.** Unused code goes.
+- **Do not invent limits.** Ranges asserted from intuition have twice rejected
+  values the hardware genuinely uses (`r_series` at 100 kΩ, a negative
+  Steinhart-Hart `B`). Bound what is physically impossible, not what looks
+  unusual, and prefer a physical check to a numeric one.
+- **Test the safety path before claiming it works.** Bootloader rollback was
+  asserted from reading `sdkconfig.h` and was wrong. Both rollback paths are now
+  verified on hardware, and both projects ship a build whose purpose is to fail.
 
-### ESP32 / Arduino-Specific
-- The target is the **XIAO ESP32-C6 (RISC-V)**. It has known quirks vs the Xtensa-based ESP32:
-  - Always call `esp_now_deinit()` and `esp_wifi_stop()` before `esp_deep_sleep_start()` (skipping causes `MCAUSE: 0x18` illegal instruction crash).
-  - Add short `delay()` after GPIO init and I2C `begin()` for hardware stabilization.
-  - Serial needs ~500 ms after `begin()` to stabilize on C6.
-  - GPIO 50 mA delay needed at startup (`delay(50)` in `checkFactoryReset()`).
-- Use `SensirionI2cSht4x` (lowercase 'c') — not `SensirionI2CSht4x`.
-- Sensor error values use `-999` as a sentinel for failed reads.
-- `loop()` is intentionally empty in the sensor — all logic runs in `setup()` followed by deep sleep.
-- The sensor uses **GPIO 0 (D0)** as its reset/wakeup button — this is an LP GPIO (0–7 range) and **does** support `esp_deep_sleep_enable_gpio_wakeup()`. GPIO 9 (BOOT) is an HP GPIO and cannot wake from deep sleep; do not use it for this purpose.
+### ESP32-C6 specifics
+- Always `esp_now_deinit()` and `esp_wifi_stop()` before `esp_deep_sleep_start()`
+  — skipping this causes an illegal-instruction crash (`MCAUSE: 0x18`).
+- **GPIO 0 (D0) is an LP GPIO and can wake from deep sleep. GPIO 9 (BOOT) cannot.**
+- GPIO 15 is a strap pin; v2 moved the LED to GPIO 5.
+- Serial needs ~500 ms after `begin()`; add short delays after GPIO and I2C init.
+- Sensor error values use `-999` as the sentinel; battery uses `255`.
+- `loop()` is intentionally empty on sensors.
 
-### Encryption
-- `PMK_KEY` and `LMK_KEY` are defined in both files and **must be kept in sync**.
-- Pairing uses unencrypted broadcast by design (the sensor doesn't know the hub's MAC yet). The hub calls `esp_now_mod_peer()` after pairing to upgrade to encrypted.
-- Do not change `encrypt` to `false` on data-mode peers — data is encrypted.
+### Working in the ESP-NOW callback
+- It runs in the WiFi task. **No blocking network calls** — an MQTT publish
+  there costs more time than a sleeping node will wait, and delays every frame
+  queued behind it.
+- Send anything the node must receive **before** `updateSensor()`.
+- Hand anything slow to `loop()` via a flag.
+- Take the radio (`sOtaRunning`) for the whole handshake, not just the transfer,
+  and release it on **every** exit path.
 
-### Security
-- Do not introduce command injection, XSS, or other OWASP Top 10 vulnerabilities in the web server HTML/JSON handlers.
-- Do not commit WiFi credentials or pairing secrets.
-- The hardcoded `PMK_KEY`/`LMK_KEY` are placeholder values — remind the user to replace them before production deployment. Flash both hub and all sensors with matching keys.
+### NVS / Preferences
+- Reading an absent key logs an `[E]` line that looks like a failure. Guard with
+  `isKey()` where absence is normal.
+- Keep NVS writes out of the ESP-NOW callback — a commit there stalls the WiFi
+  task while sensors are mid-transmission.
+
+### Cloud
+- `node-postgres` returns `bigint` as a **string**. Adding a number to one
+  concatenates. This produced a countdown of 29767197071 minutes.
+- Retained MQTT commands are the copy that survives a hub restart. Clear one
+  only when retrying is pointless — an installed image, or one the node rejected
+  and would reject identically. A transfer that merely failed should stay.
 
 ### Style
-- Follow the conventions already present in the file being edited (indentation, naming, formatting).
-- Only add comments where logic is genuinely non-obvious.
+- Follow the conventions of the file you are editing.
+- Comment the non-obvious: why a timeout has the value it has, why an order
+  matters. Most of the bugs in this system were ordering and timing, and the
+  comments recording them are load-bearing.
+
+---
+
+## Plan Documents
+
+Plan files describe intent at the time of writing and drift from reality. Check
+the code before trusting one.
+
+| Document | Status |
+|----------|--------|
+| `CLOUD_MIGRATION_PLAN.md` | **Implemented.** Cloud, MQTT, PostgreSQL, React dashboard, BLE provisioning and the Expo app all exist and are deployed. |
+| `OTA_UPDATE_PLAN.md` | **Implemented beyond what it describes.** Its status header predates hub OTA being exercised on hardware, sensor remote config, live mode, and sensor firmware OTA — all of which now work. Appendix A describes sensor OTA as deferred; it was built. |
+| `LORAWAN_MIGRATION_PLAN.md` | **Not started.** ESP-NOW → LoRaWAN + ChirpStack, hub as a single-channel gateway. Entirely speculative; nothing in the codebase moves toward it. |
+| `SESSION_SUMMARY.md` | Historical notes from one session. Not maintained. |
+
+### Known gaps
+
+- **`sensor/` (SHT40) has no OTA receiver.** Only `sensor-ntc/` can be updated
+  over the air. The firmware registry distinguishes `hub` from `sensor` but not
+  the two sensor variants, so nothing stops an NTC image being staged on an
+  SHT40 node. Harmless today because those nodes cannot accept an image at all.
+- **The local hub dashboard is a fallback**, not maintained in step with the
+  cloud dashboard.
 
 ---
 
 ## Updating This File
 
-Keep `CLAUDE.md` current as the project evolves:
+Keep it current — it has been stale twice in ways that misled work: it described
+the Beta approximation while the firmware used Steinhart-Hart, and the wrong
+divider orientation after the v2 board flipped it.
 
-- Update **Repository Structure** when new files are added.
-- Update **Key Configuration Constants** if defaults change.
-- Update **Required Libraries** if new dependencies are added.
-- Update **Hardware Pin Definitions** if a new board variant is targeted.
-- Update **Encryption** section if key management strategy changes.
+Update when: pins or board revisions change, constants move, dependencies
+change, a plan document's status changes, or a **new invariant is learned the
+hard way**. That last one matters most. The sections above on the listening
+window, per-sensor state, and unequal timeouts each exist because the same class
+of bug was fixed more than once before anyone wrote down why it happened.

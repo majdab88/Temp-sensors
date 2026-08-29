@@ -115,7 +115,7 @@
 #define FW_MINOR 1
 #endif
 #ifndef FW_PATCH
-#define FW_PATCH 11
+#define FW_PATCH 12
 #endif
 #define STR_(x) #x
 #define STR(x)  STR_(x)
@@ -202,6 +202,22 @@ RTC_DATA_ATTR bool     in_hibernate_mode        = false;
 // staying awake. Held in RTC memory so it survives deep sleep but not a power
 // cycle -- pulling the battery should not leave a node in a fast-reporting
 // state nobody asked for.
+// The hub rejects a counter it has already seen, so this must never go
+// backwards -- including across a power cycle, which RTC memory does not
+// survive. Persisting every message would mean a flash write per wake; instead
+// a block of counters is claimed at boot and spent from RAM, costing one write
+// per AUTH_CTR_BLOCK wakes. Unspent counters in an interrupted block are simply
+// skipped, which is harmless: the rule is that they increase, not that none are
+// missed.
+#define AUTH_CTR_BLOCK 64
+RTC_DATA_ATTR uint32_t authCtrNext  = 0;
+RTC_DATA_ATTR uint32_t authCtrLimit = 0;
+
+// What the hub last sent us. RTC memory is right here: it survives sleep, and a
+// power cycle resetting it only means the next hub message is accepted on its
+// own terms rather than compared to one from before the reset.
+RTC_DATA_ATTR uint32_t authHubCtrSeen = 0;
+
 RTC_DATA_ATTR uint16_t liveCyclesLeft = 0;
 RTC_DATA_ATTR uint16_t liveIntervalS  = 0;
 
@@ -284,6 +300,11 @@ RTC_DATA_ATTR uint16_t liveIntervalS  = 0;
 // settings, and a transient "stay awake" flag would change it, then need a
 // second change to clear it. This is a separate instruction that is acted on
 // once and never stored.
+// Truncated HMAC-SHA256. 64 bits is ample against forgery when every attempt
+// costs a radio round trip. Declared here because the message structs below
+// carry it, while the key itself sits with the other ESP-NOW keys.
+#define AUTH_TAG_LEN 8
+
 #define MSG_LIVE 10
 
 // Each live reading is a full wake: boot, read, transmit, sleep -- one to two
@@ -298,7 +319,11 @@ typedef struct __attribute__((packed)) {
   uint16_t duration_s;
   uint16_t interval_s;
   uint16_t reserved;
+  uint32_t auth_ctr;
+  uint8_t  auth[AUTH_TAG_LEN];
 } live_message;
+
+#define LIVE_BODY_LEN offsetof(live_message, auth_ctr)
 
 static volatile bool     g_liveRequested = false;
 static volatile uint16_t g_liveDuration  = 0;
@@ -368,6 +393,27 @@ static const uint8_t PMK_KEY[16] = {
   0x4A, 0x2F, 0x8C, 0x1E, 0x7B, 0x3D, 0x9A, 0x5F,
   0x6E, 0x2C, 0x4B, 0x8D, 0x1A, 0x7F, 0x3E, 0x9C
 };
+// --- MESSAGE AUTHENTICATION ---
+// ESP-NOW link encryption is not used: it consumes one of the radio's six or
+// seven hardware key slots per peer, which caps a hub at seven sensors. Rooms
+// with a dozen coolers are ordinary, so authenticity is done here instead, in
+// the message, where nothing limits how many nodes there can be.
+//
+// This buys the property that actually matters for a temperature record: a
+// reading the hub accepts came from the sensor it names, was not altered, and
+// is not a replay. It deliberately does not hide the reading -- a cooler
+// temperature is not a secret, and confidentiality was the cheap half.
+//
+// Shared across the fleet, exactly like LMK_KEY was, with the same consequence:
+// anyone who can read one node's flash can forge for all of them. Change it
+// before deployment, on the hub and every sensor together.
+static const uint8_t AUTH_KEY[32] = {
+  0x5B, 0x2E, 0xC4, 0x91, 0x7A, 0x03, 0xD8, 0x66,
+  0x1F, 0xB5, 0x40, 0xE7, 0x2C, 0x98, 0x71, 0x0A,
+  0xD3, 0x64, 0x8F, 0x25, 0xB1, 0x7C, 0x06, 0xEA,
+  0x49, 0x93, 0x2B, 0xF5, 0x18, 0xA7, 0x60, 0xCD,
+};
+
 static const uint8_t LMK_KEY[16] = {
   0xE3, 0x4A, 0x7C, 0x91, 0xB5, 0x2D, 0xF8, 0x6E,
   0x1A, 0x9F, 0x3C, 0x72, 0xD4, 0x5B, 0x8E, 0x20
@@ -409,7 +455,14 @@ typedef struct struct_message {
   uint8_t  fw_minor;
   uint8_t  fw_patch;
   uint16_t cfg_ver;   // config version currently applied; 0 = compiled defaults
+
+  // Appended, so a hub still accepts the shorter frame an un-updated sensor
+  // sends. Everything above is what the tag covers.
+  uint32_t auth_ctr;             // strictly increasing; replays do not rise
+  uint8_t  auth[AUTH_TAG_LEN];   // HMAC over sender MAC + auth_ctr + the above
 } struct_message;
+
+#define AUTH_BODY_LEN (sizeof(struct_message) - sizeof(uint32_t) - AUTH_TAG_LEN)
 
 // --- LOG MESSAGE STRUCTURE ---
 // Sent over the same encrypted ESP-NOW peer as the data message.
@@ -429,8 +482,15 @@ typedef struct config_message {
   float    sh_b;          // Steinhart-Hart B (K^-1)
   float    sh_c;          // Steinhart-Hart C (K^-1)
   float    r_series;      // divider resistor, ohms — per-board tolerance trim
-  uint8_t  reserved[16];
+
+  // Carved out of what was reserved[16], so the frame is the same size it has
+  // always been and an un-updated node still parses everything above.
+  uint8_t  reserved[4];
+  uint32_t auth_ctr;
+  uint8_t  auth[AUTH_TAG_LEN];
 } config_message;
+
+#define CFG_BODY_LEN offsetof(config_message, auth_ctr)
 
 typedef struct log_message {
   uint8_t msgType;            // MSG_LOG = 3
@@ -883,6 +943,67 @@ static void applyLiveRequest() {
 // --- SAFE DEEP SLEEP ---
 // ESP32-C6 RISC-V requires proper WiFi/ESP-NOW shutdown before sleep
 // Skipping this causes the illegal instruction crash (MCAUSE: 0x18)
+// Tag = first AUTH_TAG_LEN bytes of HMAC-SHA256(key, mac || ctr || body).
+// The MAC is covered so a frame cannot be replayed as if from another node.
+static void authTag(const uint8_t *mac, uint32_t ctr,
+                    const uint8_t *body, size_t bodyLen, uint8_t out[AUTH_TAG_LEN]) {
+  uint8_t full[32];
+  mbedtls_md_context_t ctx;
+  mbedtls_md_init(&ctx);
+  mbedtls_md_setup(&ctx, mbedtls_md_info_from_type(MBEDTLS_MD_SHA256), 1);
+  mbedtls_md_hmac_starts(&ctx, AUTH_KEY, sizeof(AUTH_KEY));
+  mbedtls_md_hmac_update(&ctx, mac, 6);
+  mbedtls_md_hmac_update(&ctx, (const uint8_t *)&ctr, sizeof(ctr));
+  mbedtls_md_hmac_update(&ctx, body, bodyLen);
+  mbedtls_md_hmac_finish(&ctx, full);
+  mbedtls_md_free(&ctx);
+  memcpy(out, full, AUTH_TAG_LEN);
+}
+
+// Compared without an early exit, so the time taken says nothing about how much
+// of a wrong tag was right.
+static bool authTagEqual(const uint8_t *a, const uint8_t *b) {
+  uint8_t diff = 0;
+  for (size_t i = 0; i < AUTH_TAG_LEN; i++) diff |= (uint8_t)(a[i] ^ b[i]);
+  return diff == 0;
+}
+
+// Claim the next counter, taking a fresh block from NVS when the current one is
+// spent.
+static uint32_t authNextCtr() {
+  if (authCtrNext >= authCtrLimit) {
+    Preferences p;
+    p.begin("auth", false);
+    uint32_t base = p.getUInt("ctr", 0);
+    if (base < authCtrLimit) base = authCtrLimit;   // never reuse after a reboot
+    p.putUInt("ctr", base + AUTH_CTR_BLOCK);
+    p.end();
+    authCtrNext  = base;
+    authCtrLimit = base + AUTH_CTR_BLOCK;
+  }
+  return authCtrNext++;
+}
+
+// Verify a frame the hub sent us. Rejects a tag that does not match, and a
+// counter that has been seen -- an attacker replaying an old config would
+// otherwise be able to put a node back onto calibration it has moved off.
+static bool authCheckFromHub(const uint8_t *hubAddr, uint32_t ctr,
+                             const uint8_t *body, size_t bodyLen,
+                             const uint8_t *tag) {
+  uint8_t expect[AUTH_TAG_LEN];
+  authTag(hubAddr, ctr, body, bodyLen, expect);
+  if (!authTagEqual(expect, tag)) {
+    ulog("[AUTH] Rejected a frame with a bad tag\n");
+    return false;
+  }
+  if (ctr <= authHubCtrSeen) {
+    ulog("[AUTH] Rejected a replayed frame (ctr %u)\n", (unsigned)ctr);
+    return false;
+  }
+  authHubCtrSeen = ctr;
+  return true;
+}
+
 void goToSleep(int seconds) {
   Serial.printf("Sleeping for %d seconds...\n\n", seconds);
   Serial.flush();         // Ensure serial output completes
@@ -958,6 +1079,12 @@ void OnDataRecv(const esp_now_recv_info_t *esp_now_info, const uint8_t *incoming
   if (incomingData[0] == MSG_CONFIG && len >= (int)sizeof(config_message)) {
     const config_message *cfg = (const config_message *)incomingData;
 
+    // Checked before anything is validated or stored: a forged config is a way
+    // to corrupt readings at their source, which no amount of downstream
+    // checking would catch.
+    if (!authCheckFromHub(esp_now_info->src_addr, cfg->auth_ctr,
+                          incomingData, CFG_BODY_LEN, cfg->auth)) return;
+
     if (cfg->sleep_secs < CFG_SLEEP_MIN || cfg->sleep_secs > CFG_SLEEP_MAX) {
       ulog("[CFG] Rejected: sleep %u outside %u-%u\n",
            cfg->sleep_secs, CFG_SLEEP_MIN, CFG_SLEEP_MAX);
@@ -1006,6 +1133,8 @@ void OnDataRecv(const esp_now_recv_info_t *esp_now_info, const uint8_t *incoming
 
   if (incomingData[0] == MSG_LIVE && len >= (int)sizeof(live_message)) {
     const live_message *lm = (const live_message *)incomingData;
+    if (!authCheckFromHub(esp_now_info->src_addr, lm->auth_ctr,
+                          incomingData, LIVE_BODY_LEN, lm->auth)) return;
     g_liveDuration  = lm->duration_s;
     g_liveInterval  = lm->interval_s;
     g_liveRequested = true;
@@ -1282,6 +1411,16 @@ bool sendDataWithRetry() {
   ulog("[TEST] Rollback build - not transmitting\n");
   return false;
 #endif
+  // One counter and one tag for the whole attempt, not one per retry: a retry
+  // is the same reading said again, and the hub's duplicate filter needs them
+  // to look identical.
+  myData.auth_ctr = authNextCtr();
+  {
+    uint8_t self[6];
+    WiFi.macAddress(self);
+    authTag(self, myData.auth_ctr, (const uint8_t *)&myData, AUTH_BODY_LEN, myData.auth);
+  }
+
   for (int retry = 0; retry < MAX_RETRIES; retry++) {
     tx_complete = false;
     tx_success  = false;
@@ -1532,8 +1671,10 @@ void setup() {
 
     memcpy(peerInfo.peer_addr, hubMac, 6);
     peerInfo.channel = ESPNOW_CHANNEL;
-    peerInfo.encrypt = true;
-    memcpy(peerInfo.lmk, LMK_KEY, 16);
+    // Unencrypted by design -- authenticity is carried in the message, not the
+    // link, so that a hub is not limited to seven sensors by the radio's key
+    // slots. See AUTH_KEY.
+    peerInfo.encrypt = false;
 
     if (esp_now_add_peer(&peerInfo) != ESP_OK) {
       Serial.println("✗ Peer add failed, restarting...");

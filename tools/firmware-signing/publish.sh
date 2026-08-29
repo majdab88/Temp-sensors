@@ -140,7 +140,11 @@ for r in rows:
   exit 0
 fi
 
-# --- version, from the source of truth -------------------------------------
+# --- version ---------------------------------------------------------------
+# Read from the source only to name the build; the authoritative value comes
+# out of the binary afterwards. An env can override FW_PATCH through
+# build_flags -- the rollbacktest builds do -- and the source then describes
+# something the image is not.
 
 read_ver() { grep -E "^#define FW_$1 " "$SRC" | awk '{print $3}'; }
 VER="$(read_ver MAJOR).$(read_ver MINOR).$(read_ver PATCH)"
@@ -155,6 +159,17 @@ if [ "$DO_BUILD" = 1 ]; then
     || die "build failed — run '$PIO run -e $PIO_ENV' to see why"
 fi
 [ -f "$BIN" ] || die "no firmware at $BIN (drop --no-build?)"
+
+# The version tag compiled into the image is what the server checks the upload
+# against, so read it back rather than trusting what the source said.
+TAG=$([ "$KIND" = sensor ] && echo TEMPSENS_FW || echo TEMPHUB_FW)
+BIN_VER=$(LC_ALL=C grep -a -o -m1 "$TAG=[0-9][0-9.]*" "$BIN" | head -1 | cut -d= -f2)
+if [ -n "$BIN_VER" ] && [ "$BIN_VER" != "$VER" ]; then
+  note "image says $BIN_VER, not $VER - publishing $BIN_VER (build_flags override)"
+  VER=$BIN_VER
+elif [ -z "$BIN_VER" ]; then
+  echo "warning: no $TAG marker in the image; labelling it $VER from source" >&2
+fi
 
 # The signature covers the exact bytes, so a stale binary would upload a valid
 # signature for the wrong image and fail on the device.

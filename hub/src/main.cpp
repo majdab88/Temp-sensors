@@ -61,7 +61,7 @@ void confirmFirmwareValid();
 #define FW_MINOR 1
 #endif
 #ifndef FW_PATCH
-#define FW_PATCH 17
+#define FW_PATCH 18
 #endif
 #define STR_(x) #x
 #define STR(x)  STR_(x)
@@ -220,7 +220,7 @@ typedef struct __attribute__((packed)) {
 // ordinary thing to do from a dashboard listing all of them, and with a single
 // slot the second request quietly replaced the first, which then waited for a
 // delivery that was never going to come.
-#define LIVE_MAX_PENDING 10   // kept equal to MAX_SENSORS, asserted below
+#define LIVE_MAX_PENDING 7    // kept equal to MAX_SENSORS, asserted below
 
 struct PendingLive {
   bool     used;
@@ -289,7 +289,7 @@ typedef struct __attribute__((packed)) {
 // Sizing the image needs an HTTP round trip, and the node listens for only a
 // few hundred milliseconds after transmitting -- long enough to receive a frame
 // that is already prepared, nowhere near long enough to fetch one first.
-#define SOTA_MAX_STAGED 10   // kept equal to MAX_SENSORS, asserted below
+#define SOTA_MAX_STAGED 7    // kept equal to MAX_SENSORS, asserted below
 
 struct StagedImage {
   bool              used;
@@ -436,7 +436,21 @@ struct_message incomingData;
 volatile int   incomingRSSI = 0;
 
 // --- SENSOR DATA STORAGE ---
-#define MAX_SENSORS 10
+// Bounded by ESP-NOW, not by memory. Data peers are encrypted, and the radio
+// has a fixed number of key slots: esp_now.h documents
+// ESP_NOW_MAX_ENCRYPT_PEER_NUM as 6, while this build's sdkconfig sets
+// CONFIG_ESP_WIFI_ESPNOW_MAX_ENCRYPT_NUM to 7. Either way it is nowhere near
+// the 20 unencrypted peers ESP-NOW allows, and it cannot be raised without
+// rebuilding the Arduino framework libraries, which ship precompiled.
+//
+// This was 10, which the radio could never have honoured. Beyond the limit
+// esp_now_add_peer and esp_now_mod_peer fail, and an unchecked failure leaves a
+// sensor that pairs, persists, appears in the list -- and is never heard from,
+// because its encrypted frames cannot be decrypted without a key slot.
+//
+// More than this many sensors on one site means a second hub, which the cloud
+// already supports.
+#define MAX_SENSORS 7
 static_assert(LIVE_MAX_PENDING == MAX_SENSORS,
               "every tracked sensor needs a live request slot");
 static_assert(SOTA_MAX_STAGED == MAX_SENSORS,
@@ -1709,7 +1723,13 @@ void addSensorFromCloud(const uint8_t* mac, const char* name) {
     peer.channel = 0;
     peer.encrypt = true;
     memcpy(peer.lmk, LMK_KEY, 16);
-    esp_now_add_peer(&peer);
+    if (esp_now_add_peer(&peer) != ESP_OK) {
+      // Same key-slot ceiling as pairing. Undo the entry rather than keep a
+      // sensor the radio cannot hear.
+      Serial.println("[Sync] No encrypted peer slot left - cannot add this sensor");
+      sensorCount--;
+      return;
+    }
   }
 
   // Persist
@@ -2843,13 +2863,23 @@ void completePairing(const uint8_t* mac) {
   }
   Serial.println("✓ Pairing confirmation sent!");
 
-  // Upgrade peer to encrypted link
+  // Upgrade peer to encrypted link. Checked, because this is where the radio
+  // runs out of key slots: leaving the peer unencrypted would pair a sensor
+  // whose frames the hub can never decrypt, which looks like a node that paired
+  // fine and then never reported.
   esp_now_peer_info_t encPeer = {};
   memcpy(encPeer.peer_addr, mac, 6);
   encPeer.channel = 0;
   encPeer.encrypt = true;
   memcpy(encPeer.lmk, LMK_KEY, 16);
-  esp_now_mod_peer(&encPeer);
+  if (esp_now_mod_peer(&encPeer) != ESP_OK) {
+    esp_now_peer_num_t pn = {};
+    esp_now_get_peer_num(&pn);
+    Serial.printf("[Pairing] No encrypted peer slot left (%d in use) - refusing %02X:%02X:%02X:%02X:%02X:%02X\n",
+                  pn.encrypt_num, mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
+    esp_now_del_peer(mac);
+    return;
+  }
 
   int index = findSensor(mac);
   if (index == -1) addSensor(mac);
@@ -3721,6 +3751,13 @@ void setup() {
   // The cloud responds with its authoritative list (retained); applySyncFromCloud
   // in loop() will add/remove sensors to match the cloud truth.
   publishSyncRequest();
+
+  {
+    esp_now_peer_num_t pn = {};
+    esp_now_get_peer_num(&pn);
+    Serial.printf("ESP-NOW peers: %d total, %d encrypted (max %d sensors)\n",
+                  pn.total_num, pn.encrypt_num, MAX_SENSORS);
+  }
 
   Serial.println("\n=== Hub Ready ===");
   Serial.println("Waiting for sensor data...\n");

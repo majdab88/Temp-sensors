@@ -1266,6 +1266,14 @@ BatteryInfo getBatteryInfo() {
 
 // --- SEND WITH RETRIES ---
 bool sendDataWithRetry() {
+#ifdef OTA_ROLLBACK_TEST
+  // Built deliberately broken, to prove the rollback path works. The node boots
+  // and behaves normally in every other way -- it simply never delivers a
+  // reading, which is the one thing that marks an image good. Three boots later
+  // it should revert on its own.
+  ulog("[TEST] Rollback build - not transmitting\n");
+  return false;
+#endif
   for (int retry = 0; retry < MAX_RETRIES; retry++) {
     tx_complete = false;
     tx_success  = false;

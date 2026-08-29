@@ -106,9 +106,17 @@
 // --- FIRMWARE VERSION ---
 // Sent to the hub in every data frame and forwarded to the cloud. Bump on every
 // release; the cloud uses it to tell which nodes still need updating.
+// Overridable from build_flags, so a test build can carry its own version
+// without editing this file (see the rollbacktest env).
+#ifndef FW_MAJOR
 #define FW_MAJOR 1
+#endif
+#ifndef FW_MINOR
 #define FW_MINOR 1
+#endif
+#ifndef FW_PATCH
 #define FW_PATCH 11
+#endif
 #define STR_(x) #x
 #define STR(x)  STR_(x)
 

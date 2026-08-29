@@ -61,7 +61,7 @@ void confirmFirmwareValid();
 #define FW_MINOR 1
 #endif
 #ifndef FW_PATCH
-#define FW_PATCH 16
+#define FW_PATCH 17
 #endif
 #define STR_(x) #x
 #define STR(x)  STR_(x)
@@ -1982,7 +1982,7 @@ void saveOfflineBuffer() {
 void loadOfflineBuffer() {
   Preferences bp;
   bp.begin("buf", true);
-  size_t len = bp.getBytesLength("q");
+  size_t len = bp.isKey("q") ? bp.getBytesLength("q") : 0;
 
   if (len >= sizeof(BufferedReading) && (len % sizeof(BufferedReading)) == 0) {
     int n = len / sizeof(BufferedReading);
@@ -2452,8 +2452,12 @@ void loadSensorConfig(int idx) {
   snprintf(key, sizeof(key), "%02X%02X%02X%02X%02X%02X",
            sensors[idx].mac[0], sensors[idx].mac[1], sensors[idx].mac[2],
            sensors[idx].mac[3], sensors[idx].mac[4], sensors[idx].mac[5]);
+  // A sensor that has never been configured has no blob, which is ordinary --
+  // but reading an absent key logs an error, so every boot complained once per
+  // unconfigured sensor.
   config_message blob = {};
-  if (cp.getBytes(key, &blob, sizeof(blob)) == sizeof(blob) && blob.cfg_ver != 0) {
+  if (cp.isKey(key) &&
+      cp.getBytes(key, &blob, sizeof(blob)) == sizeof(blob) && blob.cfg_ver != 0) {
     sensors[idx].cfgDesiredVer = blob.cfg_ver;
     sensors[idx].cfgSleepSecs  = blob.sleep_secs;
     sensors[idx].cfgShA        = blob.sh_a;

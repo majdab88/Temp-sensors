@@ -38,8 +38,12 @@ The rim fillets are the exception; if one ever shows as Invalid, re-run
 
 ## Before printing
 
-- `bay_l` and the `slot_*` values are placeholders — set them from the datasheet
-  of whichever leaf contacts you use, and test-print the bay alone first.
+- `bay_l` is contact-face to contact-face, **not** the cell length: `(bay_l -
+  50.5) / 2` is how far each contact must still stand proud with a cell loaded.
+  The default 52.0 is measured off a commercial 2×AA holder using flat blade
+  contacts (0.75 mm per end); a tall leaf spring wants considerably more.
+- The `slot_*` values are still placeholders — set them from the datasheet of
+  whichever contacts you source, and test-print the bay alone first.
 - Material: PETG, ABS or ASA. Not PLA: the contacts keep the plastic under
   permanent spring load and PLA turns brittle at freezer temperatures.
 - Fasteners: M2 × 10 mm for the lid, M2 for the door, M2.5 into the PCB

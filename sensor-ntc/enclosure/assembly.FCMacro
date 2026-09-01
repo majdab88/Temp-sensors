@@ -1,0 +1,101 @@
+# -*- coding: utf-8 -*-
+# ============================================================
+# assembly — group the enclosure parts and give them an explode slider
+#
+# The three bodies are already modelled in one coordinate system, so
+# they are in assembled position the moment they are built; nothing
+# needs solving. What this adds is:
+#
+#   * an App::Part container "Enclosure" holding all three parts, so
+#     they move, rotate and export as one unit
+#   * an 'explode' row in the params spreadsheet — 0 is closed, raise
+#     it to lift the lid and drop the door for a look inside
+#   * optional STEP export of the assembled parts
+#
+# A real Assembly (Assembly::AssemblyObject + joints) is deliberately
+# not used: joints exist to let a solver position parts that don't
+# already know where they go. These do, and joints would only add a
+# constraint network that can fight the spreadsheet.
+#
+# Safe to re-run — it reuses the container and rebinds the expressions.
+# ============================================================
+
+import os
+import FreeCAD as App
+
+EXPORT_STEP = False        # True -> also write enclosure.step beside this file
+PARTS = ("Body_Main", "Body_Lid", "Body_Door")
+
+
+def macro_dir():
+    """Folder holding these macros — no absolute paths baked in."""
+    cands = []
+    if "__file__" in globals():
+        cands.append(os.path.dirname(os.path.abspath(__file__)))
+    cands.append(App.ParamGet(
+        "User parameter:BaseApp/Preferences/Macro").GetString("MacroPath"))
+    for d in cands:
+        if d and os.path.exists(
+                os.path.join(d, "sensor-ntc-v2-enclosure.FCMacro")):
+            return d
+    return cands[0] if cands and cands[0] else os.getcwd()
+
+
+STEP_PATH = os.path.join(macro_dir(), "enclosure.step")
+
+DOC = App.ActiveDocument
+if DOC is None:
+    raise RuntimeError("No active document.")
+
+bodies = [DOC.getObject(n) for n in PARTS]
+missing = [n for n, b in zip(PARTS, bodies) if b is None]
+if missing:
+    raise RuntimeError("Missing %s — build the enclosure first." % ", ".join(missing))
+
+# ---- container ------------------------------------------------------
+part = DOC.getObject("Enclosure")
+if part is None:
+    part = DOC.addObject("App::Part", "Enclosure")
+    part.Label = "Enclosure"
+held = {o.Name for o in part.Group}
+for b in bodies:
+    if b.Name not in held:
+        part.addObject(b)
+ref = DOC.getObject("reference")
+if ref is not None and ref.Name not in held:
+    part.addObject(ref)
+
+# ---- explode parameter ----------------------------------------------
+sheet = DOC.getObject("params")
+if sheet is not None:
+    cell = sheet.getCellFromAlias("explode")
+    if cell is None:
+        row = 1
+        while sheet.getContents("A%d" % row) != "":
+            row += 1
+        sheet.set("A%d" % row, "explode")
+        sheet.set("B%d" % row, "0")
+        sheet.set("C%d" % row, "assembly gap: 0 = closed, try 20 to open up")
+        sheet.setAlias("B%d" % row, "explode")
+        DOC.recompute()
+
+    # lid lifts, door drops, main body stays put
+    DOC.getObject("Body_Lid").setExpression(
+        "Placement.Base.z", "params.explode")
+    DOC.getObject("Body_Door").setExpression(
+        "Placement.Base.z", "0 - params.explode")
+else:
+    App.Console.PrintWarning(
+        "assembly: no params spreadsheet — explode not wired up\n")
+
+DOC.recompute()
+
+# ---- optional STEP ---------------------------------------------------
+if EXPORT_STEP:
+    import Import
+    Import.export(bodies, STEP_PATH)
+    App.Console.PrintMessage("assembly: wrote %s\n" % STEP_PATH)
+
+App.Console.PrintMessage(
+    "assembly: 'Enclosure' holds %d object(s); set 'explode' in the "
+    "params sheet to open it up\n" % len(part.Group))

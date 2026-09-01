@@ -1,0 +1,108 @@
+# -*- coding: utf-8 -*-
+# ============================================================
+# round-rims — soften the horizontal rims of the enclosure
+#
+# The vertical corners are already rounded by the sketches in
+# sensor-ntc-v2-enclosure.FCMacro. The horizontal rims can't be:
+# rounding a top or bottom face perimeter needs a real 3D fillet.
+#
+# Run this on a document built by that macro, with the enclosure
+# document active. Radius comes from the 'edge_r' cell of the
+# params spreadsheet, so change it there and re-run.
+#
+# RE-RUN AFTER ANY DIMENSION CHANGE. A PartDesign Fillet stores the
+# edge names it was handed, and those names go stale when an upstream
+# dimension moves — the fillet then reports Invalid. This macro
+# deletes the old rim fillets and re-picks the edges geometrically,
+# which is why it is a separate step rather than part of the build.
+# ============================================================
+
+import FreeCAD as App
+import Part
+
+TOL = 0.02
+RIMS = (  # body, which face, feature name
+    ("Body_Lid",  "top",    "Rim_LidTop"),
+    ("Body_Door", "bottom", "Rim_DoorBottom"),
+    ("Body_Main", "bottom", "Rim_BodyBottom"),
+)
+
+DOC = App.ActiveDocument
+if DOC is None:
+    raise RuntimeError("No active document — build the enclosure first.")
+
+sheet = DOC.getObject("params")
+r_expr = "params.edge_r" if sheet else None
+r_val = sheet.get("edge_r") if sheet else 1.2
+
+
+def rim_edges(shape, z):
+    """Outer perimeter of the flat face sitting at height z."""
+    found = []
+    for f in shape.Faces:
+        if not isinstance(f.Surface, Part.Plane):
+            continue
+        if abs(f.Surface.Axis.z) < 0.999:
+            continue
+        if abs(f.CenterOfMass.z - z) > TOL:
+            continue
+        found.extend(f.OuterWire.Edges)
+    return found
+
+
+def names_of(shape, edges):
+    out = []
+    for i, e in enumerate(shape.Edges, 1):
+        for t in edges:
+            if e.isSame(t):
+                out.append("Edge%d" % i)
+                break
+    return out
+
+
+done, skipped = [], []
+for body_name, which, feat_name in RIMS:
+    body = DOC.getObject(body_name)
+    if body is None:
+        skipped.append("%s: no such body" % body_name)
+        continue
+
+    # drop the previous rim fillet, restoring the tip beneath it
+    old = DOC.getObject(feat_name)
+    if old is not None:
+        body.Tip = old.BaseFeature
+        DOC.removeObject(old.Name)
+        body.Tip.Visibility = True     # the restored tip must show again
+        DOC.recompute()
+
+    tip = body.Tip
+    shape = tip.Shape
+    bb = shape.BoundBox
+    z = bb.ZMax if which == "top" else bb.ZMin
+    names = names_of(shape, rim_edges(shape, z))
+    if not names:
+        skipped.append("%s: no %s rim found" % (body_name, which))
+        continue
+
+    f = body.newObject("PartDesign::Fillet", feat_name)
+    f.Base = (tip, names)
+    if r_expr:
+        f.setExpression("Radius", r_expr)
+    else:
+        f.Radius = r_val
+    tip.Visibility = False
+    DOC.recompute()
+
+    if "Error" in str(f.State) or not f.Shape.isValid():
+        skipped.append("%s: fillet failed — reduce edge_r" % body_name)
+        body.Tip = f.BaseFeature
+        DOC.removeObject(f.Name)
+        body.Tip.Visibility = True
+        DOC.recompute()
+    else:
+        done.append("%s (%d edges)" % (feat_name, len(names)))
+
+DOC.recompute()
+App.Console.PrintMessage("round-rims: %s\n" % (", ".join(done) or "nothing"))
+for s in skipped:
+    App.Console.PrintWarning("round-rims: %s\n" % s)

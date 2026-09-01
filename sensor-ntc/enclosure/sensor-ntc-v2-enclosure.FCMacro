@@ -33,7 +33,13 @@ P = {  # name: (value, comment)
     "cell_d":        (14.5, "AA diameter"),
     "cell_l":        (50.5, "AA length (reference geometry only)"),
     "cell_clear":    (0.6,  "radial clearance around each cell"),
-    "bay_l":         (57.5, "contact face to contact face  <-- FROM DATASHEET"),
+    # Contact face to contact face — NOT the cell length. The cell is
+    # 50.5, so (bay_l - 50.5)/2 is how far each contact must still stand
+    # proud with a cell in place. 52.0 comes from measuring a commercial
+    # 2xAA holder that uses the flat blade contacts we want: 0.75 mm per
+    # end. A tall leaf spring would want more. Confirm against whichever
+    # contact is actually sourced.
+    "bay_l":         (52.0, "contact face to contact face"),
     "bay_w_rib":     (3.0,  "center rib between the cells"),
     "bay_h":         (16.0, "bay ceiling above door inner face"),
     "slot_depth":    (2.0,  "contact slot bite into end wall  <-- FROM DATASHEET"),
@@ -77,6 +83,12 @@ P = {  # name: (value, comment)
     # through the 2.5 mm wall or collides with the PCB corner.
     "lid_screw_y":   (12.0, "lid screw offset from centreline, along Y"),
     "lid_post_h":    (5.0,  "lid post depth along Y"),
+    # These two feed back into in_l. Working outward from the PCB edge,
+    # the end of the box has to fit: post wall, pilot, screw head, then
+    # the gasket groove. Shrink the cavity past that and the counterbore
+    # eats into the groove and breaks the seal — silently.
+    "post_wall":     (1.2,  "post material between pilot and post edge"),
+    "groove_margin": (0.5,  "gap between screw counterbore and gasket groove"),
     "gasket_w":      (1.4,  "gasket groove width"),
     "gasket_d":      (1.0,  "gasket groove depth — use 2 mm silicone cord"),
     "door_t":        (3.0,  "door plate thickness"),
@@ -105,7 +117,9 @@ DERIVED = {  # alias: spreadsheet formula
     # recess — the recess is the widest of the three, so it sets the size
     # and keeps a full-thickness wall around the door.
     "in_l": "=max(bay_l + 2*slot_depth + 2*pcb_clear; pcb_l + 2*pcb_clear; "
-            "bay_l + 2*door_lip)",
+            "bay_l + 2*door_lip; "
+            "2*(pcb_l/2 + 0.3 + screw_pilot/2 + post_wall + screw_head_d/2 "
+            "+ groove_margin) - wall + gasket_w)",
     "in_w": "=max(pcb_w + 2*pcb_clear; bay_w + 2*door_lip)",
     "out_l":       "=in_l + 2*wall",
     "out_w":       "=in_w + 2*wall",
@@ -122,7 +136,7 @@ DERIVED = {  # alias: spreadsheet formula
     # counterbore comes out tangent to the gasket groove. Kept separate
     # from lid_post_cx so moving the screw never drags the post into
     # the PCB edge.
-    "lid_screw_x": "=lid_post_x0 + 2.1",
+    "lid_screw_x": "=lid_post_x0 + screw_pilot/2 + post_wall",
     "z_bay_top":   "=door_t + bay_h",
     "z_floor_top": "=z_bay_top + floor_t",
     "z_pcb":       "=z_floor_top + pcb_lift",
@@ -150,7 +164,10 @@ N["cellY"] = (N["cell_d"] + N["cell_clear"]*2 + N["bay_w_rib"]) / 2
 N["bay_w"] = 2*(N["cell_d"] + N["cell_clear"]*2) + N["bay_w_rib"]
 N["in_l"] = max(N["bay_l"] + 2*N["slot_depth"] + 2*N["pcb_clear"],
                 N["pcb_l"] + 2*N["pcb_clear"],
-                N["bay_l"] + 2*N["door_lip"])
+                N["bay_l"] + 2*N["door_lip"],
+                2*(N["pcb_l"]/2 + 0.3 + N["screw_pilot"]/2 + N["post_wall"]
+                  + N["screw_head_d"]/2 + N["groove_margin"])
+                - N["wall"] + N["gasket_w"])
 N["in_w"] = max(N["pcb_w"] + 2*N["pcb_clear"], N["bay_w"] + 2*N["door_lip"])
 N["out_l"] = N["in_l"] + 2*N["wall"]
 N["out_w"] = N["in_w"] + 2*N["wall"]
@@ -164,7 +181,7 @@ N["lid_post_x0"] = N["pcb_l"]/2 + 0.3
 N["lid_post_x1"] = N["in_l"]/2 + N["wall"]/2
 N["lid_post_w"] = N["lid_post_x1"] - N["lid_post_x0"]
 N["lid_post_cx"] = (N["lid_post_x0"] + N["lid_post_x1"]) / 2
-N["lid_screw_x"] = N["lid_post_x0"] + 2.1
+N["lid_screw_x"] = N["lid_post_x0"] + N["screw_pilot"]/2 + N["post_wall"]
 
 V = App.Vector
 
@@ -627,5 +644,6 @@ App.Console.PrintMessage(
     "or edit any sketch directly.\n"
     "Bodies: Body_Main / Body_Lid / Body_Door. "
     "Hide the 'reference' group before exporting for print.\n")
+
 
 

@@ -61,7 +61,7 @@ void confirmFirmwareValid();
 #define FW_MINOR 1
 #endif
 #ifndef FW_PATCH
-#define FW_PATCH 17
+#define FW_PATCH 18
 #endif
 #define STR_(x) #x
 #define STR(x)  STR_(x)
@@ -202,6 +202,11 @@ static inline bool resetButtonHeld() {
 // Kept out of the config message on purpose: cfg_ver is a fingerprint of the
 // settings, and a transient flag would change it and then need a second change
 // to clear. This is acted on once and never stored.
+// Truncated HMAC-SHA256. 64 bits is ample against forgery when every attempt
+// costs a radio round trip. Declared here because the message structs carry it;
+// the key sits with the other ESP-NOW keys.
+#define AUTH_TAG_LEN 8
+
 #define MSG_LIVE 10
 
 typedef struct __attribute__((packed)) {
@@ -210,7 +215,11 @@ typedef struct __attribute__((packed)) {
   uint16_t duration_s;
   uint16_t interval_s;
   uint16_t reserved;
+  uint32_t auth_ctr;
+  uint8_t  auth[AUTH_TAG_LEN];
 } live_message;
+
+#define LIVE_BODY_LEN offsetof(live_message, auth_ctr)
 
 // One request per sensor, delivered on that node's next contact of any kind --
 // unlike firmware, which needs a button press, because this only changes how
@@ -220,7 +229,7 @@ typedef struct __attribute__((packed)) {
 // ordinary thing to do from a dashboard listing all of them, and with a single
 // slot the second request quietly replaced the first, which then waited for a
 // delivery that was never going to come.
-#define LIVE_MAX_PENDING 10   // kept equal to MAX_SENSORS, asserted below
+#define LIVE_MAX_PENDING 16   // kept equal to MAX_SENSORS, asserted below
 
 struct PendingLive {
   bool     used;
@@ -289,7 +298,7 @@ typedef struct __attribute__((packed)) {
 // Sizing the image needs an HTTP round trip, and the node listens for only a
 // few hundred milliseconds after transmitting -- long enough to receive a frame
 // that is already prepared, nowhere near long enough to fetch one first.
-#define SOTA_MAX_STAGED 10   // kept equal to MAX_SENSORS, asserted below
+#define SOTA_MAX_STAGED 16   // kept equal to MAX_SENSORS, asserted below
 
 struct StagedImage {
   bool              used;
@@ -346,6 +355,37 @@ static const uint8_t PMK_KEY[16] = {
   0x4A, 0x2F, 0x8C, 0x1E, 0x7B, 0x3D, 0x9A, 0x5F,
   0x6E, 0x2C, 0x4B, 0x8D, 0x1A, 0x7F, 0x3E, 0x9C
 };
+// --- MESSAGE AUTHENTICATION ---
+// ESP-NOW link encryption is not used: each encrypted peer consumes one of the
+// radio's handful of hardware key slots, which capped a hub at seven sensors.
+// A room with a dozen coolers is ordinary, so authenticity moved into the
+// message, where nothing limits how many nodes there can be.
+//
+// What this protects is the property a temperature record lives or dies by: a
+// reading the hub accepts came from the sensor it names, was not altered, and
+// is not a replay. It does not hide the reading, deliberately -- a cooler
+// temperature is not a secret, and that was the cheap half of what encryption
+// was providing.
+//
+// Shared across the fleet, exactly as LMK_KEY was, with the same consequence:
+// anyone who can read one node's flash can forge for all of them. Change it
+// before deployment, on the hub and every sensor together.
+static const uint8_t AUTH_KEY[32] = {
+  0x5B, 0x2E, 0xC4, 0x91, 0x7A, 0x03, 0xD8, 0x66,
+  0x1F, 0xB5, 0x40, 0xE7, 0x2C, 0x98, 0x71, 0x0A,
+  0xD3, 0x64, 0x8F, 0x25, 0xB1, 0x7C, 0x06, 0xEA,
+  0x49, 0x93, 0x2B, 0xF5, 0x18, 0xA7, 0x60, 0xCD,
+};
+
+// Whether an unauthenticated reading is refused or merely noted.
+//
+// Set to 0 while a fleet is being updated. A hub that refused unauthenticated
+// frames would refuse the very readings an un-updated sensor must send in order
+// to be offered its update, so strict mode before the rollout locks the fleet
+// out of the rollout. Flip to 1 -- and OTA the hub -- once every node reports
+// an authenticated frame.
+#define AUTH_REQUIRED 0
+
 static const uint8_t LMK_KEY[16] = {
   0xE3, 0x4A, 0x7C, 0x91, 0xB5, 0x2D, 0xF8, 0x6E,
   0x1A, 0x9F, 0x3C, 0x72, 0xD4, 0x5B, 0x8E, 0x20
@@ -384,7 +424,14 @@ typedef struct struct_message {
   uint8_t  fw_minor;
   uint8_t  fw_patch;
   uint16_t cfg_ver;   // config version currently applied on the sensor; 0 = defaults
+
+  // Appended, so a shorter frame from an un-updated sensor still parses.
+  // Everything above is what the tag covers.
+  uint32_t auth_ctr;             // strictly increasing; replays do not rise
+  uint8_t  auth[AUTH_TAG_LEN];   // HMAC over sender MAC + auth_ctr + the above
 } struct_message;
+
+#define AUTH_BODY_LEN (sizeof(struct_message) - sizeof(uint32_t) - AUTH_TAG_LEN)
 
 // Wire layout of the pre-1.0 message, kept only to compute the minimum
 // acceptable packet length. Do not use for anything else.
@@ -415,9 +462,16 @@ typedef struct config_message {
   float    sh_a;          // Steinhart-Hart A (K^-1)
   float    sh_b;          // Steinhart-Hart B (K^-1)
   float    sh_c;          // Steinhart-Hart C (K^-1)
-  float    r_series;      // divider resistor, ohms
-  uint8_t  reserved[16];
+  float    r_series;
+
+  // Carved out of what was reserved[16], so the frame is the size it has always
+  // been and an un-updated node still parses everything above it.
+  uint8_t  reserved[4];
+  uint32_t auth_ctr;
+  uint8_t  auth[AUTH_TAG_LEN];
 } config_message;
+
+#define CFG_BODY_LEN offsetof(config_message, auth_ctr)
 
 static_assert(sizeof(config_message) == 40, "config wire format changed");
 
@@ -436,7 +490,12 @@ struct_message incomingData;
 volatile int   incomingRSSI = 0;
 
 // --- SENSOR DATA STORAGE ---
-#define MAX_SENSORS 10
+// Bounded by ESP-NOW's 20-peer table, not by memory. It was 10 while data
+// peers were encrypted, which the radio could not have honoured anyway: each
+// encrypted peer takes one of six or seven hardware key slots, so a hub would
+// have gone quiet on its eighth sensor. Authenticating in the message instead
+// removed that limit; 16 leaves headroom in the peer table.
+#define MAX_SENSORS 16
 static_assert(LIVE_MAX_PENDING == MAX_SENSORS,
               "every tracked sensor needs a live request slot");
 static_assert(SOTA_MAX_STAGED == MAX_SENSORS,
@@ -452,6 +511,11 @@ struct SensorData {
   bool          active;
   char          name[20];
   uint8_t       battery;
+
+  // Highest authentication counter accepted from this sensor. Zero means none
+  // has been seen yet, so the next frame sets the baseline rather than being
+  // judged against one -- which is also what happens after a hub restart.
+  uint32_t      authCtrSeen;
 
   // Reported by the sensor in every data frame. All zero until the sensor has
   // been updated to firmware that sends them.
@@ -1126,6 +1190,62 @@ int findSensor(const uint8_t* mac) {
   return -1;
 }
 
+// Tag = first AUTH_TAG_LEN bytes of HMAC-SHA256(key, mac || ctr || body).
+// The MAC is covered so a frame cannot be replayed as if it came from another
+// node -- without it, a captured reading could be re-sent under any address.
+void authTag(const uint8_t* mac, uint32_t ctr,
+             const uint8_t* body, size_t bodyLen, uint8_t out[AUTH_TAG_LEN]) {
+  uint8_t full[32];
+  mbedtls_md_context_t ctx;
+  mbedtls_md_init(&ctx);
+  mbedtls_md_setup(&ctx, mbedtls_md_info_from_type(MBEDTLS_MD_SHA256), 1);
+  mbedtls_md_hmac_starts(&ctx, AUTH_KEY, sizeof(AUTH_KEY));
+  mbedtls_md_hmac_update(&ctx, mac, 6);
+  mbedtls_md_hmac_update(&ctx, (const uint8_t*)&ctr, sizeof(ctr));
+  mbedtls_md_hmac_update(&ctx, body, bodyLen);
+  mbedtls_md_hmac_finish(&ctx, full);
+  mbedtls_md_free(&ctx);
+  memcpy(out, full, AUTH_TAG_LEN);
+}
+
+// Compared without an early exit, so the time taken says nothing about how much
+// of a wrong tag happened to be right.
+bool authTagEqual(const uint8_t* a, const uint8_t* b) {
+  uint8_t diff = 0;
+  for (size_t i = 0; i < AUTH_TAG_LEN; i++) diff |= (uint8_t)(a[i] ^ b[i]);
+  return diff == 0;
+}
+
+// Counter for everything this hub sends. Kept in NVS in blocks, like the
+// sensors do, so a hub reboot never reissues a counter a sensor has already
+// accepted and dismissed as a replay.
+#define AUTH_CTR_BLOCK 64
+static uint32_t authTxNext  = 0;
+static uint32_t authTxLimit = 0;
+
+// The sensor verifies against the address a frame arrived from, so the hub has
+// to tag with its own.
+static uint8_t authSelfMac[6] = {0};
+
+void authTagSelf(uint32_t ctr, const uint8_t* body, size_t bodyLen,
+                 uint8_t out[AUTH_TAG_LEN]) {
+  authTag(authSelfMac, ctr, body, bodyLen, out);
+}
+
+uint32_t authNextTxCtr() {
+  if (authTxNext >= authTxLimit) {
+    Preferences p;
+    p.begin("auth", false);
+    uint32_t base = p.getUInt("txctr", 0);
+    if (base < authTxLimit) base = authTxLimit;
+    p.putUInt("txctr", base + AUTH_CTR_BLOCK);
+    p.end();
+    authTxNext  = base;
+    authTxLimit = base + AUTH_CTR_BLOCK;
+  }
+  return authTxNext++;
+}
+
 int addSensor(const uint8_t* mac) {
   if (sensorCount >= MAX_SENSORS) {
     Serial.println("WARNING: Max sensors reached!");
@@ -1223,8 +1343,7 @@ void loadPairedSensors() {
     esp_now_peer_info_t peer = {};
     memcpy(peer.peer_addr, mac, 6);
     peer.channel = 0;
-    peer.encrypt = true;
-    memcpy(peer.lmk, LMK_KEY, 16);
+    peer.encrypt = false;   // authenticity travels in the message; see AUTH_KEY
     if (esp_now_add_peer(&peer) == ESP_OK) {
       Serial.printf("  ✓ %02X:%02X:%02X:%02X:%02X:%02X restored\n",
                     mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
@@ -1707,9 +1826,14 @@ void addSensorFromCloud(const uint8_t* mac, const char* name) {
     esp_now_peer_info_t peer = {};
     memcpy(peer.peer_addr, mac, 6);
     peer.channel = 0;
-    peer.encrypt = true;
-    memcpy(peer.lmk, LMK_KEY, 16);
-    esp_now_add_peer(&peer);
+    peer.encrypt = false;   // authenticity travels in the message; see AUTH_KEY
+    if (esp_now_add_peer(&peer) != ESP_OK) {
+      // 20 unencrypted peers is the radio's ceiling. Undo the entry rather than
+      // keep a sensor the hub can list but never answer.
+      Serial.println("[Sync] No peer slot left - cannot add this sensor");
+      sensorCount--;
+      return;
+    }
   }
 
   // Persist
@@ -2514,6 +2638,8 @@ void pushConfigIfPending(int idx, const uint8_t* mac) {
   cfg.sh_b        = sensors[idx].cfgShB;
   cfg.sh_c        = sensors[idx].cfgShC;
   cfg.r_series    = sensors[idx].cfgRSeries;
+  cfg.auth_ctr    = authNextTxCtr();
+  authTagSelf(cfg.auth_ctr, (const uint8_t*)&cfg, CFG_BODY_LEN, cfg.auth);
 
   if (esp_now_send(mac, (uint8_t*)&cfg, sizeof(cfg)) == ESP_OK) {
     Serial.printf("[CFG] Pushed config v%u to sensor\n", cfg.cfg_ver);
@@ -2843,13 +2969,9 @@ void completePairing(const uint8_t* mac) {
   }
   Serial.println("✓ Pairing confirmation sent!");
 
-  // Upgrade peer to encrypted link
-  esp_now_peer_info_t encPeer = {};
-  memcpy(encPeer.peer_addr, mac, 6);
-  encPeer.channel = 0;
-  encPeer.encrypt = true;
-  memcpy(encPeer.lmk, LMK_KEY, 16);
-  esp_now_mod_peer(&encPeer);
+  // The peer is not upgraded to an encrypted link any more. It stays open, and
+  // each message carries its own proof instead -- which is what lifts the
+  // ceiling from the radio's seven key slots to sixteen sensors.
 
   int index = findSensor(mac);
   if (index == -1) addSensor(mac);
@@ -3414,6 +3536,42 @@ void OnDataRecv(const esp_now_recv_info_t* esp_now_info,
     }
   }
   else if (incomingData.msgType == MSG_DATA) {
+    // Authenticity is checked before the reading is used for anything. A frame
+    // that fails is not a reading at all -- it is someone else's idea of one.
+    //
+    // Frames short enough to predate authentication carry no tag. They are
+    // accepted while AUTH_REQUIRED is 0, because refusing them would refuse the
+    // readings an un-updated sensor must send to be offered its update.
+    bool authed = (len >= (int)sizeof(struct_message));
+    if (authed) {
+      uint8_t expect[AUTH_TAG_LEN];
+      authTag(esp_now_info->src_addr, incomingData.auth_ctr,
+              (const uint8_t*)&incomingData, AUTH_BODY_LEN, expect);
+      if (!authTagEqual(expect, incomingData.auth)) {
+        Serial.printf("[AUTH] Dropped a frame from %02X:%02X:%02X:%02X:%02X:%02X - bad tag\n",
+                      esp_now_info->src_addr[0], esp_now_info->src_addr[1],
+                      esp_now_info->src_addr[2], esp_now_info->src_addr[3],
+                      esp_now_info->src_addr[4], esp_now_info->src_addr[5]);
+        return;
+      }
+      int ai = findSensor(esp_now_info->src_addr);
+      if (ai >= 0) {
+        // A counter that has not risen is a replay. The first frame after a hub
+        // restart sets the baseline instead of being compared to one, since the
+        // last-seen value is not carried across a reboot.
+        if (sensors[ai].authCtrSeen != 0 &&
+            incomingData.auth_ctr <= sensors[ai].authCtrSeen) {
+          Serial.printf("[AUTH] Dropped a replayed frame (ctr %u)\n",
+                        (unsigned)incomingData.auth_ctr);
+          return;
+        }
+        sensors[ai].authCtrSeen = incomingData.auth_ctr;
+      }
+    } else if (AUTH_REQUIRED) {
+      Serial.println("[AUTH] Dropped an unauthenticated frame");
+      return;
+    }
+
     Serial.print("DATA from: ");
     for (int i = 0; i < 5; i++) Serial.printf("%02X:", esp_now_info->src_addr[i]);
     Serial.printf("%02X", esp_now_info->src_addr[5]);
@@ -3478,6 +3636,8 @@ void OnDataRecv(const esp_now_recv_info_t* esp_now_info,
       lm.msgType    = MSG_LIVE;
       lm.duration_s = pl.duration_s;
       lm.interval_s = pl.interval_s;
+      lm.auth_ctr   = authNextTxCtr();
+      authTagSelf(lm.auth_ctr, (const uint8_t*)&lm, LIVE_BODY_LEN, lm.auth);
       if (esp_now_send(esp_now_info->src_addr, (uint8_t*)&lm, sizeof(lm)) == ESP_OK) {
         pl.used = false;
         Serial.println(pl.duration_s == 0 ? "[LIVE] Stop sent" : "[LIVE] Sent");
@@ -3712,7 +3872,11 @@ void setup() {
     return;
   }
   esp_now_set_pmk(PMK_KEY);
-  Serial.println("✓ ESP-NOW initialized (encrypted)");
+
+  // Cached once: every message this hub signs is tagged with its own address,
+  // which is what a sensor checks the tag against.
+  WiFi.macAddress(authSelfMac);
+  Serial.println("✓ ESP-NOW initialized (authenticated messages)");
 
   loadPairedSensors();
   esp_now_register_recv_cb(OnDataRecv);
@@ -3721,6 +3885,13 @@ void setup() {
   // The cloud responds with its authoritative list (retained); applySyncFromCloud
   // in loop() will add/remove sensors to match the cloud truth.
   publishSyncRequest();
+
+  {
+    esp_now_peer_num_t pn = {};
+    esp_now_get_peer_num(&pn);
+    Serial.printf("ESP-NOW peers: %d of 20 used (max %d sensors)\n",
+                  pn.total_num, MAX_SENSORS);
+  }
 
   Serial.println("\n=== Hub Ready ===");
   Serial.println("Waiting for sensor data...\n");

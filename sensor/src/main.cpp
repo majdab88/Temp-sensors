@@ -5,6 +5,7 @@
 #include <Wire.h>
 #include <SensirionI2cSht4x.h>
 #include <Preferences.h>
+#include <mbedtls/md.h>     // HMAC-SHA256 over each message
 #include <esp_wifi.h>
 #include <esp_sleep.h>   // Explicit include needed on C6
 
@@ -45,6 +46,26 @@ static const uint8_t PMK_KEY[16] = {
   0x4A, 0x2F, 0x8C, 0x1E, 0x7B, 0x3D, 0x9A, 0x5F,
   0x6E, 0x2C, 0x4B, 0x8D, 0x1A, 0x7F, 0x3E, 0x9C
 };
+// --- MESSAGE AUTHENTICATION ---
+// Must match the hub and every other sensor. The link is no longer encrypted:
+// ESP-NOW spends a hardware key slot per encrypted peer, which capped a hub at
+// seven sensors, so authenticity lives in the message instead. See the hub's
+// AUTH_KEY for the full reasoning.
+static const uint8_t AUTH_KEY[32] = {
+  0x5B, 0x2E, 0xC4, 0x91, 0x7A, 0x03, 0xD8, 0x66,
+  0x1F, 0xB5, 0x40, 0xE7, 0x2C, 0x98, 0x71, 0x0A,
+  0xD3, 0x64, 0x8F, 0x25, 0xB1, 0x7C, 0x06, 0xEA,
+  0x49, 0x93, 0x2B, 0xF5, 0x18, 0xA7, 0x60, 0xCD,
+};
+
+#define AUTH_TAG_LEN 8
+
+// This variant has no OTA receiver, so its version only ever changes by being
+// flashed. It is reported so the dashboard can say which nodes are which.
+#define FW_MAJOR 1
+#define FW_MINOR 0
+#define FW_PATCH 0
+
 static const uint8_t LMK_KEY[16] = {
   0xE3, 0x4A, 0x7C, 0x91, 0xB5, 0x2D, 0xF8, 0x6E,
   0x1A, 0x9F, 0x3C, 0x72, 0xD4, 0x5B, 0x8E, 0x20
@@ -74,12 +95,63 @@ struct BatteryInfo {
 
 // --- MESSAGE STRUCTURE ---
 // IMPORTANT: must be byte-for-byte identical on hub and all sensors
+// Byte-for-byte identical to the hub's. This variant used to send the short
+// legacy frame, which the hub still accepts -- but a short frame carries no
+// tag, so it could never be authenticated. Sending the full one is what lets
+// these nodes be trusted like the rest.
 typedef struct struct_message {
-  uint8_t msgType;
-  float temp;
-  float hum;
-  uint8_t battery;   // 0–100 %; 255 = read error
+  uint8_t  msgType;
+  float    temp;
+  float    hum;
+  uint8_t  battery;   // 0–100 %; 255 = read error
+  uint8_t  fw_major;
+  uint8_t  fw_minor;
+  uint8_t  fw_patch;
+  uint16_t cfg_ver;   // this variant takes no remote config; always 0
+
+  uint32_t auth_ctr;
+  uint8_t  auth[AUTH_TAG_LEN];
 } struct_message;
+
+#define AUTH_BODY_LEN (sizeof(struct_message) - sizeof(uint32_t) - AUTH_TAG_LEN)
+
+// Counters must never repeat, including across a power cycle, so they are
+// claimed from NVS a block at a time and spent from RAM: one flash write per
+// AUTH_CTR_BLOCK wakes rather than one per reading. Skipping the unspent tail
+// of a block is harmless -- the rule is that they rise, not that none are
+// missed.
+#define AUTH_CTR_BLOCK 64
+RTC_DATA_ATTR uint32_t authCtrNext  = 0;
+RTC_DATA_ATTR uint32_t authCtrLimit = 0;
+
+static void authTag(const uint8_t *mac, uint32_t ctr,
+                    const uint8_t *body, size_t bodyLen, uint8_t out[AUTH_TAG_LEN]) {
+  uint8_t full[32];
+  mbedtls_md_context_t ctx;
+  mbedtls_md_init(&ctx);
+  mbedtls_md_setup(&ctx, mbedtls_md_info_from_type(MBEDTLS_MD_SHA256), 1);
+  mbedtls_md_hmac_starts(&ctx, AUTH_KEY, sizeof(AUTH_KEY));
+  mbedtls_md_hmac_update(&ctx, mac, 6);
+  mbedtls_md_hmac_update(&ctx, (const uint8_t *)&ctr, sizeof(ctr));
+  mbedtls_md_hmac_update(&ctx, body, bodyLen);
+  mbedtls_md_hmac_finish(&ctx, full);
+  mbedtls_md_free(&ctx);
+  memcpy(out, full, AUTH_TAG_LEN);
+}
+
+static uint32_t authNextCtr() {
+  if (authCtrNext >= authCtrLimit) {
+    Preferences p;
+    p.begin("auth", false);
+    uint32_t base = p.getUInt("ctr", 0);
+    if (base < authCtrLimit) base = authCtrLimit;
+    p.putUInt("ctr", base + AUTH_CTR_BLOCK);
+    p.end();
+    authCtrNext  = base;
+    authCtrLimit = base + AUTH_CTR_BLOCK;
+  }
+  return authCtrNext++;
+}
 
 // --- GLOBALS ---
 SensirionI2cSht4x sht4x;  // Lowercase 'c' !!
@@ -300,6 +372,23 @@ BatteryInfo getBatteryInfo() {
 
 // --- SEND WITH RETRIES ---
 bool sendDataWithRetry() {
+  // Version and config fields are filled here rather than at every call site,
+  // so a reading cannot go out describing itself as coming from nowhere.
+  myData.fw_major = FW_MAJOR;
+  myData.fw_minor = FW_MINOR;
+  myData.fw_patch = FW_PATCH;
+  myData.cfg_ver  = 0;
+
+  // One counter and one tag for the whole attempt, not one per retry: a retry
+  // is the same reading said again, and the hub's duplicate filter needs the
+  // frames to be identical.
+  myData.auth_ctr = authNextCtr();
+  {
+    uint8_t self[6];
+    WiFi.macAddress(self);
+    authTag(self, myData.auth_ctr, (const uint8_t *)&myData, AUTH_BODY_LEN, myData.auth);
+  }
+
   for (int retry = 0; retry < MAX_RETRIES; retry++) {
     tx_complete = false;
     tx_success  = false;
@@ -486,7 +575,9 @@ void setup() {
 
     memcpy(peerInfo.peer_addr, hubMac, 6);
     peerInfo.channel = ESPNOW_CHANNEL;
-    peerInfo.encrypt = true;
+    // Unencrypted by design: authenticity is carried in the message, so a hub is
+  // not limited to seven sensors by the radio's key slots.
+  peerInfo.encrypt = false;
     memcpy(peerInfo.lmk, LMK_KEY, 16);
 
     if (esp_now_add_peer(&peerInfo) != ESP_OK) {

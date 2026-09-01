@@ -1,0 +1,68 @@
+# -*- coding: utf-8 -*-
+# ============================================================
+# tidy-view — make the enclosure readable in the 3D view
+#
+#   * hides every intermediate PartDesign feature, leaving each body's
+#     Tip — otherwise every Pad and Pocket is drawn on top of the final
+#     shape, which is what makes edges and vertices pickable everywhere
+#   * hides every sketch (profile lines floating over the solids)
+#   * hides the 'reference' group (ghost cells + PCB assembly)
+#   * shows all three printed parts, fully opaque
+#
+# Run it any time the view gets cluttered. Safe to re-run.
+# Set SHOW_REFERENCE = True to check PCB/cell fit instead.
+# ============================================================
+
+import FreeCAD as App
+
+SHOW_REFERENCE = False
+PARTS = ("Body_Main", "Body_Lid", "Body_Door")
+
+DOC = App.ActiveDocument
+if DOC is None:
+    raise RuntimeError("No active document.")
+
+hidden = 0
+for o in DOC.Objects:
+    if o.TypeId == "Sketcher::SketchObject" and o.Visibility:
+        o.Visibility = False
+        hidden += 1
+
+ref = DOC.getObject("reference")
+if ref is not None:
+    ref.Visibility = SHOW_REFERENCE
+    for child in ref.Group:
+        child.Visibility = SHOW_REFERENCE
+
+shown, buried = [], 0
+for name in PARTS:
+    b = DOC.getObject(name)
+    if b is None:
+        continue
+    tip = b.Tip
+    for f in b.Group:
+        if not f.TypeId.startswith("PartDesign::"):
+            continue
+        want = (tip is not None and f.Name == tip.Name)
+        if f.Visibility != want:
+            f.Visibility = want
+            buried += not want
+    b.Visibility = True
+    if App.GuiUp:
+        b.ViewObject.Transparency = 0
+    shown.append(name)
+
+DOC.recompute()
+
+if App.GuiUp:
+    import FreeCADGui as Gui
+    try:
+        Gui.SendMsgToActiveView("ViewFit")
+    except Exception:
+        pass
+
+App.Console.PrintMessage(
+    "tidy-view: hid %d sketch(es) and %d intermediate feature(s), "
+    "showing %s, reference %s\n"
+    % (hidden, buried, ", ".join(shown) or "nothing",
+       "shown" if SHOW_REFERENCE else "hidden"))

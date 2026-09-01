@@ -1,0 +1,73 @@
+# -*- coding: utf-8 -*-
+# ============================================================
+# build-all — one click for the whole enclosure
+#
+# Runs, in order:
+#   1. sensor-ntc-v2-enclosure.FCMacro  (new document, all three parts)
+#   2. round-rims.FCMacro               (fillets the horizontal rims)
+#   3. assembly.FCMacro                 (Enclosure container + explode)
+#   4. tidy-view.FCMacro                (hide sketches and stale features)
+#
+# Use this after any change to the macro source. Plain dimension
+# changes do NOT need it — edit the params spreadsheet instead and the
+# model follows. Only structural changes (different sketch geometry, a
+# new feature) require a rebuild.
+#
+# Close any older copies of the document first: step 1 always creates a
+# new one, so leftovers pile up as ...enclosure1, ...enclosure2 and it
+# gets easy to edit one while looking at another.
+# ============================================================
+
+import os
+import FreeCAD as App
+
+STEPS = (
+    "sensor-ntc-v2-enclosure.FCMacro",
+    "round-rims.FCMacro",
+    "assembly.FCMacro",
+    "tidy-view.FCMacro",
+)
+
+# Look for the steps next to this file, then in the configured macro
+# directory. Take the first location that actually holds step 1 —
+# __file__ can point at whatever ran us rather than at this macro.
+CANDIDATES = []
+if "__file__" in globals():
+    CANDIDATES.append(os.path.dirname(os.path.abspath(__file__)))
+CANDIDATES.append(App.ParamGet(
+    "User parameter:BaseApp/Preferences/Macro").GetString("MacroPath"))
+
+HERE = None
+for folder in CANDIDATES:
+    if folder and os.path.exists(os.path.join(folder, STEPS[0])):
+        HERE = folder
+        break
+if HERE is None:
+    raise RuntimeError(
+        "Cannot find %s. Looked in: %s. Set Preferences > Python > Macro "
+        "> macro path to the enclosure folder." % (STEPS[0], CANDIDATES))
+
+# Underscored names throughout: the steps run in this same global
+# namespace and freely use short names like 'name', 'doc' and 'path',
+# so anything the driver needs after an exec has to be out of their way.
+_ran = []
+for _step in STEPS:
+    _label = _step.replace(".FCMacro", "")
+    _path = os.path.join(HERE, _step)
+    if not os.path.exists(_path):
+        App.Console.PrintWarning("build-all: missing %s — skipped\n" % _step)
+        continue
+    with open(_path, encoding="utf-8") as _fh:
+        _code = _fh.read()
+    exec(compile(_code, _path, "exec"), globals())
+    _ran.append(_label)
+
+    # step 1 creates the document; make sure the rest act on it
+    _doc = globals().get("DOC") or App.ActiveDocument
+    if _doc is not None:
+        App.setActiveDocument(_doc.Name)
+
+App.Console.PrintMessage("build-all: ran %s\n" % " -> ".join(_ran))
+App.Console.PrintMessage(
+    "build-all: now File > Save As to keep it. After this, change "
+    "dimensions in the params spreadsheet — no rebuild needed.\n")

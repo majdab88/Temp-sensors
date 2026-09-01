@@ -17,3 +17,19 @@ sensor-ntc/.gitignore
 
 # Publish helper config — contains a superadmin password.
 publish.env
+
+# Enclosure model: the FreeCAD document is a build artifact — rebuild it
+# with sensor-ntc/enclosure/build-all.FCMacro rather than versioning it.
+*.FCStd
+*.FCStd1
+*.FCBak
+sensor-ntc/enclosure/*.csg
+sensor-ntc/enclosure/enclosure.step
+sensor-ntc/enclosure/*-Enclosure*.step
+
+# Large local inputs for that model. esp32c6.step is a 6 MB KiCad board
+# export (the build falls back to a plain reference box without it), and
+# NTC_SENSOR.kicad_pcb is a copy of the board file that lives with the
+# KiCad project — tracking it here would let the two drift.
+sensor-ntc/enclosure/esp32c6.step
+sensor-ntc/enclosure/NTC_SENSOR.kicad_pcb

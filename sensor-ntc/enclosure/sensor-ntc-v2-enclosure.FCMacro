@@ -1,0 +1,631 @@
+# -*- coding: utf-8 -*-
+# ============================================================
+# sensor-ntc v2 enclosure — native FreeCAD PartDesign build
+# Batteries under the board: 2x AA bay at the bottom, PCB deck
+# above, bottom door, Keystone-style contact slots.
+#
+# Creates three PartDesign Bodies (Body_Main, Body_Lid, Body_Door)
+# made of real Sketches + Pads/Pockets, plus reference cells/PCB.
+# Every driving dimension lives in the "params" spreadsheet —
+# edit a value there and the whole model recomputes. Sketches are
+# fully constrained, so you can also open any sketch and rework
+# the profile the normal PartDesign way.
+#
+# Run it: Macro -> Macros... -> add this file (or paste
+#   exec(open(r"<path to this file>").read())
+# into the Python console). Then File -> Save As.
+#
+# !! bay_l and the slot_* values are placeholders — set them from
+#    the Keystone contact datasheet before printing.
+# ============================================================
+
+import math
+import FreeCAD as App
+import Part
+import Sketcher
+
+DOC = App.newDocument("sensor_ntc_v2_enclosure")
+
+# ------------------------------------------------------------
+# 1. Parameter spreadsheet
+# ------------------------------------------------------------
+P = {  # name: (value, comment)
+    "cell_d":        (14.5, "AA diameter"),
+    "cell_l":        (50.5, "AA length (reference geometry only)"),
+    "cell_clear":    (0.6,  "radial clearance around each cell"),
+    "bay_l":         (57.5, "contact face to contact face  <-- FROM DATASHEET"),
+    "bay_w_rib":     (3.0,  "center rib between the cells"),
+    "bay_h":         (16.0, "bay ceiling above door inner face"),
+    "slot_depth":    (2.0,  "contact slot bite into end wall  <-- FROM DATASHEET"),
+    "slot_w_single": (11.0, "single-contact slot width  <-- FROM DATASHEET"),
+    "slot_w_dual":   (24.0, "dual-jumper slot width  <-- FROM DATASHEET"),
+    # A slot rather than a round hole, sized for two wires carrying
+    # crimped XH terminals — the terminals go into the housing after
+    # the wires are through, so the housing itself never has to pass.
+    # Centred on the bay (y = 0) so both cells' wires reach it evenly;
+    # BT1 itself is at (-24.5, 11), a short run away.
+    "bat_wire_w":    (4.5,  "battery wire slot width"),
+    "bat_wire_l":    (8.0,  "battery wire slot length"),
+    "bat_wire_r":    (1.5,  "slot corner radius"),
+    "bat_wire_x":    (-24.5, "wire slot X"),
+    "bat_wire_y":    (0.0,  "wire slot Y — 0 = centred between the cells"),
+    "pcb_l":         (60.0, "PCB length (NTC_SENSOR.kicad_pcb outline)"),
+    "pcb_w":         (40.0, "PCB width (NTC_SENSOR.kicad_pcb outline)"),
+    "pcb_t":         (1.6,  "PCB thickness"),
+    "pcb_clear":     (0.4,  "per-side slop around PCB"),
+    "pcb_lift":      (2.5,  "standoff height (THT leads reach 1.9 below board)"),
+    "standoff_d":    (6.0,  "standoff pad diameter"),
+    "pcb_pilot":     (2.05, "M2.5 self-tap pilot — board holes are 2.5 mm"),
+    "h1x": (21.0,  "mounting hole 1 X (from kicad_pcb)"),
+    "h1y": (17.0,  "mounting hole 1 Y"),
+    "h2x": (26.5,  "mounting hole 2 X"),
+    "h2y": (-16.5, "mounting hole 2 Y"),
+    "h3x": (-26.5, "mounting hole 3 X"),
+    "h3y": (17.0,  "mounting hole 3 Y"),
+    "h4x": (-26.5, "mounting hole 4 X"),
+    "h4y": (-16.5, "mounting hole 4 Y"),
+    "headroom":      (12.0, "components reach ~9 above board (measured STEP)"),
+    "wall":          (2.5,  "shell wall thickness"),
+    "floor_t":       (1.8,  "floor between bay and electronics"),
+    "lid_t":         (2.5,  "lid plate thickness"),
+    "lid_lip":       (2.0,  "lid lip depth"),
+    "lid_lip_w":     (2.0,  "lid lip wall thickness"),
+    "lid_fit":       (0.2,  "lip-to-cavity clearance per side"),
+    # Lid screws land in bosses grown off the two END walls, in the
+    # 4.25 mm of clear floor beyond each end of the PCB. The corners
+    # can't be used: a post big enough for an M2 either breaks out
+    # through the 2.5 mm wall or collides with the PCB corner.
+    "lid_screw_y":   (12.0, "lid screw offset from centreline, along Y"),
+    "lid_post_h":    (5.0,  "lid post depth along Y"),
+    "gasket_w":      (1.4,  "gasket groove width"),
+    "gasket_d":      (1.0,  "gasket groove depth — use 2 mm silicone cord"),
+    "door_t":        (3.0,  "door plate thickness"),
+    # the lip has to swallow a screw head (1.9) + rim (0.6) on the outside
+    # and a pilot boss (0.9 + 1.8 wall) on the bay side — 5.5 is the
+    # minimum that fits an M2; shrinking it puts the head through the edge
+    "door_lip":      (5.5,  "door recess border beyond the bay"),
+    "door_fit":      (0.3,  "per-side print clearance for the door"),
+    "door_rib_h":    (1.6,  "door ribs pressing the cells up"),
+    "screw_pilot":   (1.8,  "pilot hole for M2 self-tappers"),
+    "screw_head_d":  (3.8,  "M2 head diameter (counterbore)"),
+    "screw_head_h":  (1.3,  "M2 head height — counterbore depth"),
+    # offset of the door screws from the bay wall; balances the pilot
+    # boss (inside) against the counterbore rim (outside)
+    "screw_off":     (2.3,  "door screw offset outboard of the bay wall"),
+    "probe_d":       (6.5,  "NTC probe cable hole"),
+    "probe_x":       (-15.0, "probe hole X — lined up with TH1 (JST-XH)"),
+    "corner_r":      (3.0,  "outer vertical corner fillet"),
+    "edge_r":        (1.2,  "top/bottom outer edge fillet"),
+    "cavity_r":      (1.5,  "inside corner fillet of the electronics cavity"),
+}
+DERIVED = {  # alias: spreadsheet formula
+    "cellY":       "=(cell_d + cell_clear*2 + bay_w_rib) / 2",
+    "bay_w":       "=2*(cell_d + cell_clear*2) + bay_w_rib",
+    # interior must clear the PCB, the bay+contact slots, AND the door
+    # recess — the recess is the widest of the three, so it sets the size
+    # and keeps a full-thickness wall around the door.
+    "in_l": "=max(bay_l + 2*slot_depth + 2*pcb_clear; pcb_l + 2*pcb_clear; "
+            "bay_l + 2*door_lip)",
+    "in_w": "=max(pcb_w + 2*pcb_clear; bay_w + 2*door_lip)",
+    "out_l":       "=in_l + 2*wall",
+    "out_w":       "=in_w + 2*wall",
+    # door screws sit on the diagonal at the recess corners, where the
+    # lip band is sqrt(2) wider than it is along the sides
+    "screw_x":     "=bay_l/2 + screw_off",
+    "screw_y":     "=bay_w/2 + screw_off",
+    # lid post spans from just clear of the PCB out into the end wall
+    "lid_post_x0": "=pcb_l/2 + 0.3",
+    "lid_post_x1": "=in_l/2 + wall/2",
+    "lid_post_w":  "=lid_post_x1 - lid_post_x0",
+    "lid_post_cx": "=(lid_post_x0 + lid_post_x1) / 2",
+    # The screw sits inboard of the post centre — at the centre its
+    # counterbore comes out tangent to the gasket groove. Kept separate
+    # from lid_post_cx so moving the screw never drags the post into
+    # the PCB edge.
+    "lid_screw_x": "=lid_post_x0 + 2.1",
+    "z_bay_top":   "=door_t + bay_h",
+    "z_floor_top": "=z_bay_top + floor_t",
+    "z_pcb":       "=z_floor_top + pcb_lift",
+    "z_top":       "=z_pcb + pcb_t + headroom",
+}
+
+sheet = DOC.addObject("Spreadsheet::Sheet", "params")
+row = 1
+for name, (val, comment) in P.items():
+    sheet.set("A%d" % row, name)
+    sheet.set("B%d" % row, str(val))
+    sheet.set("C%d" % row, comment)
+    sheet.setAlias("B%d" % row, name)
+    row += 1
+for name, formula in DERIVED.items():
+    sheet.set("A%d" % row, name)
+    sheet.set("B%d" % row, formula)
+    sheet.setAlias("B%d" % row, name)
+    row += 1
+DOC.recompute()
+
+# numeric mirror for sketch solver starting positions
+N = {k: v[0] for k, v in P.items()}
+N["cellY"] = (N["cell_d"] + N["cell_clear"]*2 + N["bay_w_rib"]) / 2
+N["bay_w"] = 2*(N["cell_d"] + N["cell_clear"]*2) + N["bay_w_rib"]
+N["in_l"] = max(N["bay_l"] + 2*N["slot_depth"] + 2*N["pcb_clear"],
+                N["pcb_l"] + 2*N["pcb_clear"],
+                N["bay_l"] + 2*N["door_lip"])
+N["in_w"] = max(N["pcb_w"] + 2*N["pcb_clear"], N["bay_w"] + 2*N["door_lip"])
+N["out_l"] = N["in_l"] + 2*N["wall"]
+N["out_w"] = N["in_w"] + 2*N["wall"]
+N["z_bay_top"] = N["door_t"] + N["bay_h"]
+N["z_floor_top"] = N["z_bay_top"] + N["floor_t"]
+N["z_pcb"] = N["z_floor_top"] + N["pcb_lift"]
+N["z_top"] = N["z_pcb"] + N["pcb_t"] + N["headroom"]
+N["screw_x"] = N["bay_l"]/2 + N["screw_off"]
+N["screw_y"] = N["bay_w"]/2 + N["screw_off"]
+N["lid_post_x0"] = N["pcb_l"]/2 + 0.3
+N["lid_post_x1"] = N["in_l"]/2 + N["wall"]/2
+N["lid_post_w"] = N["lid_post_x1"] - N["lid_post_x0"]
+N["lid_post_cx"] = (N["lid_post_x0"] + N["lid_post_x1"]) / 2
+N["lid_screw_x"] = N["lid_post_x0"] + 2.1
+
+V = App.Vector
+
+# the four corner sign pairs, used for door screws, lid posts and lid screws
+SCREWS = tuple((sx_, sy_) for sx_ in (1, -1) for sy_ in (1, -1))
+
+# ------------------------------------------------------------
+# 2. Sketch helpers (fully constrained, expression-driven)
+# ------------------------------------------------------------
+def new_sketch(body, name, z_expr=None, z0=0.0, side=False):
+    """Sketch on XY at height z. side=True: vertical sketch on the
+    -Y outer wall (local X = global X, local Y = global Z)."""
+    sk = body.newObject("Sketcher::SketchObject", name)
+    if side:
+        sk.Placement = App.Placement(V(0, -N["out_w"]/2, 0),
+                                     App.Rotation(V(1, 0, 0), 90))
+        sk.setExpression("Placement.Base.y", "-params.out_w / 2")
+    else:
+        sk.Placement = App.Placement(V(0, 0, z0), App.Rotation())
+        if z_expr:
+            sk.setExpression("Placement.Base.z", z_expr)
+    return sk
+
+def dim(sk, con, expr):
+    idx = sk.addConstraint(con)
+    sk.setExpression("Constraints[%d]" % idx, expr)
+
+def add_rect(sk, w_expr, h_expr, cx_expr="0", cy_expr="0",
+             w0=10.0, h0=10.0, cx0=0.0, cy0=0.0):
+    x0, y0 = cx0 - w0/2, cy0 - h0/2
+    x1, y1 = cx0 + w0/2, cy0 + h0/2
+    a = sk.addGeometry(Part.LineSegment(V(x0, y0, 0), V(x1, y0, 0)), False)
+    b = sk.addGeometry(Part.LineSegment(V(x1, y0, 0), V(x1, y1, 0)), False)
+    c = sk.addGeometry(Part.LineSegment(V(x1, y1, 0), V(x0, y1, 0)), False)
+    d = sk.addGeometry(Part.LineSegment(V(x0, y1, 0), V(x0, y0, 0)), False)
+    for g1, g2 in ((a, b), (b, c), (c, d), (d, a)):
+        sk.addConstraint(Sketcher.Constraint("Coincident", g1, 2, g2, 1))
+    sk.addConstraint(Sketcher.Constraint("Horizontal", a))
+    sk.addConstraint(Sketcher.Constraint("Horizontal", c))
+    sk.addConstraint(Sketcher.Constraint("Vertical", b))
+    sk.addConstraint(Sketcher.Constraint("Vertical", d))
+    dim(sk, Sketcher.Constraint("DistanceX", a, 1, a, 2, w0), w_expr)
+    dim(sk, Sketcher.Constraint("DistanceY", b, 1, b, 2, h0), h_expr)
+    dim(sk, Sketcher.Constraint("DistanceX", -1, 1, a, 1, x0),
+        "(%s) - (%s)/2" % (cx_expr, w_expr))
+    dim(sk, Sketcher.Constraint("DistanceY", -1, 1, a, 1, y0),
+        "(%s) - (%s)/2" % (cy_expr, h_expr))
+
+def add_rrect(sk, w_expr, h_expr, r_expr, cx_expr="0", cy_expr="0",
+              w0=10.0, h0=10.0, r0=1.0, cx0=0.0, cy0=0.0):
+    """Rounded rectangle: 4 lines + 4 tangent arcs, fully constrained.
+
+    The corner radius lives in the sketch, not in a PartDesign Fillet.
+    A Fillet stores edge names ("Edge7") captured when it was created, and
+    those names shift the moment an upstream dimension changes — which is
+    exactly what breaks scripted fillets. An arc in the profile survives
+    any parameter change.
+    """
+    L, R = cx0 - w0/2.0, cx0 + w0/2.0
+    B, T = cy0 - h0/2.0, cy0 + h0/2.0
+    cBL, cBR = V(L + r0, B + r0, 0), V(R - r0, B + r0, 0)
+    cTR, cTL = V(R - r0, T - r0, 0), V(L + r0, T - r0, 0)
+
+    def arc(c, a0, a1):
+        return sk.addGeometry(
+            Part.ArcOfCircle(Part.Circle(c, V(0, 0, 1), r0), a0, a1), False)
+
+    gB = sk.addGeometry(Part.LineSegment(V(cBL.x, B, 0), V(cBR.x, B, 0)), False)
+    aBR = arc(cBR, -math.pi/2, 0)
+    gR = sk.addGeometry(Part.LineSegment(V(R, cBR.y, 0), V(R, cTR.y, 0)), False)
+    aTR = arc(cTR, 0, math.pi/2)
+    gT = sk.addGeometry(Part.LineSegment(V(cTR.x, T, 0), V(cTL.x, T, 0)), False)
+    aTL = arc(cTL, math.pi/2, math.pi)
+    gL = sk.addGeometry(Part.LineSegment(V(L, cTL.y, 0), V(L, cBL.y, 0)), False)
+    aBL = arc(cBL, math.pi, 1.5*math.pi)
+
+    # tangency at an endpoint pair also makes the points coincident
+    for g1, g2 in ((gB, aBR), (aBR, gR), (gR, aTR), (aTR, gT),
+                   (gT, aTL), (aTL, gL), (gL, aBL), (aBL, gB)):
+        sk.addConstraint(Sketcher.Constraint("Tangent", g1, 2, g2, 1))
+    sk.addConstraint(Sketcher.Constraint("Horizontal", gB))
+    sk.addConstraint(Sketcher.Constraint("Horizontal", gT))
+    sk.addConstraint(Sketcher.Constraint("Vertical", gR))
+    sk.addConstraint(Sketcher.Constraint("Vertical", gL))
+    for x, y in ((aBR, aTR), (aTR, aTL), (aTL, aBL)):
+        sk.addConstraint(Sketcher.Constraint("Equal", x, y))
+    dim(sk, Sketcher.Constraint("Radius", aBR, r0), r_expr)
+    dim(sk, Sketcher.Constraint("DistanceY", -1, 1, gB, 1, B),
+        "(%s) - (%s)/2" % (cy_expr, h_expr))
+    dim(sk, Sketcher.Constraint("DistanceY", -1, 1, gT, 1, T),
+        "(%s) + (%s)/2" % (cy_expr, h_expr))
+    dim(sk, Sketcher.Constraint("DistanceX", -1, 1, gL, 1, L),
+        "(%s) - (%s)/2" % (cx_expr, w_expr))
+    dim(sk, Sketcher.Constraint("DistanceX", -1, 1, gR, 1, R),
+        "(%s) + (%s)/2" % (cx_expr, w_expr))
+
+def add_circle(sk, d_expr, cx_expr="0", cy_expr="0",
+               d0=5.0, cx0=0.0, cy0=0.0):
+    g = sk.addGeometry(Part.Circle(V(cx0, cy0, 0), V(0, 0, 1), d0/2), False)
+    dim(sk, Sketcher.Constraint("Radius", g, d0/2), "(%s)/2" % d_expr)
+    dim(sk, Sketcher.Constraint("DistanceX", -1, 1, g, 3, cx0), cx_expr)
+    dim(sk, Sketcher.Constraint("DistanceY", -1, 1, g, 3, cy0), cy_expr)
+
+def pad(body, sk, name, len_expr, reversed_=False):
+    f = body.newObject("PartDesign::Pad", name)
+    f.Profile = sk
+    f.setExpression("Length", len_expr)
+    f.Reversed = reversed_
+    sk.Visibility = False
+    return f
+
+def pocket(body, sk, name, len_expr=None, through=False, midplane=False):
+    """midplane=True cuts BOTH ways from the sketch plane.
+
+    ThroughAll on its own only cuts one way — along the negative sketch
+    normal. A sketch drawn on the seam between two pieces of material
+    therefore leaves everything above it solid, which is how the lid
+    screw holes ended up blind under their own counterbores.
+    """
+    f = body.newObject("PartDesign::Pocket", name)
+    f.Profile = sk
+    if through:
+        f.Type = "ThroughAll"
+    else:
+        f.setExpression("Length", len_expr)
+    f.Midplane = midplane
+    sk.Visibility = False
+    return f
+
+# ------------------------------------------------------------
+# 3. Main body
+# ------------------------------------------------------------
+body = DOC.addObject("PartDesign::Body", "Body_Main")
+
+sk = new_sketch(body, "sk_shell")
+add_rrect(sk, "params.out_l", "params.out_w", "params.corner_r",
+          w0=N["out_l"], h0=N["out_w"], r0=N["corner_r"])
+pad(body, sk, "Pad_Shell", "params.z_top")
+
+sk = new_sketch(body, "sk_electronics", "params.z_top", N["z_top"])
+add_rrect(sk, "params.in_l", "params.in_w", "params.cavity_r",
+          w0=N["in_l"], h0=N["in_w"], r0=N["cavity_r"])
+pocket(body, sk, "Pocket_Electronics",
+       "params.z_top - params.z_floor_top")
+
+sk = new_sketch(body, "sk_bay", "params.z_bay_top", N["z_bay_top"])
+add_rrect(sk, "params.bay_l", "params.bay_w", "params.cavity_r",
+          w0=N["bay_l"], h0=N["bay_w"], r0=N["cavity_r"])
+pocket(body, sk, "Pocket_Bay", through=True)
+
+sk = new_sketch(body, "sk_door_recess", "params.door_t", N["door_t"])
+add_rrect(sk, "params.bay_l + 2*params.door_lip",
+              "params.bay_w + 2*params.door_lip", "params.cavity_r",
+          w0=N["bay_l"] + 2*N["door_lip"], h0=N["bay_w"] + 2*N["door_lip"],
+          r0=N["cavity_r"])
+pocket(body, sk, "Pocket_DoorRecess", through=True)
+
+# contact slots: two singles at the PCB end (-X), one dual at +X
+sk = new_sketch(body, "sk_slots", "params.z_bay_top", N["z_bay_top"])
+sx = "(params.bay_l + params.slot_depth - 0.5)/2"
+sw = "params.slot_depth + 0.5"
+sx0 = (N["bay_l"] + N["slot_depth"] - 0.5)/2
+for sgn in (1, -1):
+    add_rect(sk, sw, "params.slot_w_single",
+             "-(%s)" % sx, "%d * params.cellY" % sgn,
+             w0=N["slot_depth"] + 0.5, h0=N["slot_w_single"],
+             cx0=-sx0, cy0=sgn*N["cellY"])
+add_rect(sk, sw, "params.slot_w_dual", sx, "0",
+         w0=N["slot_depth"] + 0.5, h0=N["slot_w_dual"], cx0=sx0)
+pocket(body, sk, "Pocket_ContactSlots", "params.bay_h")
+
+# battery wire slot in the floor, next to BT1 (JST-XH) — sized to pass
+# the crimped connector so the harness can be made up outside the box
+sk = new_sketch(body, "sk_bat_wire", "params.z_floor_top", N["z_floor_top"])
+add_rrect(sk, "params.bat_wire_w", "params.bat_wire_l", "params.bat_wire_r",
+          "params.bat_wire_x", "params.bat_wire_y",
+          w0=N["bat_wire_w"], h0=N["bat_wire_l"], r0=N["bat_wire_r"],
+          cx0=N["bat_wire_x"], cy0=N["bat_wire_y"])
+pocket(body, sk, "Pocket_BatWire", "params.floor_t + 1")
+
+# Corner posts for the lid screws. They stop short of the top by
+# lid_lip so the lid's locating lip drops in over them.
+LID_TOP = "params.z_top - params.lid_lip"
+LID_TOP_N = N["z_top"] - N["lid_lip"]
+sk = new_sketch(body, "sk_lid_posts", "params.z_floor_top", N["z_floor_top"])
+for sx_, sy_ in SCREWS:
+    add_rrect(sk, "params.lid_post_w", "params.lid_post_h", "1.2",
+              "%d * params.lid_post_cx" % sx_,
+              "%d * params.lid_screw_y" % sy_,
+              w0=N["lid_post_w"], h0=N["lid_post_h"], r0=1.2,
+              cx0=sx_*N["lid_post_cx"], cy0=sy_*N["lid_screw_y"])
+pad(body, sk, "Pad_LidPosts", "%s - params.z_floor_top" % LID_TOP)
+
+sk = new_sketch(body, "sk_lid_pilots", LID_TOP, LID_TOP_N)
+for sx_, sy_ in SCREWS:
+    add_circle(sk, "params.screw_pilot",
+               "%d * params.lid_screw_x" % sx_,
+               "%d * params.lid_screw_y" % sy_,
+               d0=N["screw_pilot"],
+               cx0=sx_*N["lid_screw_x"], cy0=sy_*N["lid_screw_y"])
+pocket(body, sk, "Pocket_LidPilots", "6")
+
+# door screw pilots, at the four corners of the recess lip
+sk = new_sketch(body, "sk_door_pilots", "params.door_t + 8", N["door_t"] + 8)
+for sx_, sy_ in SCREWS:
+    add_circle(sk, "params.screw_pilot",
+               "%d * params.screw_x" % sx_, "%d * params.screw_y" % sy_,
+               d0=N["screw_pilot"], cx0=sx_*N["screw_x"], cy0=sy_*N["screw_y"])
+pocket(body, sk, "Pocket_DoorPilots", "9")
+
+# NTC probe cable hole through the -Y wall, lined up with TH1
+sk = new_sketch(body, "sk_probe_hole", side=True)
+add_circle(sk, "params.probe_d", "params.probe_x",
+           "params.z_pcb + params.pcb_t + 4",
+           d0=N["probe_d"], cx0=N["probe_x"], cy0=N["z_pcb"] + N["pcb_t"] + 4)
+pocket(body, sk, "Pocket_ProbeHole", "params.wall + 2")
+
+# center rib between the cells
+rib_z = "params.door_t + params.cell_clear + params.cell_d/2"
+rib_z0 = N["door_t"] + N["cell_clear"] + N["cell_d"]/2
+sk = new_sketch(body, "sk_center_rib", rib_z, rib_z0)
+add_rect(sk, "params.bay_l", "params.bay_w_rib",
+         w0=N["bay_l"], h0=N["bay_w_rib"])
+pad(body, sk, "Pad_CenterRib", "params.z_bay_top - (%s)" % rib_z)
+
+# PCB standoff pads + pilot holes, at the board's real mounting holes
+HOLES = (("h1x", "h1y"), ("h2x", "h2y"), ("h3x", "h3y"), ("h4x", "h4y"))
+sk = new_sketch(body, "sk_standoffs", "params.z_floor_top", N["z_floor_top"])
+for hx, hy in HOLES:
+    add_circle(sk, "params.standoff_d", "params." + hx, "params." + hy,
+               d0=N["standoff_d"], cx0=N[hx], cy0=N[hy])
+pad(body, sk, "Pad_Standoffs", "params.pcb_lift")
+
+sk = new_sketch(body, "sk_standoff_pilots", "params.z_pcb", N["z_pcb"])
+for hx, hy in HOLES:
+    add_circle(sk, "params.pcb_pilot", "params." + hx, "params." + hy,
+               d0=N["pcb_pilot"], cx0=N[hx], cy0=N[hy])
+pocket(body, sk, "Pocket_StandoffPilots", "params.pcb_lift + 1")
+
+# ------------------------------------------------------------
+# 4. Lid
+# ------------------------------------------------------------
+lid = DOC.addObject("PartDesign::Body", "Body_Lid")
+
+sk = new_sketch(lid, "sk_lid_plate", "params.z_top", N["z_top"])
+add_rrect(sk, "params.out_l", "params.out_w", "params.corner_r",
+          w0=N["out_l"], h0=N["out_w"], r0=N["corner_r"])
+pad(lid, sk, "Pad_LidPlate", "params.lid_t")
+
+# Locating lip: sized to the cavity with lid_fit clearance per side, so
+# the lid drops in and stays put instead of floating. It sits above the
+# corner posts, which stop lid_lip short of the top.
+sk = new_sketch(lid, "sk_lid_lip", "params.z_top", N["z_top"])
+add_rrect(sk, "params.in_l - 2*params.lid_fit", "params.in_w - 2*params.lid_fit",
+          "params.cavity_r - params.lid_fit",
+          w0=N["in_l"] - 2*N["lid_fit"], h0=N["in_w"] - 2*N["lid_fit"],
+          r0=N["cavity_r"] - N["lid_fit"])
+add_rect(sk, "params.in_l - 2*params.lid_fit - 2*params.lid_lip_w",
+             "params.in_w - 2*params.lid_fit - 2*params.lid_lip_w",
+         w0=N["in_l"] - 2*N["lid_fit"] - 2*N["lid_lip_w"],
+         h0=N["in_w"] - 2*N["lid_fit"] - 2*N["lid_lip_w"])
+pad(lid, sk, "Pad_LidLip", "params.lid_lip", reversed_=True)
+
+# lid screws: clearance through the plate, counterbored from the top
+sk = new_sketch(lid, "sk_lid_screws", "params.z_top", N["z_top"])
+for sx_, sy_ in SCREWS:
+    add_circle(sk, "params.screw_pilot + 0.6",
+               "%d * (params.lid_screw_x)" % sx_,
+               "%d * (params.lid_screw_y)" % sy_,
+               d0=N["screw_pilot"] + 0.6,
+               cx0=sx_*N["lid_screw_x"],
+               cy0=sy_*N["lid_screw_y"])
+# midplane: the sketch sits at z_top, with the lip below it and the
+# plate above — the cut has to run both ways to open the hole through
+pocket(lid, sk, "Pocket_LidScrews", through=True, midplane=True)
+
+sk = new_sketch(lid, "sk_lid_counterbore",
+                "params.z_top + params.lid_t", N["z_top"] + N["lid_t"])
+for sx_, sy_ in SCREWS:
+    add_circle(sk, "params.screw_head_d",
+               "%d * (params.lid_screw_x)" % sx_,
+               "%d * (params.lid_screw_y)" % sy_,
+               d0=N["screw_head_d"],
+               cx0=sx_*N["lid_screw_x"],
+               cy0=sy_*N["lid_screw_y"])
+pocket(lid, sk, "Pocket_LidCounterbore", "params.screw_head_h")
+
+# Gasket groove in the lid underside, centred over the wall rim. Takes a
+# silicone cord; the four screws supply the compression. Set ADD_GASKET
+# False to print a plain lid and seal with foam tape instead.
+ADD_GASKET = True
+if ADD_GASKET:
+    sk = new_sketch(lid, "sk_gasket", "params.z_top + params.gasket_d",
+                    N["z_top"] + N["gasket_d"])
+    add_rrect(sk, "params.in_l + params.wall + params.gasket_w",
+                  "params.in_w + params.wall + params.gasket_w",
+                  "params.corner_r - params.wall/2 + params.gasket_w/2",
+              w0=N["in_l"] + N["wall"] + N["gasket_w"],
+              h0=N["in_w"] + N["wall"] + N["gasket_w"],
+              r0=N["corner_r"] - N["wall"]/2 + N["gasket_w"]/2)
+    add_rrect(sk, "params.in_l + params.wall - params.gasket_w",
+                  "params.in_w + params.wall - params.gasket_w",
+                  "params.corner_r - params.wall/2 - params.gasket_w/2",
+              w0=N["in_l"] + N["wall"] - N["gasket_w"],
+              h0=N["in_w"] + N["wall"] - N["gasket_w"],
+              r0=N["corner_r"] - N["wall"]/2 - N["gasket_w"]/2)
+    pocket(lid, sk, "Pocket_GasketGroove", "params.gasket_d")
+
+# ------------------------------------------------------------
+# 5. Door
+# ------------------------------------------------------------
+door = DOC.addObject("PartDesign::Body", "Body_Door")
+
+sk = new_sketch(door, "sk_door_plate")
+add_rrect(sk, "params.bay_l + 2*params.door_lip - 2*params.door_fit",
+              "params.bay_w + 2*params.door_lip - 2*params.door_fit",
+              "params.cavity_r - params.door_fit",
+          w0=N["bay_l"] + 2*N["door_lip"] - 2*N["door_fit"],
+          h0=N["bay_w"] + 2*N["door_lip"] - 2*N["door_fit"],
+          r0=N["cavity_r"] - N["door_fit"])
+pad(door, sk, "Pad_DoorPlate", "params.door_t")
+
+sk = new_sketch(door, "sk_door_ribs", "params.door_t", N["door_t"])
+for sx_ in (1, -1):
+    for sy_ in (1, -1):
+        add_rect(sk, "10", "8",
+                 "%d * params.bay_l/4" % sx_, "%d * params.cellY" % sy_,
+                 w0=10, h0=8, cx0=sx_*N["bay_l"]/4, cy0=sy_*N["cellY"])
+pad(door, sk, "Pad_DoorRibs", "params.door_rib_h")
+
+sk = new_sketch(door, "sk_door_screws", "params.door_t", N["door_t"])
+for sx_, sy_ in SCREWS:
+    add_circle(sk, "params.screw_pilot + 0.6",
+               "%d * params.screw_x" % sx_, "%d * params.screw_y" % sy_,
+               d0=N["screw_pilot"] + 0.6,
+               cx0=sx_*N["screw_x"], cy0=sy_*N["screw_y"])
+pocket(door, sk, "Pocket_DoorScrews", through=True)
+
+# counterbore so the heads finish flush with the door's outer face
+sk = new_sketch(door, "sk_door_counterbore",
+                "params.screw_head_h", N["screw_head_h"])
+for sx_, sy_ in SCREWS:
+    add_circle(sk, "params.screw_head_d",
+               "%d * params.screw_x" % sx_, "%d * params.screw_y" % sy_,
+               d0=N["screw_head_d"],
+               cx0=sx_*N["screw_x"], cy0=sy_*N["screw_y"])
+pocket(door, sk, "Pocket_DoorCounterbore", "params.screw_head_h")
+
+# ------------------------------------------------------------
+# 6. Rounded edges
+#
+# The vertical corners are rounded in the SKETCHES (see add_rrect),
+# not with PartDesign Fillet features. A Fillet stores the edge names
+# it was given ("Edge7"), and those names shift as soon as an upstream
+# dimension changes — the fillet then goes Invalid and the whole body
+# stops following the spreadsheet. Arcs in the profile have no such
+# problem, so corner_r / cavity_r stay live parameters.
+#
+# The horizontal rims (lid top, door underside) cannot be rounded from
+# a sketch. Run round-rims.FCMacro on the finished document for those;
+# re-run it after changing dimensions.
+
+# ------------------------------------------------------------
+# 7. Reference geometry (cells + PCB, not part of any print)
+# ------------------------------------------------------------
+ref = DOC.addObject("App::DocumentObjectGroup", "reference")
+for i, sgn in enumerate((1, -1)):
+    cyl = DOC.addObject("Part::Cylinder", "cell_%s" % ("A" if i == 0 else "B"))
+    cyl.Radius = N["cell_d"]/2
+    cyl.Height = N["cell_l"]
+    cyl.Placement = App.Placement(
+        V(-N["cell_l"]/2, sgn*N["cellY"],
+          N["door_t"] + N["door_rib_h"] + N["cell_d"]/2),
+        App.Rotation(V(0, 1, 0), 90))
+    ref.addObject(cyl)
+import os
+
+
+def macro_dir():
+    """Folder holding these macros — no absolute paths baked in.
+
+    __file__ can name whatever invoked us rather than this macro, so
+    candidates are checked for a known sibling before being trusted.
+    """
+    cands = []
+    if "__file__" in globals():
+        cands.append(os.path.dirname(os.path.abspath(__file__)))
+    cands.append(App.ParamGet(
+        "User parameter:BaseApp/Preferences/Macro").GetString("MacroPath"))
+    for d in cands:
+        if d and os.path.exists(
+                os.path.join(d, "sensor-ntc-v2-enclosure.FCMacro")):
+            return d
+    return cands[0] if cands and cands[0] else os.getcwd()
+
+
+# Board assembly exported from KiCad. Optional: without it the reference
+# PCB falls back to a plain box and the printed parts are unaffected.
+step_file = os.path.join(macro_dir(), "esp32c6.step")
+if os.path.exists(step_file):
+    # real board assembly; if it imports mirrored, flip the -90 to +90
+    pcb = DOC.addObject("Part::Feature", "pcb_assembly")
+    shp = Part.Shape()
+    shp.read(step_file)
+    pcb.Shape = shp
+    pcb.Placement = App.Placement(V(-N["pcb_l"]/2, N["pcb_w"]/2, N["z_pcb"]),
+                                  App.Rotation(V(0, 0, 1), -90))
+else:
+    pcb = DOC.addObject("Part::Box", "pcb")
+    pcb.Length, pcb.Width, pcb.Height = N["pcb_l"], N["pcb_w"], N["pcb_t"]
+    pcb.Placement = App.Placement(V(-N["pcb_l"]/2, -N["pcb_w"]/2, N["z_pcb"]),
+                                  App.Rotation())
+ref.addObject(pcb)
+
+DOC.recompute()
+
+# Scripted features are all created visible — unlike the GUI commands,
+# nothing hides the feature a new one supersedes. Left alone, every Pad
+# and Pocket renders on top of the finished solid, so edges and vertices
+# stay pickable everywhere and the body looks doubled. Show each body's
+# Tip only, and hide all profiles.
+for b in (body, lid, door):
+    for f in b.Group:
+        if f.TypeId.startswith("PartDesign::"):
+            f.Visibility = (b.Tip is not None and f.Name == b.Tip.Name)
+for o in DOC.Objects:
+    if o.TypeId == "Sketcher::SketchObject":
+        o.Visibility = False
+
+# ------------------------------------------------------------
+# 8. Colors (GUI only)
+# ------------------------------------------------------------
+if App.GuiUp:
+    import FreeCADGui as Gui
+    for b, col, tr in ((body, (0.82, 0.71, 0.55), 0),
+                       (lid, (0.82, 0.71, 0.55), 50),
+                       (door, (0.82, 0.71, 0.55), 50)):
+        try:
+            b.ViewObject.ShapeColor = col
+            b.ViewObject.Transparency = tr
+        except Exception:
+            pass
+    for o, col in ((DOC.getObject("cell_A"), (0.29, 0.44, 0.56)),
+                   (DOC.getObject("cell_B"), (0.29, 0.44, 0.56)),
+                   (pcb, (0.24, 0.48, 0.37))):
+        try:
+            o.ViewObject.ShapeColor = col
+            o.ViewObject.Transparency = 30
+        except Exception:
+            pass
+    try:
+        Gui.SendMsgToActiveView("ViewFit")
+        Gui.activeDocument().activeView().viewIsometric()
+    except Exception:
+        pass
+
+App.Console.PrintMessage(
+    "sensor-ntc v2 enclosure built.\n"
+    "Edit dimensions in the 'params' spreadsheet (double-click it), "
+    "or edit any sketch directly.\n"
+    "Bodies: Body_Main / Body_Lid / Body_Door. "
+    "Hide the 'reference' group before exporting for print.\n")
+
+

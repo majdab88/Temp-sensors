@@ -21,10 +21,17 @@ import FreeCAD as App
 import Part
 
 TOL = 0.02
-RIMS = (  # body, which face, feature name
+# body, which face, feature name. "top"/"bottom" track the shape's own
+# extremes; a number pins an explicit height.
+#
+# Body_Main's bottom is deliberately absent. The wall-mount flange joins
+# that face and runs on past it, so the perimeter is no longer a closed
+# loop around a flat face and OCC cannot fillet it ("BRep_API: command
+# not done"). It was cosmetic anyway — the faces a hand actually touches
+# are the lid top and the door underside, and both still get rounded.
+RIMS = (
     ("Body_Lid",  "top",    "Rim_LidTop"),
     ("Body_Door", "bottom", "Rim_DoorBottom"),
-    ("Body_Main", "bottom", "Rim_BodyBottom"),
 )
 
 DOC = App.ActiveDocument
@@ -78,7 +85,10 @@ for body_name, which, feat_name in RIMS:
     tip = body.Tip
     shape = tip.Shape
     bb = shape.BoundBox
-    z = bb.ZMax if which == "top" else bb.ZMin
+    if isinstance(which, (int, float)):
+        z = float(which)
+    else:
+        z = bb.ZMax if which == "top" else bb.ZMin
     names = names_of(shape, rim_edges(shape, z))
     if not names:
         skipped.append("%s: no %s rim found" % (body_name, which))
@@ -93,8 +103,17 @@ for body_name, which, feat_name in RIMS:
     tip.Visibility = False
     DOC.recompute()
 
-    if "Error" in str(f.State) or not f.Shape.isValid():
-        skipped.append("%s: fillet failed — reduce edge_r" % body_name)
+    # A failed fillet leaves a null shape, and asking a null shape whether
+    # it is valid raises rather than returning False — so probe it inside
+    # a try, or one bad fillet takes the whole macro down with it.
+    try:
+        good = ("Error" not in str(f.State)) and f.Shape.isValid()
+    except Exception:
+        good = False
+
+    if not good:
+        skipped.append("%s: fillet failed — reduce edge_r, or the face is "
+                       "interrupted by another feature" % body_name)
         body.Tip = f.BaseFeature
         DOC.removeObject(f.Name)
         body.Tip.Visibility = True

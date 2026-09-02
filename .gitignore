@@ -18,6 +18,10 @@ sensor-ntc/.gitignore
 # Publish helper config — contains a superadmin password.
 publish.env
 
+# MCP server config — holds an absolute path to this machine's uvx, so it
+# is not portable. Recreate it per machine rather than versioning it.
+.mcp.json
+
 # Enclosure model: the FreeCAD document is a build artifact — rebuild it
 # with sensor-ntc/enclosure/build-all.FCMacro rather than versioning it.
 *.FCStd

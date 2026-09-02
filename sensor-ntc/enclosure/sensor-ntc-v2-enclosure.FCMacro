@@ -104,19 +104,26 @@ P = {  # name: (value, comment)
     # offset of the door screws from the bay wall; balances the pilot
     # boss (inside) against the counterbore rim (outside)
     "screw_off":     (2.3,  "door screw offset outboard of the bay wall"),
-    # Wall-mount flange: one tab on the +X end wall (the WROOM end),
-    # centred in Y, hanging below the box. It has to hang below rather
-    # than stand above because a keyhole needs open space behind the
-    # plate for the screw head, and above the box that space is the lid.
-    # Mount the box lid-down so the flange is uppermost — then it hangs
-    # from the screw instead of balancing on it.
-    "mount_w":       (18.0, "flange width across the end wall"),
-    "mount_h":       (16.0, "how far the flange hangs below the box"),
-    "mount_t":       (3.0,  "flange thickness"),
-    "mount_r":       (4.0,  "flange corner radius"),
+    # Wall-mount tab: one flange off the +X end (the WROOM end), centred
+    # in Y and lying in the plane of the box's BOTTOM, so the bottom face
+    # sits flat against the wall. The keyhole is drilled through it
+    # vertically and its slot runs along X, so the box slides along X to
+    # engage. Mount with +X upward: the box then hangs from the tab
+    # rather than balancing on the screw. The battery door faces the
+    # wall, so the box lifts off to change cells.
+    "mount_w":       (18.0, "tab width across Y"),
+    "mount_len":     (18.0, "how far the tab reaches past the end wall"),
+    "mount_t":       (3.0,  "tab thickness"),
+    "mount_r":       (4.0,  "tab corner radius"),
     "mount_hole_d":  (8.0,  "keyhole entry — must clear the screw head"),
     "mount_slot_w":  (4.2,  "keyhole slot width — screw shank"),
-    "mount_slot_len": (7.0, "slot length: how far the box drops on"),
+    "mount_slot_len": (7.0, "slot length: how far the box slides on"),
+    "mount_blend":   (4.0,  "concave blend where the tab's sides meet the wall"),
+    # The tab is a cantilever carrying the whole box, and the line where
+    # its top face meets the wall is both the peak bending stress and a
+    # layer boundary straight across the load path — i.e. where it would
+    # crack. This radius spreads that load into the wall.
+    "mount_root_r":  (1.0,  "fillet at the tab root, top face to wall"),
     "probe_d":       (6.5,  "NTC probe cable hole"),
     "probe_x":       (-15.0, "probe hole X — lined up with TH1 (JST-XH)"),
     "corner_r":      (3.0,  "outer vertical corner fillet"),
@@ -150,14 +157,20 @@ DERIVED = {  # alias: spreadsheet formula
     # from lid_post_cx so moving the screw never drags the post into
     # the PCB edge.
     "lid_screw_x": "=lid_post_x0 + screw_pilot/2 + post_wall",
-    # Keyhole direction matters. Mounted lid-down the flange is the
-    # highest part, so when the box is released it drops and the screw
-    # travels, relative to the flange, TOWARD THE TIP. Entry circle
-    # therefore sits nearest the box and the slot runs out to the tip,
-    # leaving the box hanging from the flange's far end. Reversed, the
-    # box would have to balance on top of the screw.
-    "mount_hole_v": "=0 - (mount_hole_d/2 + 2.5)",
-    "mount_slot_v": "=0 - (mount_hole_d/2 + 2.5) - mount_slot_len/2",
+    # Keyhole direction. Mounted +X up, releasing the box lets it drop,
+    # so relative to the tab the screw travels toward the TIP. Entry
+    # circle therefore sits nearest the box with the slot running out
+    # past it; the box ends up hanging from the tab's far end. Reversed,
+    # it would have to balance on top of the screw.
+    # The tab profile starts mount_r INSIDE the wall. Its inner rounded
+    # corners then finish exactly at the wall face, so the tab meets the
+    # box at full width instead of leaving a sharp cusp between the two
+    # curves. The buried part lands in the solid bottom frame.
+    "mount_bury":    "=mount_r",
+    "mount_sk_w":    "=mount_len + mount_bury",
+    "mount_cx":      "=out_l/2 + mount_len/2 - mount_bury/2",
+    "mount_hole_x":  "=out_l/2 + mount_hole_d/2 + 2.5",
+    "mount_slot_x":  "=out_l/2 + mount_hole_d/2 + 2.5 + mount_slot_len/2",
     "z_bay_top":   "=door_t + bay_h",
     "z_floor_top": "=z_bay_top + floor_t",
     "z_pcb":       "=z_floor_top + pcb_lift",
@@ -203,8 +216,11 @@ N["lid_post_x1"] = N["in_l"]/2 + N["wall"]/2
 N["lid_post_w"] = N["lid_post_x1"] - N["lid_post_x0"]
 N["lid_post_cx"] = (N["lid_post_x0"] + N["lid_post_x1"]) / 2
 N["lid_screw_x"] = N["lid_post_x0"] + N["screw_pilot"]/2 + N["post_wall"]
-N["mount_hole_v"] = -(N["mount_hole_d"]/2 + 2.5)
-N["mount_slot_v"] = N["mount_hole_v"] - N["mount_slot_len"]/2
+N["mount_bury"] = N["mount_r"]
+N["mount_sk_w"] = N["mount_len"] + N["mount_bury"]
+N["mount_cx"] = N["out_l"]/2 + N["mount_len"]/2 - N["mount_bury"]/2
+N["mount_hole_x"] = N["out_l"]/2 + N["mount_hole_d"]/2 + 2.5
+N["mount_slot_x"] = N["mount_hole_x"] + N["mount_slot_len"]/2
 
 V = App.Vector
 
@@ -214,22 +230,11 @@ SCREWS = tuple((sx_, sy_) for sx_ in (1, -1) for sy_ in (1, -1))
 # ------------------------------------------------------------
 # 2. Sketch helpers (fully constrained, expression-driven)
 # ------------------------------------------------------------
-def new_sketch(body, name, z_expr=None, z0=0.0, side=False, face_x=False):
-    """Sketch on XY at height z.
-
-    side=True:   vertical sketch on the -Y outer wall
-                 (local X = global X, local Y = global Z)
-    face_x=True: vertical sketch on the +X end wall
-                 (local X = global Y, local Y = global Z). The 120 deg
-                 rotation about (1,1,1) cycles the axes X->Y->Z->X, so
-                 the sketch normal lands on +X and a Pocket cuts inward.
-    """
+def new_sketch(body, name, z_expr=None, z0=0.0, side=False):
+    """Sketch on XY at height z. side=True: vertical sketch on the
+    -Y outer wall (local X = global X, local Y = global Z)."""
     sk = body.newObject("Sketcher::SketchObject", name)
-    if face_x:
-        sk.Placement = App.Placement(V(N["out_l"]/2, 0, 0),
-                                     App.Rotation(V(1, 1, 1), 120))
-        sk.setExpression("Placement.Base.x", "params.out_l / 2")
-    elif side:
+    if side:
         sk.Placement = App.Placement(V(0, -N["out_w"]/2, 0),
                                      App.Rotation(V(1, 0, 0), 90))
         sk.setExpression("Placement.Base.y", "-params.out_w / 2")
@@ -461,30 +466,30 @@ for hx, hy in HOLES:
                d0=N["pcb_pilot"], cx0=N[hx], cy0=N[hy])
 pocket(body, sk, "Pocket_StandoffPilots", "params.pcb_lift + 1")
 
-# Wall-mount flange on the +X end wall, flush with the outer face so it
-# lies flat against the wall. Reversed pad: the sketch normal points out
-# of the box (+X), and the flange has to grow inward from that face.
-sk = new_sketch(body, "sk_mount_flange", face_x=True)
-add_rrect(sk, "params.mount_w", "params.mount_h", "params.mount_r",
-          "0", "0 - params.mount_h/2",
-          w0=N["mount_w"], h0=N["mount_h"], r0=N["mount_r"],
-          cy0=-N["mount_h"]/2)
-pad(body, sk, "Pad_MountFlange", "params.mount_t", reversed_=True)
+# Wall-mount tab, lying in the plane of the box bottom and reaching past
+# the +X end. Its underside is flush with z=0 so the box's bottom face
+# and the tab meet the wall as one plane.
+sk = new_sketch(body, "sk_mount_tab")
+add_rrect(sk, "params.mount_sk_w", "params.mount_w", "params.mount_r",
+          "params.mount_cx", "0",
+          w0=N["mount_sk_w"], h0=N["mount_w"], r0=N["mount_r"],
+          cx0=N["mount_cx"])
+pad(body, sk, "Pad_MountTab", "params.mount_t")
 
-# Keyhole: entry circle plus a slot running back toward the box. Cut as
-# two pockets rather than one profile — overlapping closed wires in a
-# single sketch are what make PartDesign complain about self-intersection.
-sk = new_sketch(body, "sk_mount_hole", face_x=True)
-add_circle(sk, "params.mount_hole_d", "0", "params.mount_hole_v",
-           d0=N["mount_hole_d"], cy0=N["mount_hole_v"])
+# Keyhole through the tab, slot running along X. Cut as two pockets
+# rather than one profile — overlapping closed wires in a single sketch
+# are what make PartDesign complain about self-intersection.
+sk = new_sketch(body, "sk_mount_hole", "params.mount_t", N["mount_t"])
+add_circle(sk, "params.mount_hole_d", "params.mount_hole_x", "0",
+           d0=N["mount_hole_d"], cx0=N["mount_hole_x"])
 pocket(body, sk, "Pocket_MountHole", through=True)
 
-sk = new_sketch(body, "sk_mount_slot", face_x=True)
-add_rrect(sk, "params.mount_slot_w", "params.mount_slot_len",
+sk = new_sketch(body, "sk_mount_slot", "params.mount_t", N["mount_t"])
+add_rrect(sk, "params.mount_slot_len", "params.mount_slot_w",
           "params.mount_slot_w/2 - 0.4",
-          "0", "params.mount_slot_v",
-          w0=N["mount_slot_w"], h0=N["mount_slot_len"],
-          r0=N["mount_slot_w"]/2 - 0.4, cy0=N["mount_slot_v"])
+          "params.mount_slot_x", "0",
+          w0=N["mount_slot_len"], h0=N["mount_slot_w"],
+          r0=N["mount_slot_w"]/2 - 0.4, cx0=N["mount_slot_x"])
 pocket(body, sk, "Pocket_MountSlot", through=True)
 
 # ------------------------------------------------------------

@@ -24,11 +24,12 @@ TOL = 0.02
 # body, which face, feature name. "top"/"bottom" track the shape's own
 # extremes; a number pins an explicit height.
 #
-# Body_Main's bottom is deliberately absent. The wall-mount flange joins
-# that face and runs on past it, so the perimeter is no longer a closed
-# loop around a flat face and OCC cannot fillet it ("BRep_API: command
-# not done"). It was cosmetic anyway — the faces a hand actually touches
-# are the lid top and the door underside, and both still get rounded.
+# Body_Main's bottom is deliberately absent. The wall-mount tab is
+# coplanar with that face and merges into it, so its perimeter is no
+# longer a simple loop and OCC refuses the fillet ("BRep_API: command
+# not done"). Cosmetic anyway, and that face lies against the wall — the
+# faces a hand actually touches are the lid top and the door underside,
+# and both still get rounded.
 RIMS = (
     ("Body_Lid",  "top",    "Rim_LidTop"),
     ("Body_Door", "bottom", "Rim_DoorBottom"),
@@ -120,6 +121,106 @@ for body_name, which, feat_name in RIMS:
         DOC.recompute()
     else:
         done.append("%s (%d edges)" % (feat_name, len(names)))
+
+# ------------------------------------------------------------
+# Blends at the root of the wall-mount tab. Both ADD material: filleting
+# a concave edge fills an inside corner rather than rounding an outside
+# one. Neither can come from the tab's sketch, because the material they
+# need sits outside both the tab rectangle and the box.
+#
+#   Blend_MountTab   the two vertical side junctions
+#   Blend_MountRoot  the horizontal top junction. The tab is a cantilever
+#                    carrying the whole box, so that line is both peak
+#                    bending stress and a layer boundary straight across
+#                    the load path — where it would crack.
+# ------------------------------------------------------------
+if sheet is not None:
+    body = DOC.getObject("Body_Main")
+
+    def num(alias):
+        return float(sheet.get(alias))
+
+    # Drop existing blends outermost first: removing a lower one while
+    # something is still stacked on top of it orphans the feature above.
+    for nm in ("Blend_MountRoot", "Blend_MountTab"):
+        old = DOC.getObject(nm)
+        if old is not None:
+            body.Tip = old.BaseFeature
+            DOC.removeObject(old.Name)
+            body.Tip.Visibility = True
+            DOC.recompute()
+
+    try:
+        x_j, y_j = num("out_l") / 2, num("mount_w") / 2
+        z_hi = num("mount_t")
+    except Exception:
+        x_j = None
+
+    def side_edges(shape):
+        """Vertical lines where the tab's sides meet the end wall."""
+        out = []
+        for e in shape.Edges:
+            if len(e.Vertexes) != 2:
+                continue
+            a, b = e.Vertexes[0].Point, e.Vertexes[1].Point
+            if abs(a.x - b.x) > TOL or abs(a.y - b.y) > TOL:
+                continue                       # want the vertical ones
+            if abs(a.z - b.z) < TOL:
+                continue
+            if abs(a.x - x_j) > TOL or abs(abs(a.y) - y_j) > TOL:
+                continue
+            lo, hi = sorted((a.z, b.z))
+            if lo < -TOL or hi > z_hi + TOL:
+                continue
+            out.append(e)
+        return out
+
+    def root_edges(shape):
+        """The horizontal line where the tab's top face meets the wall."""
+        out = []
+        for e in shape.Edges:
+            if len(e.Vertexes) != 2:
+                continue
+            a, b = e.Vertexes[0].Point, e.Vertexes[1].Point
+            if abs(a.x - x_j) > TOL or abs(b.x - x_j) > TOL:
+                continue
+            if abs(a.z - z_hi) > TOL or abs(b.z - z_hi) > TOL:
+                continue
+            if abs(a.y - b.y) < TOL:
+                continue                       # must run along Y
+            out.append(e)
+        return out
+
+    def blend(feat_name, r_expr, picker, hint):
+        tip = body.Tip
+        shape = tip.Shape
+        names = names_of(shape, picker(shape))
+        if not names:
+            skipped.append("%s: edges not found" % feat_name)
+            return
+        f = body.newObject("PartDesign::Fillet", feat_name)
+        f.Base = (tip, names)
+        f.setExpression("Radius", r_expr)
+        tip.Visibility = False
+        DOC.recompute()
+        try:
+            good = ("Error" not in str(f.State)) and f.Shape.isValid()
+        except Exception:
+            good = False
+        if good:
+            done.append("%s (%d edges)" % (feat_name, len(names)))
+        else:
+            skipped.append("%s: failed — reduce %s" % (feat_name, hint))
+            body.Tip = f.BaseFeature
+            DOC.removeObject(f.Name)
+            body.Tip.Visibility = True
+            DOC.recompute()
+
+    if x_j is not None:
+        blend("Blend_MountTab", "params.mount_blend",
+              side_edges, "mount_blend")
+        blend("Blend_MountRoot", "params.mount_root_r",
+              root_edges, "mount_root_r")
 
 DOC.recompute()
 App.Console.PrintMessage("round-rims: %s\n" % (", ".join(done) or "nothing"))

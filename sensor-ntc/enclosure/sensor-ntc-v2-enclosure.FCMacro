@@ -33,7 +33,13 @@ P = {  # name: (value, comment)
     "cell_d":        (14.5, "AA diameter"),
     "cell_l":        (50.5, "AA length (reference geometry only)"),
     "cell_clear":    (0.6,  "radial clearance around each cell"),
-    "bay_l":         (57.5, "contact face to contact face  <-- FROM DATASHEET"),
+    # Contact face to contact face — NOT the cell length. The cell is
+    # 50.5, so (bay_l - 50.5)/2 is how far each contact must still stand
+    # proud with a cell in place. 52.0 comes from measuring a commercial
+    # 2xAA holder that uses the flat blade contacts we want: 0.75 mm per
+    # end. A tall leaf spring would want more. Confirm against whichever
+    # contact is actually sourced.
+    "bay_l":         (52.0, "contact face to contact face"),
     "bay_w_rib":     (3.0,  "center rib between the cells"),
     "bay_h":         (16.0, "bay ceiling above door inner face"),
     "slot_depth":    (2.0,  "contact slot bite into end wall  <-- FROM DATASHEET"),
@@ -77,6 +83,12 @@ P = {  # name: (value, comment)
     # through the 2.5 mm wall or collides with the PCB corner.
     "lid_screw_y":   (12.0, "lid screw offset from centreline, along Y"),
     "lid_post_h":    (5.0,  "lid post depth along Y"),
+    # These two feed back into in_l. Working outward from the PCB edge,
+    # the end of the box has to fit: post wall, pilot, screw head, then
+    # the gasket groove. Shrink the cavity past that and the counterbore
+    # eats into the groove and breaks the seal — silently.
+    "post_wall":     (1.2,  "post material between pilot and post edge"),
+    "groove_margin": (0.5,  "gap between screw counterbore and gasket groove"),
     "gasket_w":      (1.4,  "gasket groove width"),
     "gasket_d":      (1.0,  "gasket groove depth — use 2 mm silicone cord"),
     "door_t":        (3.0,  "door plate thickness"),
@@ -92,6 +104,26 @@ P = {  # name: (value, comment)
     # offset of the door screws from the bay wall; balances the pilot
     # boss (inside) against the counterbore rim (outside)
     "screw_off":     (2.3,  "door screw offset outboard of the bay wall"),
+    # Wall-mount tab: one flange off the +X end (the WROOM end), centred
+    # in Y and lying in the plane of the box's BOTTOM, so the bottom face
+    # sits flat against the wall. The keyhole is drilled through it
+    # vertically and its slot runs along X, so the box slides along X to
+    # engage. Mount with +X upward: the box then hangs from the tab
+    # rather than balancing on the screw. The battery door faces the
+    # wall, so the box lifts off to change cells.
+    "mount_w":       (18.0, "tab width across Y"),
+    "mount_len":     (18.0, "how far the tab reaches past the end wall"),
+    "mount_t":       (3.0,  "tab thickness"),
+    "mount_r":       (4.0,  "tab corner radius"),
+    "mount_hole_d":  (8.0,  "keyhole entry — must clear the screw head"),
+    "mount_slot_w":  (4.2,  "keyhole slot width — screw shank"),
+    "mount_slot_len": (7.0, "slot length: how far the box slides on"),
+    "mount_blend":   (4.0,  "concave blend where the tab's sides meet the wall"),
+    # The tab is a cantilever carrying the whole box, and the line where
+    # its top face meets the wall is both the peak bending stress and a
+    # layer boundary straight across the load path — i.e. where it would
+    # crack. This radius spreads that load into the wall.
+    "mount_root_r":  (1.0,  "fillet at the tab root, top face to wall"),
     "probe_d":       (6.5,  "NTC probe cable hole"),
     "probe_x":       (-15.0, "probe hole X — lined up with TH1 (JST-XH)"),
     "corner_r":      (3.0,  "outer vertical corner fillet"),
@@ -105,7 +137,9 @@ DERIVED = {  # alias: spreadsheet formula
     # recess — the recess is the widest of the three, so it sets the size
     # and keeps a full-thickness wall around the door.
     "in_l": "=max(bay_l + 2*slot_depth + 2*pcb_clear; pcb_l + 2*pcb_clear; "
-            "bay_l + 2*door_lip)",
+            "bay_l + 2*door_lip; "
+            "2*(pcb_l/2 + 0.3 + screw_pilot/2 + post_wall + screw_head_d/2 "
+            "+ groove_margin) - wall + gasket_w)",
     "in_w": "=max(pcb_w + 2*pcb_clear; bay_w + 2*door_lip)",
     "out_l":       "=in_l + 2*wall",
     "out_w":       "=in_w + 2*wall",
@@ -122,7 +156,21 @@ DERIVED = {  # alias: spreadsheet formula
     # counterbore comes out tangent to the gasket groove. Kept separate
     # from lid_post_cx so moving the screw never drags the post into
     # the PCB edge.
-    "lid_screw_x": "=lid_post_x0 + 2.1",
+    "lid_screw_x": "=lid_post_x0 + screw_pilot/2 + post_wall",
+    # Keyhole direction. Mounted +X up, releasing the box lets it drop,
+    # so relative to the tab the screw travels toward the TIP. Entry
+    # circle therefore sits nearest the box with the slot running out
+    # past it; the box ends up hanging from the tab's far end. Reversed,
+    # it would have to balance on top of the screw.
+    # The tab profile starts mount_r INSIDE the wall. Its inner rounded
+    # corners then finish exactly at the wall face, so the tab meets the
+    # box at full width instead of leaving a sharp cusp between the two
+    # curves. The buried part lands in the solid bottom frame.
+    "mount_bury":    "=mount_r",
+    "mount_sk_w":    "=mount_len + mount_bury",
+    "mount_cx":      "=out_l/2 + mount_len/2 - mount_bury/2",
+    "mount_hole_x":  "=out_l/2 + mount_hole_d/2 + 2.5",
+    "mount_slot_x":  "=out_l/2 + mount_hole_d/2 + 2.5 + mount_slot_len/2",
     "z_bay_top":   "=door_t + bay_h",
     "z_floor_top": "=z_bay_top + floor_t",
     "z_pcb":       "=z_floor_top + pcb_lift",
@@ -150,7 +198,10 @@ N["cellY"] = (N["cell_d"] + N["cell_clear"]*2 + N["bay_w_rib"]) / 2
 N["bay_w"] = 2*(N["cell_d"] + N["cell_clear"]*2) + N["bay_w_rib"]
 N["in_l"] = max(N["bay_l"] + 2*N["slot_depth"] + 2*N["pcb_clear"],
                 N["pcb_l"] + 2*N["pcb_clear"],
-                N["bay_l"] + 2*N["door_lip"])
+                N["bay_l"] + 2*N["door_lip"],
+                2*(N["pcb_l"]/2 + 0.3 + N["screw_pilot"]/2 + N["post_wall"]
+                  + N["screw_head_d"]/2 + N["groove_margin"])
+                - N["wall"] + N["gasket_w"])
 N["in_w"] = max(N["pcb_w"] + 2*N["pcb_clear"], N["bay_w"] + 2*N["door_lip"])
 N["out_l"] = N["in_l"] + 2*N["wall"]
 N["out_w"] = N["in_w"] + 2*N["wall"]
@@ -164,7 +215,12 @@ N["lid_post_x0"] = N["pcb_l"]/2 + 0.3
 N["lid_post_x1"] = N["in_l"]/2 + N["wall"]/2
 N["lid_post_w"] = N["lid_post_x1"] - N["lid_post_x0"]
 N["lid_post_cx"] = (N["lid_post_x0"] + N["lid_post_x1"]) / 2
-N["lid_screw_x"] = N["lid_post_x0"] + 2.1
+N["lid_screw_x"] = N["lid_post_x0"] + N["screw_pilot"]/2 + N["post_wall"]
+N["mount_bury"] = N["mount_r"]
+N["mount_sk_w"] = N["mount_len"] + N["mount_bury"]
+N["mount_cx"] = N["out_l"]/2 + N["mount_len"]/2 - N["mount_bury"]/2
+N["mount_hole_x"] = N["out_l"]/2 + N["mount_hole_d"]/2 + 2.5
+N["mount_slot_x"] = N["mount_hole_x"] + N["mount_slot_len"]/2
 
 V = App.Vector
 
@@ -290,7 +346,13 @@ def pocket(body, sk, name, len_expr=None, through=False, midplane=False):
         f.Type = "ThroughAll"
     else:
         f.setExpression("Length", len_expr)
-    f.Midplane = midplane
+    if midplane:
+        # FreeCAD 1.1 deprecates Midplane for SideType and warns that it
+        # will be removed; prefer the new property where it exists.
+        if hasattr(f, "SideType"):
+            f.SideType = "Symmetric"
+        else:
+            f.Midplane = True
     sk.Visibility = False
     return f
 
@@ -403,6 +465,32 @@ for hx, hy in HOLES:
     add_circle(sk, "params.pcb_pilot", "params." + hx, "params." + hy,
                d0=N["pcb_pilot"], cx0=N[hx], cy0=N[hy])
 pocket(body, sk, "Pocket_StandoffPilots", "params.pcb_lift + 1")
+
+# Wall-mount tab, lying in the plane of the box bottom and reaching past
+# the +X end. Its underside is flush with z=0 so the box's bottom face
+# and the tab meet the wall as one plane.
+sk = new_sketch(body, "sk_mount_tab")
+add_rrect(sk, "params.mount_sk_w", "params.mount_w", "params.mount_r",
+          "params.mount_cx", "0",
+          w0=N["mount_sk_w"], h0=N["mount_w"], r0=N["mount_r"],
+          cx0=N["mount_cx"])
+pad(body, sk, "Pad_MountTab", "params.mount_t")
+
+# Keyhole through the tab, slot running along X. Cut as two pockets
+# rather than one profile — overlapping closed wires in a single sketch
+# are what make PartDesign complain about self-intersection.
+sk = new_sketch(body, "sk_mount_hole", "params.mount_t", N["mount_t"])
+add_circle(sk, "params.mount_hole_d", "params.mount_hole_x", "0",
+           d0=N["mount_hole_d"], cx0=N["mount_hole_x"])
+pocket(body, sk, "Pocket_MountHole", through=True)
+
+sk = new_sketch(body, "sk_mount_slot", "params.mount_t", N["mount_t"])
+add_rrect(sk, "params.mount_slot_len", "params.mount_slot_w",
+          "params.mount_slot_w/2 - 0.4",
+          "params.mount_slot_x", "0",
+          w0=N["mount_slot_len"], h0=N["mount_slot_w"],
+          r0=N["mount_slot_w"]/2 - 0.4, cx0=N["mount_slot_x"])
+pocket(body, sk, "Pocket_MountSlot", through=True)
 
 # ------------------------------------------------------------
 # 4. Lid
@@ -627,5 +715,6 @@ App.Console.PrintMessage(
     "or edit any sketch directly.\n"
     "Bodies: Body_Main / Body_Lid / Body_Door. "
     "Hide the 'reference' group before exporting for print.\n")
+
 
 

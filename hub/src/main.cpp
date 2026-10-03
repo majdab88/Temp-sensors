@@ -61,7 +61,7 @@ void confirmFirmwareValid();
 #define FW_MINOR 1
 #endif
 #ifndef FW_PATCH
-#define FW_PATCH 18
+#define FW_PATCH 19
 #endif
 #define STR_(x) #x
 #define STR(x)  STR_(x)
@@ -1372,6 +1372,17 @@ void loadCloudConfig() {
   String user  = cPrefs.getString("mqtt_user", "");
   String pass  = cPrefs.getString("mqtt_pass", "");
   cPrefs.end();
+
+  // The host is set only by BLE provisioning, so hubs provisioned before the
+  // move off duckdns would otherwise keep that name until someone reaches them
+  // with a phone. Both names point at the same broker; rewrite and persist.
+  if (host == "majdtemp32.duckdns.org") {
+    host = "mqtt.majdabed.com";
+    cPrefs.begin("cloud", false);
+    cPrefs.putString("mqtt_host", host);
+    cPrefs.end();
+    Serial.println("[MQTT] Migrated mqtt_host from duckdns to mqtt.majdabed.com");
+  }
 
   if (host.isEmpty() || user.isEmpty() || pass.isEmpty()) {
     Serial.println("[MQTT] No cloud credentials in NVS — cloud uplink disabled");

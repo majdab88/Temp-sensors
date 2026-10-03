@@ -2,7 +2,7 @@ import axios from 'axios';
 import * as SecureStore from 'expo-secure-store';
 import { TimeRange } from '../types';
 
-const BASE_URL = 'https://majdtemp32.duckdns.org';
+const BASE_URL = 'https://temp.majdabed.com';
 
 const api = axios.create({
   baseURL: `${BASE_URL}/api`,

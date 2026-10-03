@@ -1,7 +1,7 @@
 import { io, Socket } from 'socket.io-client';
 import { Sensor } from '../types';
 
-const BASE_URL = 'https://majdtemp32.duckdns.org';
+const BASE_URL = 'https://temp.majdabed.com';
 
 let socket: Socket | null = null;
 

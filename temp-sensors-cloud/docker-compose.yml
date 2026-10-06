@@ -126,6 +126,9 @@ services:
       - ./certs:/etc/letsencrypt:ro                   # Let's Encrypt certs
       - ./frontend/dist:/usr/share/nginx/html:ro      # React build output (Phase 3)
       - ./firmware:/usr/share/nginx/firmware:ro       # signed OTA images (served over HTTP)
+      # Other projects' sites (nginx.conf includes extra-sites/*/*.conf). pdfdesk keeps
+      # its server block and login file in its own folder; empty if pdfdesk isn't installed.
+      - /opt/pdfdesk/deploy/nginx:/etc/nginx/extra-sites/pdfdesk:ro
     networks:
       - internal
 

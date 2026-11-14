@@ -2,8 +2,9 @@
 
 Two-piece printed box for the v2 sensor: **a one-piece base holding a 2× AA
 (L91) battery holder on the floor with the PCB deck above it, and a lid that
-closes on a tongue-and-groove seal, screwed from underneath.** Outside size
-89 × 48 × 39 mm.
+closes on a tongue-and-groove seal, screwed from underneath.** A keyhole tab
+on the processor end hangs it on a wall screw. Outside size 89 × 48 × 39 mm,
+107 mm long with the tab.
 
 The current design is the SolidCraft model `sensor-ntc-v2-toplid.sc`. The
 FreeCAD macros in this folder are the earlier bottom-door design — see
@@ -17,7 +18,7 @@ parameter and the model follows** — no rebuild.
 
 | body | what it is |
 |---|---|
-| `Base` | the box: walls, floor, seal tongue, PCB supports, ports, screw wells |
+| `Base` | the box: walls, floor, seal tongue, PCB supports, ports, screw wells, wall-mount tab |
 | `Lid` | 3 mm plate + 3 mm rim, gasket groove, four screw bosses |
 | `BatteryHolder_ref` | reference block for the 2× AA holder (`bat_l × bat_w × bat_h`); not printed |
 | `PCB` | the KiCad board imported from `esp32c6.step`, for clearance checks; not printed |
@@ -41,6 +42,9 @@ parameter and the model follows** — no rebuild.
 | `well_d`, `seat_z` | 6.5, 24 | screw-head well from underneath, and where the head seats |
 | `boss_d`, `boss_h`, `lid_skin` | 6, 5, 2 | lid bosses and the skin left over the pilot (lid top stays closed) |
 | `pcb_pilot_d`, `pcb_pilot_depth` | 1.7, 7 | PCB screw pilots in the supports |
+| `mount_w`, `mount_len`, `mount_t` | 18, 18, 3 | wall-mount tab: width, reach past the +X wall, thickness |
+| `mount_r`, `mount_blend`, `mount_root_r` | 4, 4, 1 | tab tip corners, concave side blends into the wall, root fillet |
+| `mount_hole_d`, `mount_slot_w`, `mount_slot_len` | 8, 4.2, 7 | keyhole entry (clears the screw head), slot (screw shank), slot length |
 
 ### Features worth knowing
 
@@ -59,6 +63,16 @@ parameter and the model follows** — no rebuild.
 - **PCB** sits on four supports beside the battery holder, screwed into Ø1.7
   pilots. The battery holder is under the board, so changing cells means
   lifting the PCB out.
+- **Wall mount:** a 3 mm tab off the +X (processor) end, flush with the box
+  bottom so the bottom sits flat against the wall. Mount it with **+X up**:
+  put the Ø8 entry over a screw head and let the box drop, and the shank
+  slides up the slot, so the box hangs from the tab instead of balancing on
+  the screw. That is why the entry is nearest the box and the slot runs
+  outboard. The profile is buried `mount_r` into the end wall with R4
+  concave blends in the sketch, and an R1 fillet along the top of the root,
+  where a cantilever carrying the box would otherwise crack along a print
+  layer. The bottom faces the wall, so unhook the box to reach the lid
+  screws.
 - A 0.4 mm chamfer on each half at the parting line gives a reveal so the seam
   reads as intentional.
 
@@ -80,6 +94,9 @@ name). `toplid-section*.png` are section views of the assembly.
   temperatures.
 - Fasteners: four M3 for the lid (3.4 clearance, 2.5 pilot, up to 13 mm long
   from the seat); PCB screws into the 1.7 mm pilots (M2 thread-forming).
+  Wall screw: head under 8 mm, shank under 4.2 mm (e.g. a 3.5 or 4 mm pan
+  head), with the underside of the head set about 3.5 mm off the wall so the
+  3 mm tab slides behind it.
 - Gasket: not yet test-fitted. Check the groove depth against whatever cord or
   foam you use before relying on the seal.
 - Check `bat_l/w/h` against the actual battery holder before printing — the

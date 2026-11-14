@@ -171,6 +171,17 @@ elif [ -z "$BIN_VER" ]; then
   echo "warning: no $TAG marker in the image; labelling it $VER from source" >&2
 fi
 
+# Which board a sensor image is for. The registry does not track it yet, so it
+# goes into the notes, where the dashboard shows it. The sensor enforces it
+# regardless: it refuses an image whose board marker is not its own.
+BOARD_NOTE=""
+if [ "$KIND" = sensor ]; then
+  BOARD=$(LC_ALL=C grep -a -o -m1 'TEMPSENS_BOARD=[A-Za-z0-9-]*;' "$BIN" | head -1 | sed 's/^TEMPSENS_BOARD=//; s/;$//')
+  [ -n "$BOARD" ] || die "no TEMPSENS_BOARD marker in the image - sensors would refuse it"
+  note "board $BOARD"
+  BOARD_NOTE="[$BOARD] "
+fi
+
 # The signature covers the exact bytes, so a stale binary would upload a valid
 # signature for the wrong image and fail on the device.
 if [ "$DO_BUILD" = 0 ] && [ "$SRC" -nt "$BIN" ]; then
@@ -189,7 +200,7 @@ SIG=$(node sign.js sign "$KEY" "$BIN" | awk '/^signature:/{print $2}')
 login
 note "uploading $(wc -c < "$BIN") bytes"
 RESP=$(curl -fsS -X POST \
-  "$API/api/firmware?version=$VER&signature=$(urlencode "$SIG")&kind=$KIND&notes=$(urlencode "${NOTES:-published by publish.sh}")" \
+  "$API/api/firmware?version=$VER&signature=$(urlencode "$SIG")&kind=$KIND&notes=$(urlencode "${BOARD_NOTE}${NOTES:-published by publish.sh}")" \
   -H "Authorization: Bearer $TOKEN" \
   -H 'Content-Type: application/octet-stream' \
   --data-binary @"$BIN")

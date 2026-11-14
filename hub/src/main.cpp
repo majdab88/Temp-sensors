@@ -61,7 +61,7 @@ void confirmFirmwareValid();
 #define FW_MINOR 1
 #endif
 #ifndef FW_PATCH
-#define FW_PATCH 19
+#define FW_PATCH 20
 #endif
 #define STR_(x) #x
 #define STR(x)  STR_(x)
@@ -179,6 +179,38 @@ static volatile uint8_t  sOtaDoneResult = 0;
 // held BOOT button on GPIO9 would.
 static inline bool resetButtonHeld() {
   return digitalRead(TRIGGER_PIN) == LOW || digitalRead(TRIGGER_PIN_EXT) == LOW;
+}
+
+#define RESET_HOLD_MS 3000
+
+// Wait out a press of either reset button. Returns true only once it has been
+// held for RESET_HOLD_MS; a tap or an early release changes nothing.
+//
+// The LED is the only sign anything is happening: the erase itself is silent
+// until the hub restarts, so without it a 3 s hold felt like a dead button.
+// Solid while held, a burst of fast blinks once the hold counts.
+static bool resetHoldConfirmed() {
+  if (!resetButtonHeld()) return false;
+  delay(50);  // debounce
+  if (!resetButtonHeld()) return false;
+
+  Serial.println("Button pressed... (hold 3 s to reset WiFi and re-provision)");
+  digitalWrite(LED_PIN, HIGH);
+  unsigned long start = millis();
+  while (resetButtonHeld()) {
+    if (millis() - start > RESET_HOLD_MS) {
+      for (int i = 0; i < 6; i++) {
+        digitalWrite(LED_PIN, LOW);  delay(80);
+        digitalWrite(LED_PIN, HIGH); delay(80);
+      }
+      digitalWrite(LED_PIN, LOW);
+      return true;
+    }
+    delay(10);
+  }
+  digitalWrite(LED_PIN, LOW);
+  Serial.println("Button released.");
+  return false;
 }
 
 // --- MESSAGE TYPES ---
@@ -1142,20 +1174,13 @@ void startBleProvisioning() {
       }
     }
 
-    // BOOT button: erase all provisioning data and restart
-    if (resetButtonHeld()) {
-      delay(50);
-      unsigned long press = millis();
-      while (resetButtonHeld()) {
-        if (millis() - press > 3000) {
-          Serial.println("Factory reset from BLE provisioning mode");
-          Preferences wPrefs; wPrefs.begin("wifi",  false); wPrefs.clear(); wPrefs.end();
-          Preferences cPrefs; cPrefs.begin("cloud", false); cPrefs.clear(); cPrefs.end();
-          delay(500);
-          ESP.restart();
-        }
-        delay(10);
-      }
+    // Reset button: erase all provisioning data and restart
+    if (resetHoldConfirmed()) {
+      Serial.println("Factory reset from BLE provisioning mode");
+      Preferences wPrefs; wPrefs.begin("wifi",  false); wPrefs.clear(); wPrefs.end();
+      Preferences cPrefs; cPrefs.begin("cloud", false); cPrefs.clear(); cPrefs.end();
+      delay(500);
+      ESP.restart();
     }
 
     delay(10);
@@ -3727,24 +3752,15 @@ void onWiFiEvent(WiFiEvent_t event, WiFiEventInfo_t info) {
 // the user can always escape a dead or unreachable saved network — otherwise
 // those blocking waits starve the button and it appears unresponsive.
 void checkReprovisionButton() {
-  if (!resetButtonHeld()) return;
-  delay(50);  // debounce
-  unsigned long startPress = millis();
-  Serial.println("Button pressed... (hold 3 s to reset WiFi and re-provision)");
-  while (resetButtonHeld()) {
-    if (millis() - startPress > 3000) {
-      Serial.println("\n=== ERASING WiFi CREDENTIALS ===");
-      Preferences wPrefs;
-      wPrefs.begin("wifi", false);
-      wPrefs.clear();
-      wPrefs.end();
-      Serial.println("Credentials erased. Restarting into BLE provisioning mode...");
-      delay(500);
-      ESP.restart();
-    }
-    delay(10);
-  }
-  Serial.println("Button released.");
+  if (!resetHoldConfirmed()) return;
+  Serial.println("\n=== ERASING WiFi CREDENTIALS ===");
+  Preferences wPrefs;
+  wPrefs.begin("wifi", false);
+  wPrefs.clear();
+  wPrefs.end();
+  Serial.println("Credentials erased. Restarting into BLE provisioning mode...");
+  delay(500);
+  ESP.restart();
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

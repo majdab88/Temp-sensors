@@ -96,12 +96,19 @@ file as a description of reality.
 - Sleep interval `g_sleepSecs`, default `SLEEP_TIME` 900 s, settable from the
   dashboard within `CFG_SLEEP_MIN`–`CFG_SLEEP_MAX` (300–3600 s).
 - Persists hub MAC and configuration in NVS across reboots.
-- **Pairing:** broadcast → hub replies → sensor saves MAC → restart.
+- **Pairing:** broadcast → hub replies → sensor saves MAC → restart. A pairing
+  reply is acted on **only while unpaired**; a paired node ignores it, so a
+  forged frame cannot re-point it at another hub. After `PAIRING_WINDOWS` (4)
+  unanswered 70 s windows (~5 min) an unpaired node sleeps until the button is
+  pressed — asking forever emptied a pack in about two days.
 - Hold D0 (GPIO 0) for 3 s to erase pairing. Works from deep sleep: the button
   wakes the node, then `checkFactoryReset()` sees the held press.
 - Retries transmission `MAX_RETRIES` (5) times, then counts a failed wake.
-  After `MAX_FAILED_WAKES_BEFORE_HIBERNATE` (4) it hibernates to button-only
-  wake rather than burning current on an unreachable hub.
+  After `BACKOFF_AFTER_FAILED_WAKES` (4) it **backs off** — 1 h, 2 h, 4 h, then
+  every 6 h, rescanning the channel on each attempt — and returns to its
+  interval on the first delivery. A paired node never sleeps without a timer:
+  the old button-only "hibernate" left a whole site needing visits after one
+  hour of hub outage.
 - Accepts remote configuration, live mode, and signed firmware over ESP-NOW.
 - Deinits ESP-NOW and stops WiFi before deep sleep — mandatory on the C6.
 
@@ -265,6 +272,15 @@ the node downloads the entire image before rejecting it.
 The version comes from the **tag compiled into the binary**, not from the source,
 so a `build_flags` override (as `rollbacktest` uses) is published under the
 version it actually is.
+
+Sensor images also carry a **board marker**, `TEMPSENS_BOARD=<board>;`, built
+from `BOARD_REV`, `HAS_REGULATOR` and `NTC_ON_LOW_SIDE` (e.g.
+`rev2-reg-lowside`). The sensor scans each incoming image for it and refuses one
+that is not its own — or has none, which means firmware from before 1.1.13.
+Every board's image is signed with the same key, so the signature cannot catch
+this, and neither can rollback: a v1 image on a v2 board still delivers
+readings, just wrong ones. `publish.sh` puts the board in the upload notes; the
+registry itself does not track it yet.
 
 Staging a sensor image is **not** scriptable: it waits on a button press, so it
 is chosen per sensor from the dashboard.
@@ -460,7 +476,10 @@ Set the **ESP-PROG VDD jumper to 3.3 V** before connecting; 5 V will damage the 
 | `MAX_RETRIES` | 5 | TX attempts per wake |
 | `RETRY_DELAY_MS` | 100 ms | Between retries |
 | `TX_TIMEOUT_MS` | 500 ms | Wait for the ACK callback |
-| `MAX_FAILED_WAKES_BEFORE_HIBERNATE` | 4 | ≈ 1 h of outage before button-only sleep |
+| `BACKOFF_AFTER_FAILED_WAKES` | 4 | ≈ 1 h of outage at the normal interval before backing off |
+| `BACKOFF_FIRST_S` / `BACKOFF_MAX_S` | 3600 / 21600 s | Backoff doubles from 1 h to a 6 h ceiling |
+| `PAIRING_WINDOWS` | 4 | 70 s broadcast windows before an unpaired node waits for the button |
+| `BAT_MIN_RUNNING_V` | 1.3 V regulated / 2.5 V direct | Below this a battery reading is a failed read (`255`) |
 | `ESPNOW_CHANNEL` | 0 | Auto-detect |
 | `LIVE_MIN_INTERVAL_S` | 20 | Below this a wake is mostly overhead |
 | `LIVE_MAX_DURATION_S` | 300 | 5 min |
@@ -491,7 +510,7 @@ ranges — an earlier invented range rejected a legitimate negative `B`.
 | `LMK_KEY[16]` | Local Master Key — encrypts unicast data frames |
 | Set via | `esp_now_set_pmk()` after `esp_now_init()` |
 | Data peers | `encrypt = true` with `lmk` set |
-| Pairing | Unencrypted broadcast by design; the hub upgrades the peer with `esp_now_mod_peer()` immediately after replying |
+| Pairing | Unencrypted broadcast by design. The sensor accepts a reply only while unpaired. |
 
 > The committed `PMK_KEY`/`LMK_KEY` are placeholders. Replace them before
 > production, on the hub and every sensor together — a mismatch looks exactly

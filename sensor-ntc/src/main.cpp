@@ -115,7 +115,7 @@
 #define FW_MINOR 1
 #endif
 #ifndef FW_PATCH
-#define FW_PATCH 12
+#define FW_PATCH 13
 #endif
 #define STR_(x) #x
 #define STR(x)  STR_(x)
@@ -126,6 +126,28 @@
 // and no sleep, and on a v2 board that needs an ESP-PROG to undo.
 // Printed at boot so the linker cannot discard it.
 #define FW_VERSION_TAG "TEMPSENS_FW=" STR(FW_MAJOR) "." STR(FW_MINOR) "." STR(FW_PATCH)
+
+// Which hardware this image was built for: every build flag that changes what a
+// reading means. The sensor refuses an OTA image that does not carry its own
+// marker (see otaBoardScan). The failure this prevents is quiet: a v1 image on
+// a v2 board boots, reads the divider the wrong way round and still delivers --
+// so the rollback, which only watches for delivery, never fires, and the
+// dashboard shows confident, wrong temperatures.
+//
+// The ';' ends the value, so the scan knows where it stops.
+#if HAS_REGULATOR
+#define FW_BOARD_REG "-reg"
+#else
+#define FW_BOARD_REG ""
+#endif
+#if NTC_ON_LOW_SIDE
+#define FW_BOARD_NTC "-lowside"
+#else
+#define FW_BOARD_NTC "-highside"
+#endif
+#define FW_BOARD          "rev" STR(BOARD_REV) FW_BOARD_REG FW_BOARD_NTC
+#define FW_BOARD_PREFIX   "TEMPSENS_BOARD="
+#define FW_BOARD_TAG      FW_BOARD_PREFIX FW_BOARD ";"
 
 // --- SLEEP SETTINGS ---
 #define SLEEP_TIME 900  // Seconds — compiled default, overridden by cloud config
@@ -174,29 +196,44 @@
 #define RETRY_DELAY_MS 100
 #define TX_TIMEOUT_MS  500
 
-// --- FAILURE HANDLING / HIBERNATE MODE ---
-// If TX fails N consecutive wake cycles in a row, the sensor enters "hibernate
-// mode" — the timer wake is disabled and the device sleeps until the user
-// presses the D0 button. This protects battery life when the hub is offline
-// or unreachable for extended periods.
+// --- FAILURE HANDLING / BACKOFF ---
+// A failed wake costs far more than a good one -- retries, and sometimes a
+// channel rescan -- so a node that cannot reach its hub stops trying at the
+// normal interval. After BACKOFF_AFTER_FAILED_WAKES failures in a row it waits
+// 1 h, then 2 h, then 4 h, then every 6 h, rescanning the channel each time
+// (the hub may have come back on a different one). The first good delivery
+// returns it to its configured interval.
 //
-// Rationale: each failed wake cycle spends ~7-10 seconds at high current
-// (retries + optional rescan). Compared to a normal ~500 ms successful cycle,
-// that's ~15× the energy per wake. Without this policy, a 24 h hub outage
-// would drain ~15 mAh instead of ~1 mAh — nearly half a percent of pack
-// capacity for one outage.
+// This replaced a "hibernate" that stopped the timer altogether and waited for
+// a button press. At a 15 min interval that took one hour of hub outage --
+// an unplugged hub, a long OTA, a power cut -- and then every sensor on the
+// site needed someone to walk up to it, on nodes meant to sit untouched for
+// years. Backing off keeps the cost of a long outage small (one failed wake
+// every 6 h is roughly 1 mAh a day) while the node recovers on its own.
 //
-// The user manually re-enters normal operation once connectivity is restored
-// by pressing the D0 button (short press). The LED blinks 3× to confirm.
-#define MAX_FAILED_WAKES_BEFORE_HIBERNATE 4  // 4 × 15 min ≈ 1 h of outage tolerated
-#define RESCAN_ON_FAILURE_AT_COUNT       2   // Try one channel rescan at this failure count
-                                             // (hub may have moved to a different channel)
+// A button press still resets everything and tries straight away.
+#define BACKOFF_AFTER_FAILED_WAKES 4      // 4 x 15 min = 1 h at the normal interval first
+#define BACKOFF_FIRST_S            3600   // then 1 h, doubling...
+#define BACKOFF_MAX_S              21600  // ...up to 6 h
+#define RESCAN_ON_FAILURE_AT_COUNT 2      // rescan once early, before backing off
+                                          // (hub may have moved to a different channel)
 
 // RTC_DATA_ATTR variables persist across deep sleep. Reset on power-on and
 // (usually) on brownout — both events look like a fresh start where TX
 // should be attempted again, so that's the correct behavior.
 RTC_DATA_ATTR uint32_t consecutive_failed_wakes = 0;
-RTC_DATA_ATTR bool     in_hibernate_mode        = false;
+
+// --- PAIRING ATTEMPTS ---
+// An unpaired node is awake almost the whole time it is asking (a 70 s
+// broadcast window, then 10 s asleep), which empties a pack in about two days.
+// That is fine while someone is pairing it and wasteful otherwise -- a node
+// that was factory-reset, rejected, or put in a drawer with batteries in. So
+// after PAIRING_WINDOWS windows (about 5 minutes) it stops and sleeps until the
+// button is pressed, which starts a fresh set. A paired node never does this.
+#define PAIRING_WINDOW_MS   70000
+#define PAIRING_GAP_S       10
+#define PAIRING_WINDOWS     4
+RTC_DATA_ATTR uint8_t pairing_windows_used = 0;
 
 // A live session is a temporarily shorter sleep interval, not a stretch of
 // staying awake. Held in RTC memory so it survives deep sleep but not a power
@@ -271,7 +308,23 @@ RTC_DATA_ATTR uint16_t liveIntervalS  = 0;
 
 #define LDO_DROPOUT_V  0.0f
 #define LOW_BATTERY_PCT  15  // "LOW" status below this %
-#define CRITICAL_PCT      5  // Sleep immediately below this % to protect the cell
+#define CRITICAL_PCT      5  // "CRITICAL" status at or below this %
+
+// Lowest pack voltage at which this node can be running at all. A reading below
+// it cannot be the pack -- the node would be off -- so it is a failed read and
+// reported as 255. It is the supply's limit, not a battery-health threshold:
+// the TPS63802 runs from 1.3 V, so a regulated board keeps reporting real
+// percentages down to the table's 0 % at 1.8 V. The fixed 2.5 V floor used to
+// apply to every board, which turned the last stretch of a regulated pack --
+// the part where a warning matters -- into "read error", and since nothing
+// above 2.5 V maps below 22 % the cloud's low-battery alert could never fire.
+// Without a regulator the C6 is fed straight from the pack and browns out
+// around 2.5 V, so that floor stays.
+#if HAS_REGULATOR
+#define BAT_MIN_RUNNING_V 1.3f
+#else
+#define BAT_MIN_RUNNING_V 2.5f
+#endif
 
 // --- MESSAGE TYPES ---
 #define MSG_PAIRING 1
@@ -742,6 +795,56 @@ static bool otaImageLooksRight(const uint8_t *head, size_t len) {
   return magic == 0xABCD5432;
 }
 
+// Find the board marker in the image as it streams past, so the check costs
+// no second pass over flash. Every image built from this source carries exactly
+// one TEMPSENS_BOARD= marker; an image with none predates the marker.
+//
+// Restarting a failed match at 0 (or 1 on a 'T') is exact for this prefix:
+// 'T' occurs only at its start, so no partial match can contain the beginning
+// of another.
+static const char  OTA_BOARD_PREFIX[] = FW_BOARD_PREFIX;
+static const size_t OTA_BOARD_PREFIX_LEN = sizeof(OTA_BOARD_PREFIX) - 1;
+static size_t otaBoardMatched;     // prefix bytes matched so far
+static bool   otaBoardCapturing;   // prefix complete, reading the value
+static char   otaBoardValue[33];
+static size_t otaBoardValueLen;
+static bool   otaBoardOwn;         // found our own marker
+static char   otaBoardOther[33];   // first foreign marker, for the log
+
+static void otaBoardScanReset() {
+  otaBoardMatched = 0; otaBoardCapturing = false; otaBoardValueLen = 0;
+  otaBoardOwn = false; otaBoardOther[0] = '\0';
+}
+
+static void otaBoardScan(const uint8_t *buf, size_t len) {
+  for (size_t i = 0; i < len; i++) {
+    char c = (char)buf[i];
+    if (otaBoardCapturing) {
+      if (c == ';') {
+        otaBoardValue[otaBoardValueLen] = '\0';
+        if (strcmp(otaBoardValue, FW_BOARD) == 0) otaBoardOwn = true;
+        else if (!otaBoardOther[0]) strcpy(otaBoardOther, otaBoardValue);
+        otaBoardCapturing = false;
+      } else if (otaBoardValueLen < sizeof(otaBoardValue) - 1 && c >= 0x21 && c <= 0x7E) {
+        otaBoardValue[otaBoardValueLen++] = c;
+        continue;
+      } else {
+        otaBoardCapturing = false;   // not a marker after all
+      }
+      otaBoardMatched = 0;
+    }
+    if (c == OTA_BOARD_PREFIX[otaBoardMatched]) {
+      if (++otaBoardMatched == OTA_BOARD_PREFIX_LEN) {
+        otaBoardCapturing = true;
+        otaBoardValueLen  = 0;
+        otaBoardMatched   = 0;
+      }
+    } else {
+      otaBoardMatched = (c == OTA_BOARD_PREFIX[0]) ? 1 : 0;
+    }
+  }
+}
+
 static void otaSendReq(uint8_t accept, uint8_t reason) {
   ota_req_message m = { MSG_OTA_REQ, accept, reason, 0 };
   esp_now_send(hubMac, (uint8_t *)&m, sizeof(m));
@@ -810,6 +913,7 @@ static void otaRunTransfer(int batteryPct) {
   mbedtls_md_starts(&md);
 
   otaRxSeq = 0; otaRxBytes = 0; otaRxLen = 0; otaRxReady = false;
+  otaBoardScanReset();
   otaActive = true;
   otaSendReq(1, 0);
 
@@ -846,6 +950,7 @@ static void otaRunTransfer(int batteryPct) {
 
     if (esp_ota_write(handle, otaRxBuf, len) != ESP_OK) { result = OTA_RESULT_WRITE; break; }
     mbedtls_md_update(&md, otaRxBuf, len);
+    otaBoardScan(otaRxBuf, len);
     otaRxBytes += len;
     otaRxSeq++;
 
@@ -865,6 +970,15 @@ static void otaRunTransfer(int batteryPct) {
   if (otaRxSeq >= expected && otaRxBytes == o->imageSize) {
     if      (memcmp(digest, o->sha256, 32) != 0)             result = OTA_RESULT_HASH;
     else if (!otaVerifySignature(digest, o->sig, o->sigLen)) result = OTA_RESULT_SIGNATURE;
+    // Signed is not the same as meant for this board: every board's image is
+    // signed with the same key. An image with no marker at all predates this
+    // check and is refused too -- it is older firmware, and nothing can say
+    // which board it was built for.
+    else if (!otaBoardOwn) {
+      result = OTA_RESULT_WRONG_IMAGE;
+      if (otaBoardOther[0]) ulog("[OTA] Rejected: image is for %s, this board is %s\n", otaBoardOther, FW_BOARD);
+      else                  ulog("[OTA] Rejected: image has no board marker (built before 1.1.13)\n");
+    }
     else                                                     result = OTA_RESULT_OK;
   }
 
@@ -1035,31 +1149,27 @@ void goToSleep(int seconds) {
   esp_deep_sleep_start(); // Step 4: Sleep
 }
 
-// --- HIBERNATE SLEEP (button-wake only) ---
-// Used when the hub has been unreachable for MAX_FAILED_WAKES_BEFORE_HIBERNATE
-// consecutive wake cycles. The device sleeps until the user presses the D0
-// button; no timer wake is set, so battery drain is limited to the C6's deep
-// sleep quiescent current (~7 µA) plus any regulator Iq (~11 µA for TPS63802
-// in PFM mode). Total hibernate current: ~20 µA — the sensor can sit in
-// hibernate for months without appreciable battery drain.
-//
-// The next boot after button wake sees in_hibernate_mode == true and clears
-// the failure counter to give TX a fresh window (see setup() for the wake
-// handshake — LED blinks 3× to acknowledge the button press).
-void goToHibernateSleep() {
-  ulog("→ HIBERNATE  (press D0 button to wake)\n");
+// --- BUTTON-ONLY SLEEP ---
+// No timer wake: only a press on D0 brings the node back. Used solely by an
+// unpaired node that has given up asking (see enterPairingMode) -- never by a
+// paired one, which must always come back on its own.
+void goToButtonOnlySleep() {
   Serial.flush();
-
-  sendLogToHub();         // Best-effort — hub is probably unreachable, but try anyway
   esp_now_deinit();
   esp_wifi_stop();
   delay(100);
-
-  // GPIO wake ONLY — no timer wake. Sensor sleeps indefinitely on the wall
-  // clock, waking only when the user presses D0 to signal that connectivity
-  // should be re-attempted.
   esp_deep_sleep_enable_gpio_wakeup(1ULL << RESET_PIN, ESP_GPIO_WAKEUP_GPIO_LOW);
   esp_deep_sleep_start();
+}
+
+// How long to sleep after the n-th consecutive failed wake. Never shorter than
+// the configured interval: backing off must not mean reporting faster.
+static uint32_t backoffSeconds(uint32_t failures) {
+  if (failures < BACKOFF_AFTER_FAILED_WAKES) return g_sleepSecs;
+  uint32_t steps = failures - BACKOFF_AFTER_FAILED_WAKES;     // 0 -> 1 h, 1 -> 2 h, ...
+  uint32_t s = (steps >= 3) ? BACKOFF_MAX_S : (BACKOFF_FIRST_S << steps);
+  if (s > BACKOFF_MAX_S) s = BACKOFF_MAX_S;
+  return s < g_sleepSecs ? g_sleepSecs : s;
 }
 
 // --- CALLBACKS ---
@@ -1165,6 +1275,16 @@ void OnDataRecv(const esp_now_recv_info_t *esp_now_info, const uint8_t *incoming
   }
 
   struct_message *msg = (struct_message *)incomingData;
+
+  // A pairing reply means something only while this node is asking for one.
+  // Acting on it at any other time let a single forged frame, sent in the
+  // listening window after a reading, overwrite the stored hub, restart the
+  // node, and leave it transmitting to a hub that does not exist. Leaving
+  // pairing is a deliberate act: a 3 s button hold.
+  if (msg->msgType == MSG_PAIRING && isPaired) {
+    ulog("[PAIR] Ignored a pairing frame - already paired\n");
+    return;
+  }
 
   if (msg->msgType == MSG_PAIRING) {
     Serial.println("\n✓ Hub Found!");
@@ -1388,8 +1508,8 @@ BatteryInfo getBatteryInfo() {
   float voltage = readADCVoltage();
   g_bat_v = voltage;
   int   pct;
-  if (voltage < 2.5f) {
-    pct = 255;
+  if (voltage < BAT_MIN_RUNNING_V) {
+    pct = 255;   // the node could not be running: the divider read failed
   } else {
     pct = voltageToPct(voltage);
   }
@@ -1502,10 +1622,11 @@ void enterPairingMode() {
   myData.hum      = 0;
   myData.battery  = 0;
 
-  Serial.print("Waiting for hub");
+  pairing_windows_used++;
+  Serial.printf("Waiting for hub (window %u of %u)", pairing_windows_used, PAIRING_WINDOWS);
   unsigned long startWait    = millis();
   unsigned long lastBroadcast = 0;
-  while (millis() - startWait < 70000) {
+  while (millis() - startWait < PAIRING_WINDOW_MS) {
     if (millis() - lastBroadcast >= 2000) {
       esp_now_send(broadcastAddress, (uint8_t *)&myData, sizeof(myData));
       lastBroadcast = millis();
@@ -1517,8 +1638,13 @@ void enterPairingMode() {
 
   Serial.println();
   digitalWrite(LED_PIN, LOW);
-  Serial.println("✗ Timeout. Retrying in 10s...");
-  goToSleep(10);
+  if (pairing_windows_used >= PAIRING_WINDOWS) {
+    Serial.println("✗ No hub answered. Sleeping until the button is pressed.");
+    pairing_windows_used = 0;   // a press starts a fresh set
+    goToButtonOnlySleep();      // Does not return.
+  }
+  Serial.printf("✗ Timeout. Retrying in %ds...\n", PAIRING_GAP_S);
+  goToSleep(PAIRING_GAP_S);
 }
 
 // --- SETUP ---
@@ -1535,9 +1661,14 @@ void setup() {
 #endif
 
   Serial.begin(115200);
-  delay(500); // C6 needs extra time for serial to stabilize
+#if BOARD_REV == 1
+  delay(500); // USB-CDC on the XIAO needs time to enumerate before output shows
+#endif
+  // v2 logs over a plain UART (ESP-PROG), which needs no settling: the 500 ms
+  // was a USB-CDC wait, spent on every wake of a board that has no USB.
   ulog("\n=== XIAO ESP32-C6 Sensor (NTC Probe) ===\n");
   Serial.println(FW_VERSION_TAG);
+  Serial.println(FW_BOARD_TAG);
 
   // If the previous boot ended in a brownout (radio TX pulled VCC below the
   // ESP32-C6's brownout threshold), do NOT try to TX again immediately. That
@@ -1571,14 +1702,14 @@ void setup() {
   // before it kicks in, i.e. two button presses to recover). Timer wakes keep
   // using the cached channel to save the ~1.5 s scan energy.
   //
-  // Also resets the failure counter and (implicitly, via the success path) the
-  // in_hibernate_mode flag: a button press is an explicit user action, not a
-  // background retry, so we don't count it against the hibernate budget.
+  // Also resets the failure counter, ending any backoff: a button press is an
+  // explicit user action, not a background retry, so it tries straight away.
   bool force_rescan_this_cycle = false;
 
   if (wakeup_reason == ESP_SLEEP_WAKEUP_GPIO) {
     ulog("Button-press wake — resetting failure counter + forcing channel rescan\n");
     consecutive_failed_wakes = 0;
+    pairing_windows_used = 0;   // an unpaired node gets a full set of windows again
     force_rescan_this_cycle = true;
     // Blink LED 3× to acknowledge the button press was received.
     for (int i = 0; i < 3; i++) {
@@ -1598,11 +1729,12 @@ void setup() {
   // Read battery BEFORE radio init
   BatteryInfo bat = getBatteryInfo();
   ulog("Battery: %.2fV  %d%%  %s\n", bat.voltage, bat.percentage, bat.status);
-  if (bat.percentage != 255 && bat.percentage <= CRITICAL_PCT) {
-    Serial.println("Battery critical — sleeping to protect cell.");
-    esp_sleep_enable_timer_wakeup((uint64_t)g_sleepSecs * 1000000ULL);
-    esp_deep_sleep_start();
-  }
+  // There used to be a "battery critical: sleep without transmitting" branch
+  // here. It could never trigger while the 2.5 V floor mapped every low
+  // reading to 255, and with real percentages it would have silenced a node at
+  // 5 % -- turning a flat battery into an unexplained "offline". A primary
+  // lithium pack needs no protecting from a few more readings, and a brownout
+  // under TX is already caught at the top of setup().
   //read ntc before radio init since it can cause brownout at low battery levels, leading to failed reads
   readSensor();
 
@@ -1630,6 +1762,7 @@ void setup() {
     WIFI_PROTOCOL_11B | WIFI_PROTOCOL_11G |
     WIFI_PROTOCOL_11N | WIFI_PROTOCOL_LR);
 
+  bool scanned_this_wake = false;
   {
     preferences.begin("network", true);
     uint8_t ch = (uint8_t)preferences.getUChar("channel", 0);
@@ -1639,10 +1772,16 @@ void setup() {
     //   1. Nothing cached yet (first boot / after factory reset), OR
     //   2. We woke via a D0 button press (user wants a fresh attempt; the
     //      cached channel may be stale — hub may have moved to a different
-    //      channel since the last successful TX).
+    //      channel since the last successful TX), OR
+    //   3. This is a backoff attempt: the hub has been unreachable for an hour
+    //      or more, and coming back on a different channel is a likely reason.
+    //      At one attempt per hour or more the scan costs next to nothing.
     // Otherwise use the cached value to save the ~1.5 s scan energy cost.
-    if (ch == 0 || force_rescan_this_cycle) {
-      const char *why = (ch == 0) ? "no cached channel" : "button-press wake";
+    bool backing_off = isPaired && consecutive_failed_wakes >= BACKOFF_AFTER_FAILED_WAKES;
+    if (ch == 0 || force_rescan_this_cycle || backing_off) {
+      const char *why = (ch == 0) ? "no cached channel"
+                      : force_rescan_this_cycle ? "button-press wake" : "backoff attempt";
+      scanned_this_wake = true;
       ulog("[CH] Rescanning (%s)...\n", why);
       ch = detectWiFiChannel();
       preferences.begin("network", false);
@@ -1689,18 +1828,21 @@ void setup() {
     // and pulled the input cap (and battery) down. Idle here so the LDO refills
     // both caps from the battery before the 200 mA TX burst hits. ~150 ms is
     // ~50× the 1000 µF input-cap RC time constant — fully recharges either cap.
-    delay(500);
+    //
+    // Only after a scan, which is what drained them. It used to run on every
+    // wake: half a second with the radio up, on the ~96 timer wakes a day that
+    // never scan.
+    if (scanned_this_wake) delay(500);
 
     bool tx_ok = sendDataWithRetry();
 
     if (tx_ok) {
       // Success — clear failure state.
-      if (consecutive_failed_wakes > 0 || in_hibernate_mode) {
+      if (consecutive_failed_wakes > 0) {
         ulog("✓ Connectivity restored (cleared %u failure%s)\n",
              consecutive_failed_wakes, consecutive_failed_wakes == 1 ? "" : "s");
       }
       consecutive_failed_wakes = 0;
-      in_hibernate_mode = false;
       otaConfirmImage();   // a delivered reading is what proves an image good
 
       // A button press asks for an update; so does a live session, which is
@@ -1712,13 +1854,11 @@ void setup() {
     } else {
       // Failure — bump the counter (RTC memory, persists across sleep).
       consecutive_failed_wakes++;
-      ulog("✗ TX failed. Consecutive failures: %u/%u\n",
-           consecutive_failed_wakes, MAX_FAILED_WAKES_BEFORE_HIBERNATE);
+      ulog("✗ TX failed. Consecutive failures: %u\n", consecutive_failed_wakes);
 
-      // Once we hit RESCAN_ON_FAILURE_AT_COUNT, try a channel rescan in case
-      // the hub has moved to a different WiFi channel (router reboot etc.).
-      // We only rescan ONCE — repeated scans burn battery for little benefit,
-      // and the hibernate policy below caps total wasted energy anyway.
+      // One early rescan, in case the hub moved to a different WiFi channel
+      // (router reboot etc.). Once backing off, every attempt rescans before
+      // it transmits instead (see the channel block above).
       if (consecutive_failed_wakes == RESCAN_ON_FAILURE_AT_COUNT) {
         ulog("Trying channel rescan (hub may have moved channels)...\n");
         uint8_t new_ch = detectWiFiChannel();
@@ -1729,16 +1869,18 @@ void setup() {
         if (sendDataWithRetry()) {
           ulog("✓ TX succeeded after rescan — clearing failure counter\n");
           consecutive_failed_wakes = 0;
-          in_hibernate_mode = false;
+          otaConfirmImage();
         }
       }
 
-      // If we've hit the hibernate threshold, sleep indefinitely (button-only
-      // wake) rather than continuing to burn ~10 s of high current per cycle
-      // trying to reach an unreachable hub.
-      if (consecutive_failed_wakes >= MAX_FAILED_WAKES_BEFORE_HIBERNATE) {
-        in_hibernate_mode = true;
-        goToHibernateSleep();  // Does not return.
+      if (consecutive_failed_wakes >= BACKOFF_AFTER_FAILED_WAKES) {
+        // A live session would override the sleep below with its short
+        // interval. Nobody is getting live readings from a node that cannot
+        // reach its hub, so end it.
+        liveCyclesLeft = 0;
+        uint32_t s = backoffSeconds(consecutive_failed_wakes);
+        ulog("→ Hub unreachable - backing off, next attempt in %u min\n", (unsigned)(s / 60));
+        goToSleep(s);   // Does not return.
       }
     }
 

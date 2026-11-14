@@ -4,7 +4,7 @@ const express = require('express');
 const { query } = require('../db');
 const { requireAuth, isSuperadminUnscoped } = require('../middleware/auth');
 const { requirePermission } = require('../middleware/permissions');
-const { resetSensor, formatAlertMessage, KNOWN_CHANNELS } = require('../alerts');
+const { resetSensor, closeExcursion, formatAlertMessage, KNOWN_CHANNELS } = require('../alerts');
 const { audit } = require('../audit');
 
 const router = express.Router();
@@ -105,6 +105,9 @@ router.put('/rules/:sensorId', requirePermission('editor'), async (req, res) => 
       [sensorId, highLimit, lowLimit, hysteresis, channels, cooldownS, enabled]
     );
 
+    // A disabled rule is never evaluated, so nothing would close a breach open
+    // at this moment (see the delete route below).
+    if (!enabled) await closeExcursion(sensorId);
     resetSensor(sensorId); // re-evaluate against new limits on next reading
     await audit({ req, action: 'alert.rule.set', targetType: 'sensor', targetId: sensorId, details: { highLimit, lowLimit, enabled } });
     res.json(result.rows[0]);
@@ -123,6 +126,10 @@ router.delete('/rules/:sensorId', requirePermission('editor'), async (req, res) 
     if (!sensor) return res.status(404).json({ error: 'Sensor not found' });
 
     await query('DELETE FROM alert_rules WHERE sensor_id = $1', [sensorId]);
+    // With no rule, evaluation stops before it can ever record a recovery, so a
+    // breach open at this moment would stay "ongoing" forever and keep sending
+    // "still unacknowledged" reminders. It ends where monitoring ended.
+    await closeExcursion(sensorId);
     resetSensor(sensorId);
     await audit({ req, action: 'alert.rule.delete', targetType: 'sensor', targetId: sensorId });
     res.status(204).end();

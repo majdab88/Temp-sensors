@@ -5,6 +5,7 @@ const { query } = require('../db');
 const { requireAuth, isSuperadminUnscoped } = require('../middleware/auth');
 const { requirePermission } = require('../middleware/permissions');
 const { publishSensorRemove, pushSyncToHub, publishLiveRequest } = require('../mqtt');
+const { closeExcursion, resetSensor } = require('../alerts');
 const { audit } = require('../audit');
 
 const router = express.Router();
@@ -129,6 +130,11 @@ router.delete('/:id', requirePermission('editor'), async (req, res) => {
     // from re-activating the sensor if a stale data frame arrives later.
     await query('DELETE FROM readings WHERE sensor_id = $1', [id]);
     await query('UPDATE sensors SET active = FALSE WHERE id = $1', [id]);
+    // Its readings are dropped from now on, so nothing would ever close a
+    // breach that was open at this moment: it would show as ongoing forever
+    // and keep sending "still unacknowledged" reminders.
+    await closeExcursion(id);
+    resetSensor(id);
 
     // Push the updated (reduced) sensor list to the hub via the proven sync topic.
     // The hub runs applySyncFromCloud which removes any sensor no longer in the list.

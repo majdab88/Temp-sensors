@@ -75,7 +75,12 @@ async function getState(sensorId) {
 // restart, and on any race between two readings. Those extra rows were never
 // tracked by anything, so nothing ever closed them and they showed as ONGOING
 // forever.
-async function openExcursion(sensorId, kind, temp, limit) {
+//
+// Start and end are the time of the reading, not of its arrival. After an
+// internet outage the hub replays its buffered readings in one burst, and with
+// server time a breach that lasted hours was recorded as starting at reconnect
+// and ending seconds later -- wrong in exactly the case an auditor looks at.
+async function openExcursion(sensorId, kind, temp, limit, startedAt) {
   const existing = await query(
     `SELECT id FROM excursions
       WHERE sensor_id = $1 AND ended_at IS NULL
@@ -85,8 +90,9 @@ async function openExcursion(sensorId, kind, temp, limit) {
   if (existing.rows.length > 0) return existing.rows[0].id;
 
   const r = await query(
-    'INSERT INTO excursions (sensor_id, kind, peak_value, limit_value) VALUES ($1, $2, $3, $4) RETURNING id',
-    [sensorId, kind, temp, limit]
+    `INSERT INTO excursions (sensor_id, kind, peak_value, limit_value, started_at)
+     VALUES ($1, $2, $3, $4, $5) RETURNING id`,
+    [sensorId, kind, temp, limit, startedAt]
   );
   return r.rows[0].id;
 }
@@ -99,10 +105,16 @@ async function updateExcursionPeak(id, kind, temp) {
 // Close every open excursion for the sensor, not just the one this process is
 // tracking. Orphans from an earlier process would otherwise stay ONGOING
 // permanently, since nothing else ever looks at them.
-async function closeExcursion(sensorId) {
+//
+// `at` is the recovering reading's time on recovery, and now when monitoring
+// stops (rule removed or disabled, sensor deleted) -- nothing will ever report
+// a recovery in those cases, so the record ends where monitoring did.
+// GREATEST guards an orphan that started after the reading being replayed.
+async function closeExcursion(sensorId, at = new Date()) {
   await query(
-    'UPDATE excursions SET ended_at = NOW() WHERE sensor_id = $1 AND ended_at IS NULL',
-    [sensorId]
+    `UPDATE excursions SET ended_at = GREATEST(started_at, $2)
+      WHERE sensor_id = $1 AND ended_at IS NULL`,
+    [sensorId, at]
   );
 }
 
@@ -125,6 +137,7 @@ function resetSensor(sensorId) {
  * @param {string} ctx.sensorName  display name
  * @param {number} ctx.sensorId
  * @param {number|null} ctx.temp   reading in °C (NULL for read errors — skipped)
+ * @param {Date} ctx.recordedAt    when the reading was taken (hub time)
  */
 async function evaluateReading(ctx) {
   const { sensorId, temp } = ctx;
@@ -170,16 +183,18 @@ async function fire(ctx, rule, state, kind) {
   if (kind === 'recovered') {
     state.breached = false;
     state.kind = null;
-    await closeExcursion(ctx.sensorId);
+    await closeExcursion(ctx.sensorId, ctx.recordedAt);
     state.excursionId = null;
   } else {
     state.breached = true;
     state.kind = kind;
+    // Server time on purpose: this throttles notifications, and a replayed
+    // backlog must not re-notify once per cooldown period of past readings.
     state.lastNotifyMs = Date.now();
     // Open a new excursion only on a fresh breach, not on a cooldown re-notify.
     if (state.excursionId == null) {
       const limit = kind === 'high' ? rule.high_limit : rule.low_limit;
-      state.excursionId = await openExcursion(ctx.sensorId, kind, ctx.temp, limit);
+      state.excursionId = await openExcursion(ctx.sensorId, kind, ctx.temp, limit, ctx.recordedAt);
     }
   }
 
@@ -276,7 +291,21 @@ function buildMessage(ctx, rule, kind) {
     kind,
     high: rule.high_limit,
     low: rule.low_limit,
-  });
+  }) + delayNote(ctx.recordedAt);
+}
+
+// A live reading reaches the cloud seconds after it is taken. One this old was
+// held in the hub's offline buffer and is being replayed after an outage, so
+// the alert describes the past -- and has to say so, or a long breach and its
+// recovery arrive seconds apart and read like a blip.
+const DELAYED_AFTER_MS = 5 * 60 * 1000;
+
+function delayNote(recordedAt) {
+  const ageMs = recordedAt ? Date.now() - recordedAt.getTime() : 0;
+  if (ageMs < DELAYED_AFTER_MS) return '';
+  const min = Math.round(ageMs / 60000);
+  const ago = min < 120 ? `${min} min` : `${Math.round(min / 60)} h`;
+  return ` (recorded ${ago} ago, delivered late)`;
 }
 
 /**
@@ -290,4 +319,4 @@ function formatAlertMessage({ name, temp, kind, high, low }) {
   return `✅ ${name} back to normal at ${t}°C`;
 }
 
-module.exports = { initAlerts, evaluateReading, resetSensor, formatAlertMessage, KNOWN_CHANNELS };
+module.exports = { initAlerts, evaluateReading, resetSensor, closeExcursion, formatAlertMessage, KNOWN_CHANNELS };

@@ -8,6 +8,7 @@
 // Thresholds are per-org (health_settings table), editable on the Alerts page;
 // an org with no row uses DEFAULTS. Battery level is a % the sensor derives from
 // the L91 pack voltage: Low < 22 % (~2.5 V), recover >= 30 % (~2.65 V).
+// 255 (below 2.5 V, or a failed read) is treated as critical; see onReading.
 
 const { query } = require('./db');
 const { sendPush } = require('./notify/push');
@@ -134,13 +135,28 @@ async function onReading({ sensorId, sensorMac, sensorName, hubMac, battery, tsM
     }
   }
 
-  if (cfg.low_battery_enabled && battery != null && battery !== 255) {
-    if (!st.batteryLow && battery < BATTERY_LOW_PCT) {
+  // 255 is not just "could not read". Current sensor firmware also sends it for
+  // any pack below 2.5 V, and nothing above 2.5 V maps below 22 % -- so while
+  // 255 was skipped here, the low-battery alert could never fire at all. On a
+  // buck-boost board the node keeps running well below 2.5 V, and 255 is the
+  // only warning it gives before it goes silent.
+  //
+  // It clears on the same >= 30 % as a low battery, so a pack hovering around
+  // 2.5 V -- which near end of life moves with temperature and load -- does not
+  // flap between "critical" and "OK" on alternate readings.
+  if (cfg.low_battery_enabled && battery != null) {
+    const unreadable = battery === 255;
+    if (!st.batteryLow && (unreadable || battery < BATTERY_LOW_PCT)) {
       st.batteryLow = true;
-      await notifySensor(st, 'battery_low', '🔋 Low battery', `${st.name} battery is running low — replace soon`);
-    } else if (st.batteryLow && battery >= BATTERY_OK_PCT) {
+      if (unreadable) {
+        await notifySensor(st, 'battery_critical', '🔋 Battery critical',
+          `${st.name} battery is nearly flat or cannot be read — replace it now`);
+      } else {
+        await notifySensor(st, 'battery_low', '🔋 Low battery', `${st.name} battery is running low — replace soon`);
+      }
+    } else if (st.batteryLow && !unreadable && battery >= BATTERY_OK_PCT) {
       st.batteryLow = false;
-      await notifySensor(st, 'battery_ok', '🔋 Battery OK', `${st.name} battery was replaced`);
+      await notifySensor(st, 'battery_ok', '🔋 Battery OK', `${st.name} battery level is back to normal`);
     }
   }
 }
@@ -246,8 +262,12 @@ async function checkEscalations() {
               s.id AS sensor_id, s.name AS sensor_name, s.mac AS sensor_mac,
               d.mac AS hub_mac, d.org_id
        FROM excursions e
-       JOIN sensors s ON s.id = e.sensor_id
+       JOIN sensors s ON s.id = e.sensor_id AND s.active = TRUE
        JOIN devices d ON d.id = s.device_id
+       -- Only breaches still being monitored. One left open by a removed rule
+       -- or a deleted sensor never sees a recovery, so without this it was
+       -- re-notified every escalation period until someone acknowledged it.
+       JOIN alert_rules ar ON ar.sensor_id = e.sensor_id AND ar.enabled = TRUE
        WHERE e.ended_at IS NULL AND e.ack_at IS NULL`
     );
     rows = r.rows;

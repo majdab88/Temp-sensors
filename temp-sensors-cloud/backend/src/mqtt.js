@@ -2,7 +2,7 @@
 
 const mqtt = require('mqtt');
 const { query } = require('./db');
-const { evaluateReading } = require('./alerts');
+const { evaluateReading, closeExcursion, resetSensor } = require('./alerts');
 const health = require('./health');
 
 let client;
@@ -148,6 +148,13 @@ async function handleSensorData(hubMac, data) {
   const fwVal  = (typeof fw === 'string' && fw !== '0.0.0') ? fw : null;
   const cfgVal = Number.isInteger(cfg_ver) ? cfg_ver : 0;
 
+  // Absent is different from zero-filled. Readings replayed from the hub's
+  // offline buffer carry neither field -- the buffer does not store them -- and
+  // treating that as "0.0.0 / config 0" wiped the sensor's version and marked
+  // its config pending after every outage and every sensor OTA transfer (which
+  // buffers too), then republished the config for the hub to push again.
+  const versionsReported = fw !== undefined || cfg_ver !== undefined;
+
   // Only writes when something actually changed — this runs on every reading.
   query(
     `UPDATE sensors SET probe_error = $1, probe_error_at = CASE WHEN $1 THEN NOW() ELSE probe_error_at END
@@ -155,12 +162,14 @@ async function handleSensorData(hubMac, data) {
     [probeError, sensorId]
   ).catch((err) => console.error('Probe error update failed:', err.message));
 
-  query(
-    `UPDATE sensors SET fw_version = $1, cfg_ver = $2, fw_reported_at = NOW()
-      WHERE id = $3
-        AND (fw_version IS DISTINCT FROM $1 OR cfg_ver IS DISTINCT FROM $2)`,
-    [fwVal, cfgVal, sensorId]
-  ).catch((err) => console.error('Version update error:', err.message));
+  if (versionsReported) {
+    query(
+      `UPDATE sensors SET fw_version = $1, cfg_ver = $2, fw_reported_at = NOW()
+        WHERE id = $3
+          AND (fw_version IS DISTINCT FROM $1 OR cfg_ver IS DISTINCT FROM $2)`,
+      [fwVal, cfgVal, sensorId]
+    ).catch((err) => console.error('Version update error:', err.message));
+  }
 
   // Retire a live request the wake it was waiting for has already passed.
   //
@@ -200,8 +209,8 @@ async function handleSensorData(hubMac, data) {
   // after a hub is reflashed or its NVS is cleared.
   //
   // Reconciling here means the pairing repairs itself from the only fact that is
-  // reliable: what the sensor says it is running.
-  {
+  // reliable: what the sensor says it is running -- so only when it said.
+  if (versionsReported) {
     query(
       `SELECT cfg_desired_ver, cfg_sleep_secs, cfg_sh_a, cfg_sh_b, cfg_sh_c, cfg_r_series
          FROM sensors
@@ -247,6 +256,7 @@ async function handleSensorData(hubMac, data) {
     sensorName,
     sensorId,
     temp: tempVal,
+    recordedAt,
   }).catch((err) => console.error('Alert eval error:', err.message));
 
   // Health monitor — last-seen / back-online / low-battery. Fire-and-forget.
@@ -330,11 +340,15 @@ async function handleSensorDeleted(hubMac, data) {
      WHERE mac = $1
        AND device_id = (SELECT id FROM devices WHERE mac = $2)
        AND active = TRUE
-     RETURNING mac`,
+     RETURNING id, mac`,
     [normSensorMac, mac]
   );
 
   if (result.rows.length > 0) {
+    // Same as a dashboard delete: its readings are dropped from now on, so an
+    // open breach would otherwise never close.
+    await closeExcursion(result.rows[0].id);
+    resetSensor(result.rows[0].id);
     console.log(`[MQTT] Hub ${mac} locally deleted sensor ${normSensorMac} — marked inactive in DB`);
   }
 }

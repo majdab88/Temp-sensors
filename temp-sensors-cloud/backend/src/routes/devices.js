@@ -53,7 +53,9 @@ router.get('/', async (req, res) => {
 // POST /api/devices/register — register (or re-provision) a hub
 // Called by the mobile app during BLE provisioning.
 // Returns the generated api_key that the app pushes to the hub via BLE (PROV_CLOUD).
-router.post('/register', async (req, res) => {
+//
+// Editor, like renaming or deleting a hub: this renames it and rotates its key.
+router.post('/register', requirePermission('editor'), async (req, res) => {
   const { mac, name } = req.body || {};
 
   if (!mac || !MAC_RE.test(mac)) {
@@ -78,6 +80,11 @@ router.post('/register', async (req, res) => {
     // Only set org_id on new devices or if previously unowned. The name is only
     // overwritten when the client explicitly sent one ($5), so the auto-default
     // never clobbers a user's custom hub name on re-provision.
+    //
+    // A hub that already belongs to another org is left alone ($6 is the
+    // superadmin bypass): hub MACs are not secret -- half of one is in the BLE
+    // name -- and this used to let any logged-in user rename another org's hub
+    // and read back its key. No row returned means exactly that case.
     const result = await query(
       `INSERT INTO devices (mac, name, api_key, org_id)
        VALUES ($1, $2, $3, $4)
@@ -85,9 +92,13 @@ router.post('/register', async (req, res) => {
          SET name    = COALESCE($5, devices.name),
              api_key = EXCLUDED.api_key,
              org_id  = COALESCE(devices.org_id, EXCLUDED.org_id)
+         WHERE $6::boolean OR devices.org_id IS NULL OR devices.org_id = EXCLUDED.org_id
        RETURNING id, mac, name, api_key, org_id, registered_at`,
-      [normMac, insertName, apiKey, orgId, clientName]
+      [normMac, insertName, apiKey, orgId, clientName, req.user.role === 'superadmin']
     );
+    if (result.rows.length === 0) {
+      return res.status(409).json({ error: 'This hub is registered to another organization' });
+    }
     await audit({ req, action: 'device.register', targetType: 'device', targetId: result.rows[0].id, details: { mac: normMac } });
     res.status(201).json(result.rows[0]);
   } catch (err) {

@@ -5,10 +5,15 @@ const { query } = require('../db');
 const { requireAuth, isSuperadminUnscoped } = require('../middleware/auth');
 const { requirePermission } = require('../middleware/permissions');
 const { publishSensorRemove, pushSyncToHub, publishLiveRequest } = require('../mqtt');
+const { closeExcursion, resetSensor } = require('../alerts');
 const { audit } = require('../audit');
 
 const router = express.Router();
 router.use(requireAuth);
+
+// The org a sensor lookup must be restricted to: null for an unscoped
+// superadmin, otherwise the caller's org (requirePermission guarantees one).
+const scopeOrg = (req) => (isSuperadminUnscoped(req) ? null : req.orgId);
 
 // GET /api/sensors — list sensor nodes scoped by org
 router.get('/', async (req, res) => {
@@ -125,6 +130,11 @@ router.delete('/:id', requirePermission('editor'), async (req, res) => {
     // from re-activating the sensor if a stale data frame arrives later.
     await query('DELETE FROM readings WHERE sensor_id = $1', [id]);
     await query('UPDATE sensors SET active = FALSE WHERE id = $1', [id]);
+    // Its readings are dropped from now on, so nothing would ever close a
+    // breach that was open at this moment: it would show as ongoing forever
+    // and keep sending "still unacknowledged" reminders.
+    await closeExcursion(id);
+    resetSensor(id);
 
     // Push the updated (reduced) sensor list to the hub via the proven sync topic.
     // The hub runs applySyncFromCloud which removes any sensor no longer in the list.
@@ -161,8 +171,9 @@ router.post('/:id/live', requirePermission('editor'), async (req, res) => {
     const r = await query(
       `SELECT s.id, s.mac, s.name, s.cfg_sleep_secs, d.mac AS hub_mac
          FROM sensors s JOIN devices d ON d.id = s.device_id
-        WHERE s.id = $1 AND s.active = TRUE`,
-      [req.params.id]
+        WHERE s.id = $1 AND s.active = TRUE
+          AND ($2::int IS NULL OR d.org_id = $2)`,
+      [parseInt(req.params.id, 10) || 0, scopeOrg(req)]
     );
     if (r.rows.length === 0) return res.status(404).json({ error: 'Sensor not found' });
     const s2 = r.rows[0];
@@ -197,8 +208,9 @@ router.delete('/:id/live', requirePermission('editor'), async (req, res) => {
     const r = await query(
       `SELECT s.id, s.mac, d.mac AS hub_mac
          FROM sensors s JOIN devices d ON d.id = s.device_id
-        WHERE s.id = $1 AND s.active = TRUE`,
-      [req.params.id]
+        WHERE s.id = $1 AND s.active = TRUE
+          AND ($2::int IS NULL OR d.org_id = $2)`,
+      [parseInt(req.params.id, 10) || 0, scopeOrg(req)]
     );
     if (r.rows.length === 0) return res.status(404).json({ error: 'Sensor not found' });
     const s2 = r.rows[0];

@@ -4,7 +4,7 @@ const express = require('express');
 const bcrypt  = require('bcryptjs');
 const { query } = require('../db');
 const { requireAuth, requireSuperadmin, requireOwner, isSuperadminUnscoped } = require('../middleware/auth');
-const { requirePermission, clearPermissionCache } = require('../middleware/permissions');
+const { requireOrgPermission, clearPermissionCache } = require('../middleware/permissions');
 const { audit } = require('../audit');
 
 const router = express.Router();
@@ -91,7 +91,7 @@ router.get('/:id/members', async (req, res) => {
 // POST /api/organizations/:id/members — invite a member to an org by email
 // Owner (or superadmin) creates a new member user and adds them to the org.
 // If a user with that email already exists, they are added to the org directly.
-router.post('/:id/members', requirePermission('admin'), async (req, res) => {
+router.post('/:id/members', requireOrgPermission('admin'), async (req, res) => {
   const orgId = parseInt(req.params.id, 10);
   if (!Number.isInteger(orgId) || orgId <= 0) {
     return res.status(400).json({ error: 'Invalid org id' });
@@ -172,7 +172,7 @@ router.post('/:id/members', requirePermission('admin'), async (req, res) => {
 });
 
 // DELETE /api/organizations/:id/members/:userId — remove a member from an org
-router.delete('/:id/members/:userId', requirePermission('admin'), async (req, res) => {
+router.delete('/:id/members/:userId', requireOrgPermission('admin'), async (req, res) => {
   const orgId = parseInt(req.params.id, 10);
   const userId = parseInt(req.params.userId, 10);
   if (!Number.isInteger(orgId) || !Number.isInteger(userId)) {
@@ -199,7 +199,7 @@ router.delete('/:id/members/:userId', requirePermission('admin'), async (req, re
 });
 
 // PUT /api/organizations/:id/members/:userId/permissions — update member permission level
-router.put('/:id/members/:userId/permissions', requirePermission('admin'), async (req, res) => {
+router.put('/:id/members/:userId/permissions', requireOrgPermission('admin'), async (req, res) => {
   const orgId = parseInt(req.params.id, 10);
   const userId = parseInt(req.params.userId, 10);
   if (!Number.isInteger(orgId) || !Number.isInteger(userId)) {

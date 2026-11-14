@@ -10,6 +10,10 @@ const { audit } = require('../audit');
 const router = express.Router();
 router.use(requireAuth);
 
+// The org a sensor lookup must be restricted to: null for an unscoped
+// superadmin, otherwise the caller's org (requirePermission guarantees one).
+const scopeOrg = (req) => (isSuperadminUnscoped(req) ? null : req.orgId);
+
 // GET /api/sensors — list sensor nodes scoped by org
 router.get('/', async (req, res) => {
   try {
@@ -161,8 +165,9 @@ router.post('/:id/live', requirePermission('editor'), async (req, res) => {
     const r = await query(
       `SELECT s.id, s.mac, s.name, s.cfg_sleep_secs, d.mac AS hub_mac
          FROM sensors s JOIN devices d ON d.id = s.device_id
-        WHERE s.id = $1 AND s.active = TRUE`,
-      [req.params.id]
+        WHERE s.id = $1 AND s.active = TRUE
+          AND ($2::int IS NULL OR d.org_id = $2)`,
+      [parseInt(req.params.id, 10) || 0, scopeOrg(req)]
     );
     if (r.rows.length === 0) return res.status(404).json({ error: 'Sensor not found' });
     const s2 = r.rows[0];
@@ -197,8 +202,9 @@ router.delete('/:id/live', requirePermission('editor'), async (req, res) => {
     const r = await query(
       `SELECT s.id, s.mac, d.mac AS hub_mac
          FROM sensors s JOIN devices d ON d.id = s.device_id
-        WHERE s.id = $1 AND s.active = TRUE`,
-      [req.params.id]
+        WHERE s.id = $1 AND s.active = TRUE
+          AND ($2::int IS NULL OR d.org_id = $2)`,
+      [parseInt(req.params.id, 10) || 0, scopeOrg(req)]
     );
     if (r.rows.length === 0) return res.status(404).json({ error: 'Sensor not found' });
     const s2 = r.rows[0];

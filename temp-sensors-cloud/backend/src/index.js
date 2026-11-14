@@ -3,6 +3,7 @@
 const express  = require('express');
 const http     = require('http');
 const { Server } = require('socket.io');
+const jwt      = require('jsonwebtoken');
 
 const { query } = require('./db');
 const { initMqtt, getHubStatus } = require('./mqtt');
@@ -27,6 +28,15 @@ const sensorCfgRoutes = require('./routes/sensor-config');
 
 const app    = express();
 const server = http.createServer(app);
+
+// One proxy hop: nginx. Without this req.ip is nginx's address for every
+// request, so the per-IP login limiter was one global limit -- ten bad attempts
+// from anyone locked everyone out -- and every audit entry logged the same IP.
+// nginx appends the real client address as the last X-Forwarded-For entry
+// (after restoring it from Cloudflare on the proxied name), and with one
+// trusted hop that last entry is what Express reads, so a client cannot spoof
+// it by sending its own header.
+app.set('trust proxy', 1);
 
 // Socket.IO — the React dashboard connects here for live updates.
 // CORS is handled by nginx in production; allow all origins here for simplicity.
@@ -67,15 +77,47 @@ app.use((_req, res) => res.status(404).json({ error: 'Not found' }));
 //   sensorData, hubStatus, pairingRequest, alert
 const MAC_RE = /^[0-9A-Fa-f]{2}(:[0-9A-Fa-f]{2}){5}$/;
 
+// Both checks matter. Without them anyone who knew a hub MAC -- and half of one
+// is in the hub's BLE name -- received that site's readings, alarms, pairing
+// requests and OTA status. Clients send the access token in the handshake
+// (`auth: { token }`); it is checked once per connection, so an expired token
+// is only refused when the socket reconnects, and the clients refresh it then.
+io.use((socket, next) => {
+  try {
+    socket.data.user = jwt.verify(socket.handshake.auth?.token, process.env.JWT_SECRET);
+    next();
+  } catch {
+    next(new Error('unauthorized'));
+  }
+});
+
+// Membership is read from the database, not the token, so a removed member
+// cannot join again with a token issued before the removal.
+async function mayJoin(user, mac) {
+  if (user.role === 'superadmin') return true;
+  const r = await query(
+    `SELECT 1 FROM devices d JOIN memberships m ON m.org_id = d.org_id
+      WHERE d.mac = $1 AND m.user_id = $2`,
+    [mac, user.sub]
+  );
+  return r.rows.length > 0;
+}
+
 io.on('connection', (socket) => {
-  socket.on('join', (hubMac) => {
-    if (typeof hubMac === 'string' && MAC_RE.test(hubMac)) {
-      socket.join(`hub:${hubMac.toUpperCase()}`);
-      // Replay last known status so the client doesn't show "Unknown"
-      // when the hub's retained MQTT message arrived before this client connected.
-      const cached = getHubStatus(hubMac);
-      if (cached) socket.emit('hubStatus', cached);
+  socket.on('join', async (hubMac) => {
+    if (typeof hubMac !== 'string' || !MAC_RE.test(hubMac)) return;
+    const mac = hubMac.toUpperCase();
+    try {
+      if (!(await mayJoin(socket.data.user, mac))) return;
+    } catch (err) {
+      console.error('Socket join check failed:', err.message);
+      return;
     }
+    socket.join(`hub:${mac}`);
+    // Replay last known status so the client doesn't show "Unknown"
+    // when the hub's retained MQTT message arrived before this client connected.
+    const cached = getHubStatus(mac);
+    if (cached) socket.emit('hubStatus', cached);
   });
   socket.on('leave', (hubMac) => {
     if (typeof hubMac === 'string' && MAC_RE.test(hubMac)) {

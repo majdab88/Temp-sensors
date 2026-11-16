@@ -67,7 +67,7 @@ void confirmFirmwareValid();
 #define FW_MINOR 1
 #endif
 #ifndef FW_PATCH
-#define FW_PATCH 22
+#define FW_PATCH 23
 #endif
 #define STR_(x) #x
 #define STR(x)  STR_(x)
@@ -458,6 +458,8 @@ const unsigned long NTP_SYNC_INTERVAL  = 86400000;  // 24 h
 bool          timeConfigured = false;
 static bool   sntpStarted    = false;   // configTime() has been called once
 static unsigned long sntpStartedAt = 0;
+static unsigned long sntpLastAsk   = 0;
+const unsigned long SNTP_ASK_MS = 10000;   // re-ask interval while the clock is unset
 // How long queued readings wait for the clock after SNTP starts, so they can
 // be dated, before going out undated. NTP answers in a few seconds; this only
 // runs out where it is blocked.
@@ -4202,21 +4204,37 @@ void onWiFiUp() {
     }
   }
   if (!sntpStarted) {
-    // Non-blocking: SNTP keeps trying by itself; maintainTime() notices.
+    // Non-blocking; maintainTime() notices the clock, and asks again if needed.
     configTime(gmtOffset_sec, daylightOffset_sec, ntpServer);
     sntpStarted   = true;
     sntpStartedAt = millis();
+    sntpLastAsk   = sntpStartedAt;
   }
 }
 
 // Called from loop(). Readings queued before the clock was set are dated
 // from their uptime when sent, so nothing here has to wait.
+//
+// Until the clock is set, SNTP is restarted every SNTP_ASK_MS rather than
+// left to lwIP. Its own retry backs off 15 s, 30 s, 60 s after a failed
+// request, so losing the first two -- likely right after a router reboot --
+// left the clock unset for about two minutes. That outlasted the queue's
+// CLOCK_WAIT_MS, and a power-cut test's readings went out undated.
 void maintainTime() {
   if (timeConfigured) { resyncNTP(); return; }
-  if (!sntpStarted || time(nullptr) < 1000000000) return;
+  if (!sntpStarted) return;
+  if (time(nullptr) < 1000000000) {
+    if (WiFi.status() == WL_CONNECTED && millis() - sntpLastAsk >= SNTP_ASK_MS) {
+      sntpLastAsk = millis();
+      Serial.printf("[NTP] No time %lu s after starting - asking again\n",
+                    (millis() - sntpStartedAt) / 1000);
+      configTime(gmtOffset_sec, daylightOffset_sec, ntpServer);
+    }
+    return;
+  }
   timeConfigured = true;
   lastNtpSync = millis();
-  Serial.print("✓ Time synced: ");
+  Serial.printf("✓ Time synced %lu s after starting: ", (millis() - sntpStartedAt) / 1000);
   printCurrentTime();
 }
 

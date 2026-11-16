@@ -111,11 +111,14 @@ export const getSensorReadings = (id: number, range: TimeRange) => {
 export const getDevices = () =>
   api.get<import('../types').Device[]>('/devices');
 
+// Returns the device row, with the hub's own broker account: mqtt_user, and
+// api_key as its password.
 export const registerDevice = (mac: string) =>
-  api.post<{ device: import('../types').Device }>('/devices/register', { mac });
+  api.post<import('../types').Device & { api_key: string; mqtt_user: string }>(
+    '/devices/register', { mac });
 
 export const getProvisionConfig = () =>
-  api.get<{ mqttHost: string; mqttPort: number; mqttUser: string; mqttPass: string }>('/provision/config');
+  api.get<{ mqttHost: string; mqttPort: number }>('/provision/config');
 
 // Pairing
 export const getPairingRequests = (status = 'pending') =>

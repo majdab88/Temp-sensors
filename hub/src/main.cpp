@@ -67,7 +67,7 @@ void confirmFirmwareValid();
 #define FW_MINOR 1
 #endif
 #ifndef FW_PATCH
-#define FW_PATCH 26
+#define FW_PATCH 27
 #endif
 #define STR_(x) #x
 #define STR(x)  STR_(x)
@@ -754,6 +754,16 @@ int  mqttPort      = 8883;
 char mqttUser[65]  = "";
 char mqttPass[65]  = "";
 
+// This hub's own broker account, offered by the cloud on sensors/<MAC>/creds
+// while the hub is logged in with anything else (the old shared account).
+// Held in RAM only, and saved to NVS only after a connect with it succeeds: if
+// the broker refuses it, or the hub restarts first, the hub carries on with
+// the credentials it had, and the cloud offers again at the next sync. An
+// offer can therefore never lock the hub out of the cloud.
+static char pendingUser[65] = "";
+static char pendingPass[65] = "";
+static bool credsSwitchWanted = false;   // set in mqttCallback, acted on in loop()
+
 // Hub MAC "AA:BB:CC:DD:EE:FF" — embedded in every MQTT topic path
 char hubMacStr[18] = "";
 
@@ -779,6 +789,7 @@ char topicSensorOta[80];    // Cloud → Hub: stage an image on a sensor, one to
 char topicSensorOtaStatus[80]; // Hub → Cloud: sensor OTA progress
 char topicLiveReq[80];      // Cloud → Hub: ask a sensor to stay awake
 char topicLiveState[80];    // Hub → Cloud: a live request reached the node
+char topicCreds[72];        // Cloud → Hub: this hub's own broker account
 
 bool cloudConfigured = false;  // true when MQTT credentials exist in NVS
 int  lastMqttState   = 0;     // PubSubClient state after last connectCloud() attempt
@@ -1559,12 +1570,29 @@ void buildTopics() {
   snprintf(topicSensorOtaStatus, sizeof(topicSensorOtaStatus), "sensors/%s/sensor-ota/status",  hubMacStr);
   snprintf(topicLiveReq,         sizeof(topicLiveReq),         "sensors/%s/live/request",       hubMacStr);
   snprintf(topicLiveState,       sizeof(topicLiveState),       "sensors/%s/live/state",         hubMacStr);
+  snprintf(topicCreds,           sizeof(topicCreds),           "sensors/%s/creds",              hubMacStr);
   Serial.printf("[MQTT] Hub MAC: %s\n", hubMacStr);
 }
 
 // Called by PubSubClient when a subscribed message arrives.
 void mqttCallback(char* topic, byte* payload, unsigned int length) {
   String json = String((char*)payload, length);
+
+  // ── This hub's own broker account ─────────────────────────────────────────
+  // Only noted here: reconnecting from inside PubSubClient's callback would
+  // tear down the connection it is still reading from. loop() does it.
+  if (strcmp(topic, topicCreds) == 0) {
+    String u = jsonGetStr(json, "user");
+    String p = jsonGetStr(json, "pass");
+    if (u.isEmpty() || p.isEmpty() ||
+        u.length() >= sizeof(pendingUser) || p.length() >= sizeof(pendingPass)) return;
+    if (u == mqttUser && p == mqttPass) return;
+    u.toCharArray(pendingUser, sizeof(pendingUser));
+    p.toCharArray(pendingPass, sizeof(pendingPass));
+    credsSwitchWanted = true;
+    Serial.printf("[MQTT] Cloud offered this hub its own account \"%s\"\n", pendingUser);
+    return;
+  }
 
   // ── Live mode request from cloud ──────────────────────────────────────────
   if (strcmp(topic, topicLiveReq) == 0) {
@@ -1952,8 +1980,10 @@ void publishSyncRequest() {
   char* buf = (char*)malloc(BUF);
   if (!buf) { Serial.println("[Sync] publishSyncRequest: malloc failed"); return; }
 
+  // "user" tells the cloud which account this connection used; one that is not
+  // the hub's own is answered with it on topicCreds.
   int pos = 0;
-  pos += snprintf(buf + pos, BUF - pos, "{\"sensors\":[");
+  pos += snprintf(buf + pos, BUF - pos, "{\"user\":\"%s\",\"sensors\":[", mqttUser);
   for (int i = 0; i < sensorCount && pos < BUF - 60; i++) {
     char macStr[18];
     snprintf(macStr, sizeof(macStr), "%02X:%02X:%02X:%02X:%02X:%02X",
@@ -2326,13 +2356,36 @@ bool connectCloud() {
   // LWT: broker publishes this if MQTT connection drops unexpectedly
   const char* lwt = "{\"online\":false}";
 
-  Serial.printf("[MQTT] Connecting to %s:%d as \"%s\"...\n", mqttHost, mqttPort, mqttUser);
-  if (!mqttClient.connect(clientId, mqttUser, mqttPass, topicStatus, 0, true, lwt)) {
+  // An offered account is tried once, on the next connect. Kept only if the
+  // broker accepts it; otherwise this attempt fails and the next one goes back
+  // to the credentials the hub already had.
+  bool trying = pendingUser[0] != 0;
+  const char* user = trying ? pendingUser : mqttUser;
+  const char* pass = trying ? pendingPass : mqttPass;
+
+  Serial.printf("[MQTT] Connecting to %s:%d as \"%s\"...\n", mqttHost, mqttPort, user);
+  if (!mqttClient.connect(clientId, user, pass, topicStatus, 0, true, lwt)) {
     lastMqttState = mqttClient.state();
     Serial.printf("[MQTT] Connection failed (state %d)\n", lastMqttState);
+    if (trying) {
+      Serial.println("[MQTT] Offered account not accepted - keeping the current one");
+      pendingUser[0] = pendingPass[0] = 0;
+    }
     return false;
   }
   lastMqttState = 0;
+
+  if (trying) {
+    strlcpy(mqttUser, pendingUser, sizeof(mqttUser));
+    strlcpy(mqttPass, pendingPass, sizeof(mqttPass));
+    pendingUser[0] = pendingPass[0] = 0;
+    Preferences cPrefs;
+    cPrefs.begin("cloud", false);
+    cPrefs.putString("mqtt_user", mqttUser);
+    cPrefs.putString("mqtt_pass", mqttPass);
+    cPrefs.end();
+    Serial.printf("[MQTT] Now using this hub's own account \"%s\" (saved)\n", mqttUser);
+  }
 
   Serial.println("[MQTT] Connected!");
   mqttClient.subscribe(topicPairResp);
@@ -2349,6 +2402,7 @@ bool connectCloud() {
     mqttClient.subscribe(sub);
   }
   mqttClient.subscribe(topicLiveReq);
+  mqttClient.subscribe(topicCreds);
 
   // Publish retained online status so the dashboard sees us immediately.
   // fw is what the cloud compares against the firmware registry to decide
@@ -2501,6 +2555,13 @@ void maintainCloud() {
   if (WiFi.status() != WL_CONNECTED) {  // no WiFi → no TCP; don't block the radio
     cloudUp = false;
     return;
+  }
+  if (mqttClient.connected() && credsSwitchWanted) {
+    // Reconnect now with the account the cloud offered (see connectCloud).
+    credsSwitchWanted = false;
+    Serial.println("[MQTT] Reconnecting with the offered account");
+    mqttClient.disconnect();
+    lastMqttReconnect = millis() - MQTT_RECONNECT_MS;   // no wait for the next attempt
   }
   if (mqttClient.connected()) {
     mqttClient.loop();

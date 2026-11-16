@@ -8,6 +8,7 @@ const jwt      = require('jsonwebtoken');
 const { query } = require('./db');
 const { currentUser } = require('./middleware/auth');
 const { initMqtt, getHubStatus } = require('./mqtt');
+const { writeHubAccounts } = require('./mqtt-accounts');
 const { initAlerts } = require('./alerts');
 const { startHealthMonitor } = require('./health');
 const authRoutes      = require('./routes/auth');
@@ -134,6 +135,9 @@ io.on('connection', (socket) => {
 initAlerts(io);
 startHealthMonitor(io);
 initMqtt(io);
+// The broker's per-hub accounts are rebuilt from the database on every start,
+// so the file never drifts from the devices table for longer than one restart.
+writeHubAccounts();
 
 // ── Seed superadmin on first boot ─────────────────────────────────────────────
 async function seedSuperadmin() {

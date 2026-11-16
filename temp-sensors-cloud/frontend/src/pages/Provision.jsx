@@ -32,8 +32,7 @@ export default function Provision() {
 
   const [mqttHost, setMqttHost]           = useState('')
   const [mqttPort, setMqttPort]           = useState(8883)
-  const [mqttUser, setMqttUser]           = useState('')
-  const [mqttPass, setMqttPass]           = useState('')
+  const [mqttUser, setMqttUser]           = useState('')   // this hub's own account, from register
   const [mqttConfigErr, setMqttConfigErr] = useState(false)
 
   const [networks, setNetworks]           = useState([])
@@ -53,11 +52,9 @@ export default function Provision() {
   useEffect(() => {
     api.get('/provision/config')
       .then(r => {
-        if (r.data.mqttHost && r.data.mqttUser) {
+        if (r.data.mqttHost) {
           setMqttHost(r.data.mqttHost)
           setMqttPort(r.data.mqttPort || 8883)
-          setMqttUser(r.data.mqttUser)
-          setMqttPass(r.data.mqttPass)
         } else {
           setMqttConfigErr(true)
         }
@@ -208,6 +205,7 @@ export default function Provision() {
         name: nickname.trim() || null,
       })
       setApiKey(data.api_key)
+      setMqttUser(data.mqtt_user)
       addLog('Device registered — API key received', 'ok')
     } catch (err) {
       addLog(`Registration failed: ${err.response?.data?.error || err.message}`, 'err')
@@ -227,14 +225,13 @@ export default function Provision() {
       await writeChar(charWifiRef.current, JSON.stringify({ ssid, pass }))
       addLog('WiFi credentials written', 'ok')
 
-      // Send shared MQTT credentials from the VPS (not per-device MAC/api_key).
-      // The hub MAC is embedded in the topic path by the firmware; the broker
-      // identifies each device from the topic, not the MQTT username.
+      // The hub's own broker account: its MAC without colons, and the api_key
+      // registration just issued. The broker lets it use only its own topics.
       await writeChar(charCloudRef.current, JSON.stringify({
         host: mqttHost,
         port: mqttPort,
         user: mqttUser,
-        pass: mqttPass,
+        pass: apiKey,
       }))
       addLog('Cloud credentials written — waiting for hub to connect…', 'ok')
       setProvState('waiting')
@@ -254,7 +251,7 @@ export default function Provision() {
   // ── Reset / start over ───────────────────────────────────────────────────────
   function resetAll() {
     disconnect()
-    setMac(''); setNickname(''); setApiKey(''); setMacAuto(false)
+    setMac(''); setNickname(''); setApiKey(''); setMqttUser(''); setMacAuto(false)
     setNetworks([]); setSelectedSsid(null); setIsOpenNet(false)
     setWifiPass(''); setManualSsid(''); setLogs([]); setProvState('idle')
   }

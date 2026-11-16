@@ -1,16 +1,22 @@
 # ============================================================
-# Mosquitto ACL — Temp-sensors Cloud
+# Mosquitto ACL — Temp-sensors Cloud (base)
 # ============================================================
 #
-# Rules are evaluated top-to-bottom; first match wins.
-# Topic patterns:
-#   #   — wildcard matching zero or more levels
-#   +   — wildcard matching exactly one level
-#   %u  — substituted with the connecting client's username
+# Mounted as /mosquitto/config/acl.base. entrypoint.sh appends one entry per
+# registered hub and writes the result to /mosquitto/config/acl, which is the
+# file mosquitto reads:
 #
-# Hub devices authenticate with their MAC address as the username
-# (uppercase, no colons, e.g. "AABBCCDDEEFF").
-# The %u pattern therefore restricts each hub to its own topic subtree.
+#   user 58E6C51540F4
+#   topic readwrite sensors/58:E6:C5:15:40:F4/#
+#
+# Each hub logs in with its own account -- its MAC without colons, password
+# devices.api_key -- and can read and write only its own subtree. They all
+# used to share one account with readwrite on sensors/#, so whoever held that
+# password could read every site and command every hub.
+#
+# The username cannot be the MAC as written in the topic: mosquitto's password
+# file is "user:hash", split at the first colon. That is also why each hub gets
+# an explicit entry instead of a "pattern ... %u" line.
 # ============================================================
 
 # ----------------------------------------------------------
@@ -20,24 +26,3 @@
 # ----------------------------------------------------------
 user backend
 topic readwrite #
-
-# ----------------------------------------------------------
-# Hub devices — shared username (MQTT_HUB_USER), identified
-# by MAC address in the topic path, not the username.
-#
-# All hubs connect with the same user/pass pair; the hub MAC
-# in the topic hierarchy identifies each device:
-#   sensors/<HUB_MAC>/data
-#   sensors/<HUB_MAC>/status
-#   sensors/<HUB_MAC>/sync
-#   sensors/<HUB_MAC>/sync/request
-#   sensors/<HUB_MAC>/pairing/request
-#   sensors/<HUB_MAC>/pairing/response
-#   sensors/<HUB_MAC>/sensor/remove
-#   sensors/<HUB_MAC>/sensor/rename
-#   sensors/<HUB_MAC>/sensor/renamed
-#   sensors/<HUB_MAC>/sensor/deleted
-#   sensors/<HUB_MAC>/command
-# ----------------------------------------------------------
-user hub
-topic readwrite sensors/#

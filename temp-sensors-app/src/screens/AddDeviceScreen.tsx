@@ -128,13 +128,16 @@ export default function AddDeviceScreen() {
     setProvError('');
 
     try {
-      // Read hub MAC and register it in cloud
+      // Read hub MAC and register it in cloud. Registration returns the hub's
+      // own broker account: its MAC without colons, with api_key as password.
       const hubMac = await readHubMac(connectedHub);
-      await registerDevice(hubMac);
+      const { data: device } = await registerDevice(hubMac);
+      const mqttUser = device.mqtt_user;
+      const mqttPass = device.api_key;
 
-      // Get MQTT credentials from cloud
+      // Broker address from cloud
       const { data: provConfig } = await getProvisionConfig();
-      const { mqttHost, mqttPort, mqttUser, mqttPass } = provConfig;
+      const { mqttHost, mqttPort } = provConfig;
 
       // Wait for connected or failed using a Promise driven by the status subscription
       await new Promise<void>((resolve, reject) => {

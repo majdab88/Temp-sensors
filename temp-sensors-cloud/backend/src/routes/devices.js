@@ -7,6 +7,7 @@ const { requireAuth, requireSuperadmin, isSuperadminUnscoped } = require('../mid
 const { requirePermission } = require('../middleware/permissions');
 const { audit } = require('../audit');
 const { getHubStatus } = require('../mqtt');
+const { hubMqttUser, writeHubAccounts } = require('../mqtt-accounts');
 
 const router = express.Router();
 router.use(requireAuth);
@@ -99,8 +100,12 @@ router.post('/register', requirePermission('editor'), async (req, res) => {
     if (result.rows.length === 0) {
       return res.status(409).json({ error: 'This hub is registered to another organization' });
     }
+    // The hub's broker account must exist before the client hands these
+    // credentials to the hub; the broker picks the change up within seconds.
+    await writeHubAccounts();
     await audit({ req, action: 'device.register', targetType: 'device', targetId: result.rows[0].id, details: { mac: normMac } });
-    res.status(201).json(result.rows[0]);
+    // mqtt_user + api_key are what the client writes to the hub over BLE.
+    res.status(201).json({ ...result.rows[0], mqtt_user: hubMqttUser(normMac) });
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'Database error' });
@@ -166,6 +171,7 @@ router.delete('/:id', requirePermission('editor'), async (req, res) => {
       [id]
     );
     if (result.rows.length === 0) return res.status(404).json({ error: 'Device not found' });
+    writeHubAccounts();   // a deleted hub can no longer log in to the broker
     await audit({ req, action: 'device.delete', targetType: 'device', targetId: id, details: { mac: result.rows[0].mac } });
     res.json({ ok: true });
   } catch (err) {

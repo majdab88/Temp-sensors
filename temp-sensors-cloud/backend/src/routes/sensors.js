@@ -33,7 +33,7 @@ router.get('/', async (req, res) => {
     if (isSuperadminUnscoped(req)) {
       result = await query(
         `SELECT s.id, s.device_id, s.mac, s.name, s.paired_at, s.active,
-                s.fw_version, s.cfg_ver, s.probe_error, s.probe_error_at,
+                s.fw_version, s.fw_reported_at, s.cfg_ver, s.probe_error, s.probe_error_at,
                 s.ota_state, s.ota_version, s.ota_pct, s.ota_error, s.ota_updated_at,
                 s.live_until, s.live_interval_s, s.live_requested_at, s.cfg_sleep_secs,
                 d.mac AS hub_mac, d.name AS hub_name, d.org_id,
@@ -48,7 +48,7 @@ router.get('/', async (req, res) => {
     } else if (req.orgId) {
       result = await query(
         `SELECT s.id, s.device_id, s.mac, s.name, s.paired_at, s.active,
-                s.fw_version, s.cfg_ver, s.probe_error, s.probe_error_at,
+                s.fw_version, s.fw_reported_at, s.cfg_ver, s.probe_error, s.probe_error_at,
                 s.ota_state, s.ota_version, s.ota_pct, s.ota_error, s.ota_updated_at,
                 s.live_until, s.live_interval_s, s.live_requested_at, s.cfg_sleep_secs,
                 d.mac AS hub_mac, d.name AS hub_name,

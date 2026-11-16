@@ -624,14 +624,23 @@ async function handleSensorOtaStatus(hubMac, data) {
     // A transfer that never finished is not that -- a missed button press, a
     // node that stopped acknowledging, an unreachable image all succeed on a
     // second attempt, which is exactly when the command needs to still be there.
-    const PERMANENT = [
+    //
+    // The hub reports a node's refusal as "declined" and its own or the
+    // transfer's as "failed", so the two lists are separate. "image too large"
+    // and "no usable partition" used to sit in the failed list, where they
+    // never arrive, and stayed staged forever; "bad hash or signature" was
+    // missing, so every hub restart re-received the command and failed again.
+    const PERMANENT_FAILED = [
       'sha256 mismatch', 'signature invalid', 'not a valid image',
-      'image too large', 'no usable partition',
+      'bad hash or signature',
+    ];
+    const PERMANENT_DECLINED = [
+      'already on this version', 'image too large', 'no usable partition',
     ];
     const settled =
       state === 'installed' ||
-      (state === 'failed'   && PERMANENT.includes(error)) ||
-      (state === 'declined' && error === 'already on this version');
+      (state === 'failed'   && PERMANENT_FAILED.includes(error)) ||
+      (state === 'declined' && PERMANENT_DECLINED.includes(error));
 
     if (settled) {
       client.publish(sensorOtaTopic(hubMac, mac), '', { retain: true });

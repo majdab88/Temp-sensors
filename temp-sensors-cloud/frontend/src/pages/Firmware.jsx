@@ -1,6 +1,18 @@
 import { useEffect, useRef, useState } from 'react'
 import api from '../services/api'
 import socket from '../services/socket'
+import { sensorOutcome, sensorRolledBack, sensorSendingStale, hubOutcome } from '../utils/otaOutcome'
+
+// Why an update did not happen, under the row it belongs to.
+function OutcomeNote({ outcome }) {
+  if (!outcome) return null
+  return (
+    <div className={`ota-note ${outcome.tone === 'bad' ? 'ota-note-bad' : ''}`}>
+      {outcome.text}
+      {outcome.next && <> <b>{outcome.next}</b></>}
+    </div>
+  )
+}
 
 /**
  * Firmware registry — superadmin only.
@@ -73,7 +85,7 @@ export default function Firmware() {
       if (!data.fw) return
       setSensors((prev) => prev.map((x) =>
         x.mac === data.sensor_mac && x.fw_version !== data.fw
-          ? { ...x, fw_version: data.fw }
+          ? { ...x, fw_version: data.fw, fw_reported_at: new Date().toISOString() }
           : x
       ))
     }
@@ -81,7 +93,12 @@ export default function Firmware() {
     function onSensorOtaStatus(data) {
       setSensors((prev) => prev.map((x) =>
         x.mac === data.sensor_mac
-          ? { ...x, ota_state: data.state, ota_pct: data.pct, ota_error: data.error }
+          // The version too: an outcome is shown only on the card of the image
+          // it is about, and without it a decline landed on whichever card the
+          // page had last loaded for that sensor.
+          ? { ...x, ota_state: data.state, ota_pct: data.pct, ota_error: data.error,
+              ota_version: data.version ?? x.ota_version,
+              ota_updated_at: new Date().toISOString() }
           : x
       ))
       if (data.state === 'installed') load()
@@ -320,51 +337,64 @@ export default function Firmware() {
               )}
 
               {img.device_kind === 'sensor' && sensors.map((sen) => {
-                const busy = sen.ota_state &&
+                // A transfer cut off by a hub restart never reports again, and
+                // would otherwise hold the row at "sending" with no way out.
+                const stale = sensorSendingStale(sen)
+                const busy = sen.ota_state && !stale &&
                   !['installed', 'failed', 'declined'].includes(sen.ota_state)
                 // A sensor is staged for one particular image. Without the
                 // version check every image showed that sensor as staged, and
                 // disabled the row that could have replaced it.
                 const busyHere    = busy && sen.ota_version === img.version
-                const transferring = sen.ota_state === 'sending'
+                const transferring = sen.ota_state === 'sending' && !stale
                 const current = sen.fw_version
                 // fw_version only changes once the node reboots and reports,
                 // seconds after it says the image is installed. Trusting that
                 // report closes the gap where the row briefly offers to send
-                // an image the sensor has just taken.
+                // an image the sensor has just taken -- unless the sensor has
+                // since come back on its old version, i.e. rolled back.
                 const installed = current === img.version ||
-                  (sen.ota_state === 'installed' && sen.ota_version === img.version)
+                  (sen.ota_state === 'installed' && sen.ota_version === img.version &&
+                   !sensorRolledBack(sen, img.version))
+                const outcome = installed ? null : sensorOutcome(sen, img.version)
                 return (
-                  <div key={sen.mac} style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                    <span className="device-meta" style={{ flex: 1 }}>
-                      {sen.name || sen.mac}
-                      {current ? ` · v${current}` : ' · version unknown'}
-                    </span>
-                    {installed ? (
-                      <span className="chip">installed</span>
-                    ) : busyHere ? (
-                      <>
-                        <span className="chip">
-                          {sen.ota_state}{sen.ota_pct != null ? ` ${sen.ota_pct}%` : ''}
-                        </span>
-                        {!transferring && (
-                          <button
-                            className="btn btn-sm btn-ghost"
-                            title="Cancel this staged image"
-                            onClick={() => handleCancelStage(sen)}
-                          >&#10005;</button>
-                        )}
-                      </>
-                    ) : (
-                      <button
-                        className="btn btn-sm btn-primary"
-                        disabled={transferring}
-                        title="Delivered when the button on the node is pressed"
-                        onClick={() => handleStageSensor(img.id, sen.mac, sen.name, img.version)}
-                      >
-                        Send
-                      </button>
-                    )}
+                  <div key={sen.mac}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                      <span className="device-meta" style={{ flex: 1 }}>
+                        {sen.name || sen.mac}
+                        {current ? ` · v${current}` : ' · version unknown'}
+                      </span>
+                      {installed ? (
+                        <span className="chip">installed</span>
+                      ) : busyHere ? (
+                        <>
+                          <span className="chip">
+                            {sen.ota_state === 'staged'
+                              ? 'staged · press the button'
+                              : `${sen.ota_state}${sen.ota_pct != null ? ` ${sen.ota_pct}%` : ''}`}
+                          </span>
+                          {!transferring && (
+                            <button
+                              className="btn btn-sm btn-ghost"
+                              title="Cancel this staged image"
+                              onClick={() => handleCancelStage(sen)}
+                            >&#10005;</button>
+                          )}
+                        </>
+                      ) : (
+                        // Re-staging is safe whatever went wrong: the hub replaces
+                        // the sensor's slot if it still holds one.
+                        <button
+                          className="btn btn-sm btn-primary"
+                          disabled={transferring}
+                          title="Delivered when the button on the node is pressed"
+                          onClick={() => handleStageSensor(img.id, sen.mac, sen.name, img.version)}
+                        >
+                          {outcome?.tone === 'bad' ? 'Retry' : 'Send'}
+                        </button>
+                      )}
+                    </div>
+                    <OutcomeNote outcome={outcome} />
                   </div>
                 )
               })}
@@ -384,26 +414,30 @@ export default function Firmware() {
                 const busy = ota && !['confirmed', 'failed', 'uptodate'].includes(ota.state) && !stale
                 const isTarget = busy && ota.version === img.version
                 const current = hub.fw_version
+                const outcome = hubOutcome(hub, ota, img.version, stale)
                 return (
-                  <div key={hub.mac} style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                    <span className="device-meta" style={{ flex: 1 }}>
-                      {hub.name || hub.mac}
-                      {current ? ` · v${current}` : ' · version unknown'}
-                    </span>
-                    {current === img.version ? (
-                      <span className="chip">installed</span>
-                    ) : (
-                      <button
-                        className="btn btn-sm btn-primary"
-                        disabled={busy}
-                        title={busy && !isTarget ? `Busy installing ${ota.version}` : ''}
-                        onClick={() => handleStage(img.id, hub.mac, current, img.version)}
-                      >
-                        {isTarget
-                          ? `${ota.state}${ota.pct != null ? ` ${ota.pct}%` : ''}`
-                          : 'Install'}
-                      </button>
-                    )}
+                  <div key={hub.mac}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                      <span className="device-meta" style={{ flex: 1 }}>
+                        {hub.name || hub.mac}
+                        {current ? ` · v${current}` : ' · version unknown'}
+                      </span>
+                      {current === img.version ? (
+                        <span className="chip">installed</span>
+                      ) : (
+                        <button
+                          className="btn btn-sm btn-primary"
+                          disabled={busy}
+                          title={busy && !isTarget ? `Busy installing ${ota.version}` : ''}
+                          onClick={() => handleStage(img.id, hub.mac, current, img.version)}
+                        >
+                          {isTarget
+                            ? `${ota.state}${ota.pct != null ? ` ${ota.pct}%` : ''}`
+                            : outcome ? 'Retry' : 'Install'}
+                        </button>
+                      )}
+                    </div>
+                    <OutcomeNote outcome={outcome} />
                   </div>
                 )
               })}
@@ -420,18 +454,6 @@ export default function Firmware() {
         ))}
       </div>
 
-      {Object.entries(otaState).some(([, o]) => o?.error) && (
-        <>
-          <h2 style={{ fontSize: 16, margin: '24px 0 12px' }}>Recent failures</h2>
-          {Object.entries(otaState)
-            .filter(([, o]) => o?.error)
-            .map(([mac, o]) => (
-              <div className="alert alert-error" key={mac}>
-                {mac} — {o.state}: {o.error}
-              </div>
-            ))}
-        </>
-      )}
     </div>
   )
 }

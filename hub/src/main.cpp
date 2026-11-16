@@ -67,7 +67,7 @@ void confirmFirmwareValid();
 #define FW_MINOR 1
 #endif
 #ifndef FW_PATCH
-#define FW_PATCH 25
+#define FW_PATCH 26
 #endif
 #define STR_(x) #x
 #define STR(x)  STR_(x)
@@ -511,10 +511,6 @@ static bool   sntpStarted    = false;   // configTime() has been called once
 static unsigned long sntpStartedAt = 0;
 static unsigned long sntpLastAsk   = 0;
 const unsigned long SNTP_ASK_MS = 10000;   // re-ask interval while the clock is unset
-// How long queued readings wait for the clock after SNTP starts, so they can
-// be dated, before going out undated. NTP answers in a few seconds; this only
-// runs out where it is blocked.
-const unsigned long CLOCK_WAIT_MS = 60000;
 unsigned long lastNtpSync    = 0;
 
 // --- MESSAGE STRUCTURE (must be byte-for-byte identical on hub and all sensors) ---
@@ -2418,26 +2414,12 @@ void loadOfflineBuffer() {
   bp.end();
 }
 
-static bool waitsForClock(const BufferedReading& r, time_t now) {
-  return r.epoch == 0 && r.upSecs != UPSECS_UNKNOWN && now <= 1000000000 &&
-         sntpStarted && millis() - sntpStartedAt < CLOCK_WAIT_MS;
-}
-
 // Send queued readings in order. loop() calls this whenever the cloud is up,
 // so it is also the normal path for every live reading, not just a recovery.
 void flushOfflineBuffer() {
   // loop() calls this on every pass, so with the cloud down it would print
   // the backlog header and "paused" thousands of times a minute.
   if (bufCount == 0 || !mqttClient.connected()) return;
-  {
-    // Checked quietly up front too: loop() calls this every pass while the
-    // head waits for the clock, and the backlog messages below would repeat.
-    BufferedReading head;
-    portENTER_CRITICAL(&bufMux);
-    head = offlineBuf[bufTail];
-    portEXIT_CRITICAL(&bufMux);
-    if (waitsForClock(head, time(nullptr))) return;
-  }
   bool backlog = bufCount > 1;
   if (backlog) Serial.printf("[Buffer] Flushing %d buffered reading(s)...\n", (int)bufCount);
 
@@ -2453,28 +2435,28 @@ void flushOfflineBuffer() {
     droppedBefore = bufDropped;
     portEXIT_CRITICAL(&bufMux);
 
-    // A reading taken before NTP synced is dated now, from how long ago it
-    // arrived. One restored from before a reboot cannot be, and goes undated
-    // -- the cloud then uses its own receive time.
+    // A reading taken before NTP synced is dated from its uptime: by this hub
+    // once the clock is set, otherwise by the cloud from "age_s", the seconds
+    // since it was taken. Waiting for the clock instead put a whole outage's
+    // readings on one moment: after a power cut NTP took 101 s, a 60 s hold
+    // ran out, and the cloud dated them all on arrival. One restored from
+    // before a reboot has no uptime and goes undated -- the cloud then uses
+    // its own receive time.
     time_t now = time(nullptr);
-
-    // After a power cut the router returns, and MQTT connects in the same
-    // loop pass that starts SNTP -- seconds before the clock is set. Sending
-    // then would put every reading of the outage on the moment of the flush,
-    // which is what happened to the first real one. Hold a datable reading
-    // until the clock is set; give up after CLOCK_WAIT_MS, NTP may be blocked.
-    if (waitsForClock(r, now)) break;
-
     uint32_t epoch = r.epoch;
-    if (epoch == 0 && now > 1000000000 && r.upSecs != UPSECS_UNKNOWN) {
-      epoch = (uint32_t)((int64_t)now - ((int64_t)(millis() / 1000) - r.upSecs));
+    int64_t  age   = -1;
+    if (epoch == 0 && r.upSecs != UPSECS_UNKNOWN) {
+      age = (int64_t)(millis() / 1000) - r.upSecs;
+      if (now > 1000000000) epoch = (uint32_t)((int64_t)now - age);
     }
-    char ts[21] = "";
+    char when[32] = "\"ts\":\"\"";
     if (epoch) {
       time_t t = (time_t)epoch;
       struct tm utcTm;
       gmtime_r(&t, &utcTm);   // UTC; getLocalTime() would be mislabelled by the 'Z'
-      strftime(ts, sizeof(ts), "%Y-%m-%dT%H:%M:%SZ", &utcTm);
+      strftime(when, sizeof(when), "\"ts\":\"%Y-%m-%dT%H:%M:%SZ\"", &utcTm);
+    } else if (age >= 0) {
+      snprintf(when, sizeof(when), "\"age_s\":%ld", (long)age);
     }
 
     char sensorMacStr[18];
@@ -2484,9 +2466,9 @@ void flushOfflineBuffer() {
     char payload[256];
     snprintf(payload, sizeof(payload),
              "{\"sensor_mac\":\"%s\",\"temp\":%.2f,\"hum\":%.2f,"
-             "\"battery\":%d,\"rssi\":%d,\"ts\":\"%s\","
+             "\"battery\":%d,\"rssi\":%d,%s,"
              "\"fw\":\"%u.%u.%u\",\"cfg_ver\":%u}",
-             sensorMacStr, r.temp, r.hum, r.battery, r.rssi, ts,
+             sensorMacStr, r.temp, r.hum, r.battery, r.rssi, when,
              r.fw[0], r.fw[1], r.fw[2], r.cfg_ver);
 
     if (!mqttClient.publish(topicData, payload)) break;   // keep it for next time
@@ -4364,8 +4346,9 @@ void onWiFiUp() {
 // Until the clock is set, SNTP is restarted every SNTP_ASK_MS rather than
 // left to lwIP. Its own retry backs off 15 s, 30 s, 60 s after a failed
 // request, so losing the first two -- likely right after a router reboot --
-// left the clock unset for about two minutes. That outlasted the queue's
-// CLOCK_WAIT_MS, and a power-cut test's readings went out undated.
+// left the clock unset for about two minutes. Readings no longer wait for it
+// (they carry their age instead), but every one that does not have to rely
+// on the cloud's receive time is dated more accurately.
 void maintainTime() {
   if (timeConfigured) { resyncNTP(); return; }
   if (!sntpStarted) return;

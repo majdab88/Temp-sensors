@@ -97,7 +97,9 @@ async function handleMessage(topic, payload) {
 }
 
 async function handleSensorData(hubMac, data) {
-  const { sensor_mac, temp, hum, battery, rssi, ts, fw, cfg_ver } = data;
+  // Taken before any await: age_s below is counted back from this moment.
+  const receivedAt = Date.now();
+  const { sensor_mac, temp, hum, battery, rssi, ts, age_s, fw, cfg_ver } = data;
   if (!sensor_mac) return;
 
   // Hub must be registered
@@ -132,10 +134,14 @@ async function handleSensorData(hubMac, data) {
   const tempVal = (temp === -999 || temp == null) ? null : temp;
   const humVal  = (hum  === -999 || hum  == null) ? null : hum;
 
-  // Trust the hub's NTP timestamp as-is. Falls back to server time only if ts
-  // is absent or unparseable.
+  // Trust the hub's NTP timestamp as-is. A hub whose clock is not set yet
+  // (right after a power cut, NTP can take minutes) sends instead how many
+  // seconds ago the reading was taken, and this server's clock dates it.
+  // Server receive time only when neither is present.
   const hubTime    = (ts && !isNaN(Date.parse(ts))) ? new Date(ts) : null;
-  const recordedAt = hubTime ?? new Date();
+  const ageTime    = (Number.isFinite(age_s) && age_s >= 0)
+                       ? new Date(receivedAt - age_s * 1000) : null;
+  const recordedAt = hubTime ?? ageTime ?? new Date(receivedAt);
 
   await query(
     'INSERT INTO readings (sensor_id, temp, hum, battery, rssi, recorded_at) VALUES ($1, $2, $3, $4, $5, $6)',

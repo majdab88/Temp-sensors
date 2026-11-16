@@ -37,8 +37,8 @@ export default function AccountScreen() {
       return;
     }
 
-    if (passwordChange && newPassword.length < 6) {
-      Alert.alert('Error', 'New password must be at least 6 characters.');
+    if (passwordChange && newPassword.length < 10) {
+      Alert.alert('Error', 'New password must be at least 10 characters.');
       return;
     }
 
@@ -145,7 +145,7 @@ export default function AccountScreen() {
             style={styles.input}
             value={newPassword}
             onChangeText={setNewPassword}
-            placeholder="New password (min 6 chars)"
+            placeholder="New password (min 10 chars)"
             placeholderTextColor="#64748b"
             secureTextEntry
           />

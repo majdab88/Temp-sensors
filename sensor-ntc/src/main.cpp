@@ -115,7 +115,7 @@
 #define FW_MINOR 1
 #endif
 #ifndef FW_PATCH
-#define FW_PATCH 14
+#define FW_PATCH 15
 #endif
 #define STR_(x) #x
 #define STR(x)  STR_(x)
@@ -517,13 +517,6 @@ typedef struct __attribute__((packed)) {
 
 
 
-// --- ESP-NOW ENCRYPTION ---
-// IMPORTANT: These keys must be identical on all devices (hub + all sensors)
-// Change both bytes below to your own secret values before deploying
-static const uint8_t PMK_KEY[16] = {
-  0x4A, 0x2F, 0x8C, 0x1E, 0x7B, 0x3D, 0x9A, 0x5F,
-  0x6E, 0x2C, 0x4B, 0x8D, 0x1A, 0x7F, 0x3E, 0x9C
-};
 // --- MESSAGE AUTHENTICATION ---
 // ESP-NOW link encryption is not used: it consumes one of the radio's six or
 // seven hardware key slots per peer, which caps a hub at seven sensors. Rooms
@@ -535,20 +528,16 @@ static const uint8_t PMK_KEY[16] = {
 // is not a replay. It deliberately does not hide the reading -- a cooler
 // temperature is not a secret, and confidentiality was the cheap half.
 //
-// Shared across the fleet, exactly like LMK_KEY was, with the same consequence:
-// anyone who can read one node's flash can forge for all of them. Change it
-// before deployment, on the hub and every sensor together.
-static const uint8_t AUTH_KEY[32] = {
-  0x5B, 0x2E, 0xC4, 0x91, 0x7A, 0x03, 0xD8, 0x66,
-  0x1F, 0xB5, 0x40, 0xE7, 0x2C, 0x98, 0x71, 0x0A,
-  0xD3, 0x64, 0x8F, 0x25, 0xB1, 0x7C, 0x06, 0xEA,
-  0x49, 0x93, 0x2B, 0xF5, 0x18, 0xA7, 0x60, 0xCD,
-};
-
-static const uint8_t LMK_KEY[16] = {
-  0xE3, 0x4A, 0x7C, 0x91, 0xB5, 0x2D, 0xF8, 0x6E,
-  0x1A, 0x9F, 0x3C, 0x72, 0xD4, 0x5B, 0x8E, 0x20
-};
+// Shared across the fleet: anyone who can read one node's flash can forge for
+// all of them.
+//
+// The key lives in secrets/espnow_auth_key.h, which is not in git (template:
+// secrets/espnow_auth_key.example.h). Before 1.1.15 it was committed to a
+// public repository. Only the new key is accepted here: a hub from 1.1.27 on
+// answers each sensor in the key that sensor signs with, so the hub must be
+// updated before its sensors are.
+#include "espnow_auth_key.h"
+static const uint8_t AUTH_KEY[32] = ESPNOW_AUTH_KEY_BYTES;
 
 // --- BATTERY LOOKUP TABLE ---
 // {voltage, percentage} for 2× Energizer Ultimate Lithium (L91, Li-FeS₂, AA)
@@ -2002,11 +1991,9 @@ void setup() {
     goToSleep(10);
     return;
   }
-  esp_now_set_pmk(PMK_KEY);
-
   esp_now_register_send_cb(OnDataSent);
   esp_now_register_recv_cb(OnDataRecv);
-  Serial.println("✓ ESP-NOW ready (encrypted)");
+  Serial.println("✓ ESP-NOW ready (authenticated messages)");
 
   if (isPaired) {
     Serial.println("\n--- Data Mode ---");

@@ -8,7 +8,7 @@ function formatDate(isoStr) {
 }
 
 export default function Account() {
-  const { user } = useAuth()
+  const { user, login } = useAuth()
   const [profile, setProfile] = useState(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
@@ -60,16 +60,19 @@ export default function Account() {
       setPwMsg({ type: 'err', text: 'New passwords do not match' })
       return
     }
-    if (pwForm.newPassword.length < 6) {
-      setPwMsg({ type: 'err', text: 'New password must be at least 6 characters' })
+    if (pwForm.newPassword.length < 10) {
+      setPwMsg({ type: 'err', text: 'New password must be at least 10 characters' })
       return
     }
     setPwSaving(true)
     try {
-      await api.put('/account/password', {
+      const { data } = await api.put('/account/password', {
         currentPassword: pwForm.currentPassword,
         newPassword: pwForm.newPassword,
       })
+      // The change ends every session, this one included; continue on the
+      // tokens it returns instead of being sent back to the login page.
+      if (data?.accessToken && data?.refreshToken) login(data.accessToken, data.refreshToken)
       setPwForm({ currentPassword: '', newPassword: '', confirm: '' })
       setPwMsg({ type: 'ok', text: 'Password changed successfully' })
     } catch (err) {
@@ -213,7 +216,7 @@ export default function Account() {
               value={pwForm.newPassword}
               onChange={(e) => setPwForm({ ...pwForm, newPassword: e.target.value })}
               required
-              minLength={6}
+              minLength={10}
             />
           </div>
           <div className="form-group">
@@ -223,7 +226,7 @@ export default function Account() {
               value={pwForm.confirm}
               onChange={(e) => setPwForm({ ...pwForm, confirm: e.target.value })}
               required
-              minLength={6}
+              minLength={10}
             />
           </div>
           <button type="submit" className="btn btn-primary btn-sm" disabled={pwSaving}>

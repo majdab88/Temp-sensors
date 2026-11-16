@@ -3,8 +3,9 @@
 const express = require('express');
 const bcrypt  = require('bcryptjs');
 const { query } = require('../db');
-const { requireAuth, requireSuperadmin } = require('../middleware/auth');
+const { requireAuth, requireSuperadmin, revokeSessions } = require('../middleware/auth');
 const { audit } = require('../audit');
+const { passwordProblem } = require('../passwords');
 
 const router = express.Router();
 router.use(requireAuth);
@@ -43,9 +44,8 @@ router.post('/', async (req, res) => {
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(emailStr)) {
     return res.status(400).json({ error: 'A valid email address is required' });
   }
-  if (typeof password !== 'string' || password.length < 6) {
-    return res.status(400).json({ error: 'password must be at least 6 characters' });
-  }
+  const problem = passwordProblem(password);
+  if (problem) return res.status(400).json({ error: problem });
 
   const validRoles = ['owner', 'member'];
   const userRole = validRoles.includes(role) ? role : 'owner';
@@ -131,7 +131,11 @@ router.put('/:id', async (req, res) => {
     updates.push(`role = $${paramIdx++}`);
     params.push(role);
   }
-  if (password && typeof password === 'string' && password.length >= 6) {
+  // A password that is too short is refused rather than silently skipped, so
+  // an admin never believes they reset one when they did not.
+  if (password) {
+    const problem = passwordProblem(password);
+    if (problem) return res.status(400).json({ error: problem });
     const hash = await bcrypt.hash(password, 12);
     updates.push(`password_hash = $${paramIdx++}`);
     params.push(hash);
@@ -152,6 +156,9 @@ router.put('/:id', async (req, res) => {
     if (result.rows.length === 0) {
       return res.status(404).json({ error: 'User not found or cannot modify superadmin' });
     }
+    // An admin resets a password because the old one is no longer trusted, so
+    // whoever used it is logged out too.
+    if (password) await revokeSessions(id);
     await audit({ req, action: 'user.update', targetType: 'user', targetId: id, details: { fields: Object.keys(req.body) } });
     res.json(result.rows[0]);
   } catch (err) {

@@ -34,8 +34,10 @@ services:
     environment:
       MQTT_BACKEND_USER: ${MQTT_BACKEND_USER}
       MQTT_BACKEND_PASS: ${MQTT_BACKEND_PASS}
-      MQTT_HUB_USER: ${MQTT_HUB_USER}
-      MQTT_HUB_PASS: ${MQTT_HUB_PASS}
+      # The old shared hub account. Only while hubs move to their own accounts
+      # (entrypoint.sh); remove both from .env once every hub has.
+      MQTT_HUB_USER: ${MQTT_HUB_USER:-}
+      MQTT_HUB_PASS: ${MQTT_HUB_PASS:-}
     ports:
       - "8883:8883"   # MQTT/TLS — exposed to internet for ESP32 hub connections
       # Port 1883 (plaintext) is intentionally NOT mapped to the host.
@@ -43,7 +45,8 @@ services:
     volumes:
       - ./mosquitto/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
       - ./mosquitto/entrypoint.sh:/mosquitto/config/entrypoint.sh:ro
-      - ./mosquitto/acl:/mosquitto/config/acl:ro
+      - ./mosquitto/acl:/mosquitto/config/acl.base:ro   # entrypoint.sh adds the hubs
+      - mqtt_hubs:/mosquitto/hubs:ro           # per-hub accounts, written by the backend
       - ./certs:/etc/letsencrypt:ro            # Let's Encrypt certs (read-only)
       - mosquitto_data:/mosquitto/data
       - mosquitto_logs:/mosquitto/log
@@ -90,8 +93,6 @@ services:
       DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
       MQTT_URL: mqtt://mosquitto:1883            # internal broker (backend ↔ mosquitto)
       MQTT_HUB_URL: ${MQTT_HUB_URL}             # external TLS URL sent to ESP32 hubs via BLE
-      MQTT_HUB_USER: ${MQTT_HUB_USER}           # shared MQTT username for all hub devices
-      MQTT_HUB_PASS: ${MQTT_HUB_PASS}           # shared MQTT password for all hub devices
       MQTT_BACKEND_USER: ${MQTT_BACKEND_USER}
       MQTT_BACKEND_PASS: ${MQTT_BACKEND_PASS}
       JWT_SECRET: ${JWT_SECRET}
@@ -105,6 +106,7 @@ services:
       FW_PUBLIC_KEY_PEM: ${FW_PUBLIC_KEY_PEM:-} # optional: verify signatures at upload time
     volumes:
       - ./firmware:/data/firmware               # writable here; nginx mounts it read-only
+      - mqtt_hubs:/data/mqtt-hubs               # per-hub MQTT accounts, read by mosquitto
     networks:
       - internal
 
@@ -154,6 +156,7 @@ services:
 volumes:
   mosquitto_data:
   mosquitto_logs:
+  mqtt_hubs:
   postgres_data:
 
 # ----------------------------------------------------------

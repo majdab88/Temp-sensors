@@ -110,9 +110,9 @@ export default function Users() {
                 type="password"
                 value={formData.password}
                 onChange={(e) => setFormData({ ...formData, password: e.target.value })}
-                placeholder="Min 6 characters"
+                placeholder="Min 10 characters"
                 required
-                minLength={6}
+                minLength={10}
               />
             </div>
             <div className="form-group" style={{ marginTop: 10 }}>

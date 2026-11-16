@@ -530,17 +530,27 @@ compiled values are only defaults. Bounds on A/B/C are magnitude-only and are
 backed by a physical check (`shCoefficientsSane`) rather than narrow numeric
 ranges — an earlier invented range rejected a legitimate negative `B`.
 
-### Encryption
+### Message authentication (ESP-NOW)
 | Item | Detail |
 |------|--------|
-| `PMK_KEY[16]` | Primary Master Key — identical on hub and every sensor |
-| `LMK_KEY[16]` | Local Master Key — encrypts unicast data frames |
-| Set via | `esp_now_set_pmk()` after `esp_now_init()` |
-| Data peers | `encrypt = true` with `lmk` set |
-| Pairing | Unencrypted broadcast by design. The sensor accepts a reply only while unpaired. |
+| Link encryption | **Not used.** Each encrypted peer takes a hardware key slot, which capped a hub at seven sensors. Peers are `encrypt = false`. |
+| Tag | First 8 bytes of HMAC-SHA256(`AUTH_KEY`, sender MAC ‖ counter ‖ body), on readings, backlogs, config, live and backlog acks |
+| Counters | Strictly increasing per sender, reserved from NVS in blocks; a counter that has not risen is a replay |
+| `AUTH_KEY` | From **`secrets/espnow_auth_key.h`, not in git.** Template and generator command: `secrets/espnow_auth_key.example.h`. Every `platformio.ini` adds `-I../secrets`. |
+| Pairing | Unsigned broadcast by design. The sensor accepts a reply only while unpaired. |
 
-> The committed `PMK_KEY`/`LMK_KEY` are placeholders. Replace them before
-> production, on the hub and every sensor together — a mismatch looks exactly
+> **The key used to be committed, to a public repository.** It was rotated in
+> hub 1.1.27 / sensor 1.1.15. The old value is `AUTH_KEY_OLD` on the hub, and
+> the hub answers each sensor in whichever key it signs with
+> (`SensorData.authOldKey`), so sensors not yet updated keep reporting — which
+> is also how they get offered the update. **Once every active sensor reports
+> 1.1.15 or later, delete `AUTH_KEY_OLD` and set `AUTH_REQUIRED` to 1** in the
+> next hub release. Hub before sensors, always: a 1.1.15 sensor accepts only
+> the new key.
+>
+> A worktree does not have `secrets/espnow_auth_key.h` (it is ignored, so not
+> checked out). Copy it from the main checkout before building. Back it up with
+> the signing key: losing it means another rotation. A mismatch looks exactly
 > like a sensor that has stopped reporting.
 
 ### Firmware signing
@@ -674,7 +684,8 @@ dashboard reporting "Failed to load sensors" rather than one absent field.
   state`). Pushing to a branch whose PR has merged orphans the commit — it looks
   delivered and is not. This happened repeatedly before it was written down.
 - Small, focused commits; imperative subject lines.
-- Never commit secrets: WiFi credentials, MQTT passwords, the signing key.
+- Never commit secrets: WiFi credentials, MQTT passwords, the signing key,
+  `secrets/espnow_auth_key.h`.
 - No force-pushes to `main`.
 
 ---
@@ -731,6 +742,22 @@ dashboard reporting "Failed to load sensors" rather than one absent field.
 ### Cloud
 - `node-postgres` returns `bigint` as a **string**. Adding a number to one
   concatenates. This produced a countdown of 29767197071 minutes.
+- **Each hub has its own broker account**: username = its MAC without colons
+  (a colon would split mosquitto's `user:hash` password line), password =
+  `devices.api_key`, ACL `sensors/<its MAC>/#`. The backend writes the accounts
+  to the `mqtt_hubs` volume (`mqtt-accounts.js`) on start, registration and
+  deletion; `mosquitto/entrypoint.sh` rebuilds the password file and ACL from
+  it and sends SIGHUP. Registration returns `mqtt_user` + `api_key` for the
+  client to write to the hub over BLE; `/api/provision/config` returns the
+  broker address only. A hub on any other account (the old shared one) is
+  offered its own on `sensors/<MAC>/creds` when it syncs, and keeps it only if
+  the broker accepts it. The shared account exists only while
+  `MQTT_HUB_USER/PASS` are set in `.env`.
+- **Sessions are revocable.** Tokens carry `tv` = `users.token_version`, and
+  `requireAuth`, the Socket.IO handshake and refresh all check it against the
+  database (cached 60 s). `revokeSessions(userId)` ends every session; a
+  password change returns fresh tokens for the caller. Refresh re-reads role
+  and membership instead of copying the old token's claims.
 - Retained MQTT commands are the copy that survives a hub restart. Clear one
   only when retrying is pointless — an installed image, or one the node rejected
   and would reject identically. A transfer that merely failed should stay.

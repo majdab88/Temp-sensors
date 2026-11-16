@@ -67,7 +67,7 @@ void confirmFirmwareValid();
 #define FW_MINOR 1
 #endif
 #ifndef FW_PATCH
-#define FW_PATCH 26
+#define FW_PATCH 27
 #endif
 #define STR_(x) #x
 #define STR(x)  STR_(x)
@@ -445,13 +445,6 @@ typedef struct __attribute__((packed)) {
 #define LOG_BUF_SIZE     1024  // bytes of log retained per sensor (latest only)
 #define LOG_CHUNK_DATA    240  // payload per ESP-NOW packet (must match sensor)
 
-// --- ESP-NOW ENCRYPTION ---
-// IMPORTANT: Change both keys to your own secret values before deploying.
-// Keys must be identical on the hub and all sensors.
-static const uint8_t PMK_KEY[16] = {
-  0x4A, 0x2F, 0x8C, 0x1E, 0x7B, 0x3D, 0x9A, 0x5F,
-  0x6E, 0x2C, 0x4B, 0x8D, 0x1A, 0x7F, 0x3E, 0x9C
-};
 // --- MESSAGE AUTHENTICATION ---
 // ESP-NOW link encryption is not used: each encrypted peer consumes one of the
 // radio's handful of hardware key slots, which capped a hub at seven sensors.
@@ -464,10 +457,23 @@ static const uint8_t PMK_KEY[16] = {
 // temperature is not a secret, and that was the cheap half of what encryption
 // was providing.
 //
-// Shared across the fleet, exactly as LMK_KEY was, with the same consequence:
-// anyone who can read one node's flash can forge for all of them. Change it
-// before deployment, on the hub and every sensor together.
-static const uint8_t AUTH_KEY[32] = {
+// Shared across the fleet: anyone who can read one node's flash can forge for
+// all of them.
+//
+// The key lives in secrets/espnow_auth_key.h, which is not in git (template:
+// secrets/espnow_auth_key.example.h). It used to be committed to a public
+// repository, which made every tag forgeable by anyone who looked.
+#include "espnow_auth_key.h"
+static const uint8_t AUTH_KEY[32] = ESPNOW_AUTH_KEY_BYTES;
+
+// The committed key every node used before 1.1.15 (sensor) / 1.1.27 (hub).
+// Public, so it proves nothing -- accepted only so that sensors not yet updated
+// keep delivering readings, which is also how they are offered the update.
+// Each sensor is answered in the key it uses (SensorData.authOldKey).
+//
+// Delete this, and set AUTH_REQUIRED to 1, in the hub release that follows
+// every active sensor reporting 1.1.15 or later.
+static const uint8_t AUTH_KEY_OLD[32] = {
   0x5B, 0x2E, 0xC4, 0x91, 0x7A, 0x03, 0xD8, 0x66,
   0x1F, 0xB5, 0x40, 0xE7, 0x2C, 0x98, 0x71, 0x0A,
   0xD3, 0x64, 0x8F, 0x25, 0xB1, 0x7C, 0x06, 0xEA,
@@ -482,11 +488,6 @@ static const uint8_t AUTH_KEY[32] = {
 // out of the rollout. Flip to 1 -- and OTA the hub -- once every node reports
 // an authenticated frame.
 #define AUTH_REQUIRED 0
-
-static const uint8_t LMK_KEY[16] = {
-  0xE3, 0x4A, 0x7C, 0x91, 0xB5, 0x2D, 0xF8, 0x6E,
-  0x1A, 0x9F, 0x3C, 0x72, 0xD4, 0x5B, 0x8E, 0x20
-};
 
 // --- BLE GATT UUIDs (must match ble-provision.html) ---
 #define PROV_SERVICE_UUID  "4fafc201-1fb5-459e-8fcc-c5c9c331914b"
@@ -618,6 +619,12 @@ struct SensorData {
   // has been seen yet, so the next frame sets the baseline rather than being
   // judged against one -- which is also what happens after a hub restart.
   uint32_t      authCtrSeen;
+
+  // The sensor's last tagged frame verified with AUTH_KEY_OLD: it runs firmware
+  // from before the key moved out of git, so frames to it are tagged with the
+  // old key too, or it would reject them. Learned from each frame it sends,
+  // which always comes before anything sent back to it.
+  bool          authOldKey;
 
   // Counter of the last backlog frame queued from this sensor. A frame arriving
   // again with it means our acknowledgement was lost: acknowledge again, but do
@@ -754,6 +761,16 @@ int  mqttPort      = 8883;
 char mqttUser[65]  = "";
 char mqttPass[65]  = "";
 
+// This hub's own broker account, offered by the cloud on sensors/<MAC>/creds
+// while the hub is logged in with anything else (the old shared account).
+// Held in RAM only, and saved to NVS only after a connect with it succeeds: if
+// the broker refuses it, or the hub restarts first, the hub carries on with
+// the credentials it had, and the cloud offers again at the next sync. An
+// offer can therefore never lock the hub out of the cloud.
+static char pendingUser[65] = "";
+static char pendingPass[65] = "";
+static bool credsSwitchWanted = false;   // set in mqttCallback, acted on in loop()
+
 // Hub MAC "AA:BB:CC:DD:EE:FF" — embedded in every MQTT topic path
 char hubMacStr[18] = "";
 
@@ -779,6 +796,7 @@ char topicSensorOta[80];    // Cloud → Hub: stage an image on a sensor, one to
 char topicSensorOtaStatus[80]; // Hub → Cloud: sensor OTA progress
 char topicLiveReq[80];      // Cloud → Hub: ask a sensor to stay awake
 char topicLiveState[80];    // Hub → Cloud: a live request reached the node
+char topicCreds[72];        // Cloud → Hub: this hub's own broker account
 
 bool cloudConfigured = false;  // true when MQTT credentials exist in NVS
 int  lastMqttState   = 0;     // PubSubClient state after last connectCloud() attempt
@@ -1329,13 +1347,13 @@ int findSensor(const uint8_t* mac) {
 // Tag = first AUTH_TAG_LEN bytes of HMAC-SHA256(key, mac || ctr || body).
 // The MAC is covered so a frame cannot be replayed as if it came from another
 // node -- without it, a captured reading could be re-sent under any address.
-void authTag(const uint8_t* mac, uint32_t ctr,
+void authTag(const uint8_t* key, const uint8_t* mac, uint32_t ctr,
              const uint8_t* body, size_t bodyLen, uint8_t out[AUTH_TAG_LEN]) {
   uint8_t full[32];
   mbedtls_md_context_t ctx;
   mbedtls_md_init(&ctx);
   mbedtls_md_setup(&ctx, mbedtls_md_info_from_type(MBEDTLS_MD_SHA256), 1);
-  mbedtls_md_hmac_starts(&ctx, AUTH_KEY, sizeof(AUTH_KEY));
+  mbedtls_md_hmac_starts(&ctx, key, 32);
   mbedtls_md_hmac_update(&ctx, mac, 6);
   mbedtls_md_hmac_update(&ctx, (const uint8_t*)&ctr, sizeof(ctr));
   mbedtls_md_hmac_update(&ctx, body, bodyLen);
@@ -1352,6 +1370,20 @@ bool authTagEqual(const uint8_t* a, const uint8_t* b) {
   return diff == 0;
 }
 
+// Check a sensor's tag against the current key, then the old one. Returns the
+// key that matched -- frames back to that sensor are tagged with it -- or
+// nullptr if neither does.
+const uint8_t* authVerifyFromSensor(const uint8_t* mac, uint32_t ctr,
+                                    const uint8_t* body, size_t bodyLen,
+                                    const uint8_t* tag) {
+  uint8_t expect[AUTH_TAG_LEN];
+  authTag(AUTH_KEY, mac, ctr, body, bodyLen, expect);
+  if (authTagEqual(expect, tag)) return AUTH_KEY;
+  authTag(AUTH_KEY_OLD, mac, ctr, body, bodyLen, expect);
+  if (authTagEqual(expect, tag)) return AUTH_KEY_OLD;
+  return nullptr;
+}
+
 // Counter for everything this hub sends. Kept in NVS in blocks, like the
 // sensors do, so a hub reboot never reissues a counter a sensor has already
 // accepted and dismissed as a replay.
@@ -1363,9 +1395,11 @@ static uint32_t authTxLimit = 0;
 // to tag with its own.
 static uint8_t authSelfMac[6] = {0};
 
-void authTagSelf(uint32_t ctr, const uint8_t* body, size_t bodyLen,
+// Tag a frame for sensor idx, in the key that sensor uses.
+void authTagSelf(int idx, uint32_t ctr, const uint8_t* body, size_t bodyLen,
                  uint8_t out[AUTH_TAG_LEN]) {
-  authTag(authSelfMac, ctr, body, bodyLen, out);
+  const uint8_t* key = (idx >= 0 && sensors[idx].authOldKey) ? AUTH_KEY_OLD : AUTH_KEY;
+  authTag(key, authSelfMac, ctr, body, bodyLen, out);
 }
 
 uint32_t authNextTxCtr() {
@@ -1400,6 +1434,11 @@ int addSensor(const uint8_t* mac) {
   sensors[sensorCount].logExpectedTotal = 0;
   sensors[sensorCount].logChunksRcvd    = 0;
   sensors[sensorCount].logUpdated       = 0;
+  // A slot can be reused after a removal. A counter left over from its last
+  // occupant would reject the new sensor's frames as replays.
+  sensors[sensorCount].authCtrSeen      = 0;
+  sensors[sensorCount].backlogCtr       = 0;
+  sensors[sensorCount].authOldKey       = false;
   sprintf(sensors[sensorCount].name, "Sensor-%02X%02X", mac[4], mac[5]);
   sensorCount++;
   Serial.printf("Sensor added. Total: %d\n", sensorCount);
@@ -1559,12 +1598,29 @@ void buildTopics() {
   snprintf(topicSensorOtaStatus, sizeof(topicSensorOtaStatus), "sensors/%s/sensor-ota/status",  hubMacStr);
   snprintf(topicLiveReq,         sizeof(topicLiveReq),         "sensors/%s/live/request",       hubMacStr);
   snprintf(topicLiveState,       sizeof(topicLiveState),       "sensors/%s/live/state",         hubMacStr);
+  snprintf(topicCreds,           sizeof(topicCreds),           "sensors/%s/creds",              hubMacStr);
   Serial.printf("[MQTT] Hub MAC: %s\n", hubMacStr);
 }
 
 // Called by PubSubClient when a subscribed message arrives.
 void mqttCallback(char* topic, byte* payload, unsigned int length) {
   String json = String((char*)payload, length);
+
+  // ── This hub's own broker account ─────────────────────────────────────────
+  // Only noted here: reconnecting from inside PubSubClient's callback would
+  // tear down the connection it is still reading from. loop() does it.
+  if (strcmp(topic, topicCreds) == 0) {
+    String u = jsonGetStr(json, "user");
+    String p = jsonGetStr(json, "pass");
+    if (u.isEmpty() || p.isEmpty() ||
+        u.length() >= sizeof(pendingUser) || p.length() >= sizeof(pendingPass)) return;
+    if (u == mqttUser && p == mqttPass) return;
+    u.toCharArray(pendingUser, sizeof(pendingUser));
+    p.toCharArray(pendingPass, sizeof(pendingPass));
+    credsSwitchWanted = true;
+    Serial.printf("[MQTT] Cloud offered this hub its own account \"%s\"\n", pendingUser);
+    return;
+  }
 
   // ── Live mode request from cloud ──────────────────────────────────────────
   if (strcmp(topic, topicLiveReq) == 0) {
@@ -1952,8 +2008,10 @@ void publishSyncRequest() {
   char* buf = (char*)malloc(BUF);
   if (!buf) { Serial.println("[Sync] publishSyncRequest: malloc failed"); return; }
 
+  // "user" tells the cloud which account this connection used; one that is not
+  // the hub's own is answered with it on topicCreds.
   int pos = 0;
-  pos += snprintf(buf + pos, BUF - pos, "{\"sensors\":[");
+  pos += snprintf(buf + pos, BUF - pos, "{\"user\":\"%s\",\"sensors\":[", mqttUser);
   for (int i = 0; i < sensorCount && pos < BUF - 60; i++) {
     char macStr[18];
     snprintf(macStr, sizeof(macStr), "%02X:%02X:%02X:%02X:%02X:%02X",
@@ -2326,13 +2384,36 @@ bool connectCloud() {
   // LWT: broker publishes this if MQTT connection drops unexpectedly
   const char* lwt = "{\"online\":false}";
 
-  Serial.printf("[MQTT] Connecting to %s:%d as \"%s\"...\n", mqttHost, mqttPort, mqttUser);
-  if (!mqttClient.connect(clientId, mqttUser, mqttPass, topicStatus, 0, true, lwt)) {
+  // An offered account is tried once, on the next connect. Kept only if the
+  // broker accepts it; otherwise this attempt fails and the next one goes back
+  // to the credentials the hub already had.
+  bool trying = pendingUser[0] != 0;
+  const char* user = trying ? pendingUser : mqttUser;
+  const char* pass = trying ? pendingPass : mqttPass;
+
+  Serial.printf("[MQTT] Connecting to %s:%d as \"%s\"...\n", mqttHost, mqttPort, user);
+  if (!mqttClient.connect(clientId, user, pass, topicStatus, 0, true, lwt)) {
     lastMqttState = mqttClient.state();
     Serial.printf("[MQTT] Connection failed (state %d)\n", lastMqttState);
+    if (trying) {
+      Serial.println("[MQTT] Offered account not accepted - keeping the current one");
+      pendingUser[0] = pendingPass[0] = 0;
+    }
     return false;
   }
   lastMqttState = 0;
+
+  if (trying) {
+    strlcpy(mqttUser, pendingUser, sizeof(mqttUser));
+    strlcpy(mqttPass, pendingPass, sizeof(mqttPass));
+    pendingUser[0] = pendingPass[0] = 0;
+    Preferences cPrefs;
+    cPrefs.begin("cloud", false);
+    cPrefs.putString("mqtt_user", mqttUser);
+    cPrefs.putString("mqtt_pass", mqttPass);
+    cPrefs.end();
+    Serial.printf("[MQTT] Now using this hub's own account \"%s\" (saved)\n", mqttUser);
+  }
 
   Serial.println("[MQTT] Connected!");
   mqttClient.subscribe(topicPairResp);
@@ -2349,6 +2430,7 @@ bool connectCloud() {
     mqttClient.subscribe(sub);
   }
   mqttClient.subscribe(topicLiveReq);
+  mqttClient.subscribe(topicCreds);
 
   // Publish retained online status so the dashboard sees us immediately.
   // fw is what the cloud compares against the firmware registry to decide
@@ -2501,6 +2583,13 @@ void maintainCloud() {
   if (WiFi.status() != WL_CONNECTED) {  // no WiFi → no TCP; don't block the radio
     cloudUp = false;
     return;
+  }
+  if (mqttClient.connected() && credsSwitchWanted) {
+    // Reconnect now with the account the cloud offered (see connectCloud).
+    credsSwitchWanted = false;
+    Serial.println("[MQTT] Reconnecting with the offered account");
+    mqttClient.disconnect();
+    lastMqttReconnect = millis() - MQTT_RECONNECT_MS;   // no wait for the next attempt
   }
   if (mqttClient.connected()) {
     mqttClient.loop();
@@ -2983,7 +3072,7 @@ void pushConfigIfPending(int idx, const uint8_t* mac) {
   cfg.sh_c        = sensors[idx].cfgShC;
   cfg.r_series    = sensors[idx].cfgRSeries;
   cfg.auth_ctr    = authNextTxCtr();
-  authTagSelf(cfg.auth_ctr, (const uint8_t*)&cfg, CFG_BODY_LEN, cfg.auth);
+  authTagSelf(idx, cfg.auth_ctr, (const uint8_t*)&cfg, CFG_BODY_LEN, cfg.auth);
 
   if (esp_now_send(mac, (uint8_t*)&cfg, sizeof(cfg)) == ESP_OK) {
     Serial.printf("[CFG] Pushed config v%u to sensor\n", cfg.cfg_ver);
@@ -3413,13 +3502,13 @@ int ringAppend(const BufferedReading &r) {
   return n;
 }
 
-static void sendBacklogAck(const uint8_t *mac, const backlog_message *m) {
+static void sendBacklogAck(int idx, const uint8_t *mac, const backlog_message *m) {
   backlog_ack_message a = {};
   a.msgType  = MSG_BACKLOG_ACK;
   a.count    = m->count;
   a.ref_ctr  = m->auth_ctr;
   a.auth_ctr = authNextTxCtr();
-  authTagSelf(a.auth_ctr, (const uint8_t *)&a, BACKLOG_ACK_BODY_LEN, a.auth);
+  authTagSelf(idx, a.auth_ctr, (const uint8_t *)&a, BACKLOG_ACK_BODY_LEN, a.auth);
   esp_now_send(mac, (const uint8_t *)&a, sizeof(a));
 }
 
@@ -3432,16 +3521,17 @@ void handleBacklog(const esp_now_recv_info_t *info, const backlog_message *m) {
   int idx = findSensor(src);
   if (idx < 0) return;   // not ours: no acknowledgement, so the sensor keeps them
 
-  uint8_t expect[AUTH_TAG_LEN];
-  authTag(src, m->auth_ctr, (const uint8_t *)m, BACKLOG_BODY_LEN, expect);
-  if (!authTagEqual(expect, m->auth)) {
+  const uint8_t *key = authVerifyFromSensor(src, m->auth_ctr, (const uint8_t *)m,
+                                            BACKLOG_BODY_LEN, m->auth);
+  if (!key) {
     Serial.println("[STORE] Dropped a backlog frame - bad tag");
     return;
   }
+  sensors[idx].authOldKey = (key == AUTH_KEY_OLD);
   // Checked before the replay rule: the sensor resends a frame, same counter,
   // when our acknowledgement did not reach it. It is already queued.
   if (m->auth_ctr == sensors[idx].backlogCtr) {
-    sendBacklogAck(src, m);
+    sendBacklogAck(idx, src, m);
     return;
   }
   if (sensors[idx].authCtrSeen != 0 && m->auth_ctr <= sensors[idx].authCtrSeen) {
@@ -3477,7 +3567,7 @@ void handleBacklog(const esp_now_recv_info_t *info, const backlog_message *m) {
     queued++;
   }
   sensors[idx].backlogCtr = m->auth_ctr;
-  sendBacklogAck(src, m);
+  sendBacklogAck(idx, src, m);
 
   if (!cloudUp) offlineBufDirty = true;
   Serial.printf("[STORE] %d stored reading(s) from %02X:%02X:%02X:%02X:%02X:%02X, oldest %u min old\n",
@@ -3988,10 +4078,10 @@ void OnDataRecv(const esp_now_recv_info_t* esp_now_info,
     // readings an un-updated sensor must send to be offered its update.
     bool authed = (len >= (int)sizeof(struct_message));
     if (authed) {
-      uint8_t expect[AUTH_TAG_LEN];
-      authTag(esp_now_info->src_addr, incomingData.auth_ctr,
-              (const uint8_t*)&incomingData, AUTH_BODY_LEN, expect);
-      if (!authTagEqual(expect, incomingData.auth)) {
+      const uint8_t* key = authVerifyFromSensor(esp_now_info->src_addr, incomingData.auth_ctr,
+                                                (const uint8_t*)&incomingData, AUTH_BODY_LEN,
+                                                incomingData.auth);
+      if (!key) {
         Serial.printf("[AUTH] Dropped a frame from %02X:%02X:%02X:%02X:%02X:%02X - bad tag\n",
                       esp_now_info->src_addr[0], esp_now_info->src_addr[1],
                       esp_now_info->src_addr[2], esp_now_info->src_addr[3],
@@ -4010,6 +4100,7 @@ void OnDataRecv(const esp_now_recv_info_t* esp_now_info,
           return;
         }
         sensors[ai].authCtrSeen = incomingData.auth_ctr;
+        sensors[ai].authOldKey  = (key == AUTH_KEY_OLD);
       }
     } else if (AUTH_REQUIRED) {
       Serial.println("[AUTH] Dropped an unauthenticated frame");
@@ -4081,7 +4172,7 @@ void OnDataRecv(const esp_now_recv_info_t* esp_now_info,
       lm.duration_s = pl.duration_s;
       lm.interval_s = pl.interval_s;
       lm.auth_ctr   = authNextTxCtr();
-      authTagSelf(lm.auth_ctr, (const uint8_t*)&lm, LIVE_BODY_LEN, lm.auth);
+      authTagSelf(index, lm.auth_ctr, (const uint8_t*)&lm, LIVE_BODY_LEN, lm.auth);
       if (esp_now_send(esp_now_info->src_addr, (uint8_t*)&lm, sizeof(lm)) == ESP_OK) {
         pl.used = false;
         Serial.println(pl.duration_s == 0 ? "[LIVE] Stop sent" : "[LIVE] Sent");
@@ -4257,8 +4348,6 @@ void setup() {
   if (esp_now_init() != ESP_OK) {
     Serial.println("✗ ESP-NOW init failed! Sensor receiving disabled.");
   } else {
-    esp_now_set_pmk(PMK_KEY);
-
     // Cached once: every message this hub signs is tagged with its own address,
     // which is what a sensor checks the tag against.
     WiFi.macAddress(authSelfMac);

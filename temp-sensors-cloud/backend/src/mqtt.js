@@ -4,6 +4,7 @@ const mqtt = require('mqtt');
 const { query } = require('./db');
 const { evaluateReading, closeExcursion, resetSensor } = require('./alerts');
 const health = require('./health');
+const { hubMqttUser } = require('./mqtt-accounts');
 
 let client;
 let _io;
@@ -82,7 +83,7 @@ async function handleMessage(topic, payload) {
   } else if (parts[2] === 'pairing' && parts[3] === 'status') {
     handlePairingModeStatus(hubMac, data);
   } else if (parts[2] === 'sync' && parts[3] === 'request') {
-    await handleSyncRequest(hubMac);
+    await handleSyncRequest(hubMac, data);
   } else if (parts[2] === 'sensor' && parts[3] === 'deleted') {
     await handleSensorDeleted(hubMac, data);
   } else if (parts[2] === 'ota' && parts[3] === 'status') {
@@ -364,12 +365,24 @@ async function handleSensorDeleted(hubMac, data) {
  * Hub publishes its local list on every MQTT connect; we reply with the DB truth
  * so the hub can add/remove/rename sensors to match.
  */
-async function handleSyncRequest(hubMac) {
+async function handleSyncRequest(hubMac, data = {}) {
   if (!client || !client.connected) return;
   const mac = hubMac.toUpperCase();
-  const devRes = await query('SELECT id FROM devices WHERE mac = $1', [mac]);
+  const devRes = await query('SELECT id, api_key FROM devices WHERE mac = $1', [mac]);
   if (devRes.rows.length === 0) return;
   const deviceId = devRes.rows[0].id;
+
+  // A hub still logged in with anything but its own account -- the old shared
+  // one -- is handed its own. Hubs report the username they connected with in
+  // the sync request (1.1.27 on); older firmware sends none and is left alone.
+  // The hub tries the new account and keeps the old one if it is refused, so a
+  // bad offer cannot lock it out.
+  if (typeof data.user === 'string' && data.user !== hubMqttUser(mac)) {
+    client.publish(`sensors/${mac}/creds`,
+      JSON.stringify({ user: hubMqttUser(mac), pass: devRes.rows[0].api_key }),
+      { qos: 1, retain: false });
+    console.log(`MQTT: offered hub ${mac} its own account (was "${data.user}")`);
+  }
 
   // A hub asks to sync on every MQTT connect, which is also the moment it may
   // have forgotten things: a reflash or an NVS erase leaves it holding no

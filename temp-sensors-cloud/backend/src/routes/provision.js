@@ -10,6 +10,10 @@ router.use(requireAuth);
 // Returns the MQTT broker address the ESP32 hub should connect to.
 // Uses MQTT_HUB_URL (the external TLS URL, e.g. mqtts://yourdomain.com:8883)
 // which is distinct from MQTT_URL (the internal Docker-network URL used by the backend).
+//
+// Address only. This used to return the one MQTT password every hub shared, to
+// any logged-in user. Each hub now has its own account, returned by
+// POST /api/devices/register to an editor of the hub's org.
 router.get('/config', (_req, res) => {
   const raw = process.env.MQTT_HUB_URL || '';
   let mqttHost = '';
@@ -25,14 +29,7 @@ router.get('/config', (_req, res) => {
     // MQTT_HUB_URL not set or malformed — UI will show a warning
   }
 
-  res.json({
-    mqttHost,
-    mqttPort,
-    // Shared MQTT credentials for hub devices.
-    // All hubs use the same user/pass; the hub MAC in the topic path identifies each device.
-    mqttUser: process.env.MQTT_HUB_USER || '',
-    mqttPass: process.env.MQTT_HUB_PASS || '',
-  });
+  res.json({ mqttHost, mqttPort });
 });
 
 module.exports = router;

@@ -32,10 +32,14 @@ void handleLogChunk(const uint8_t* mac, const log_message* msg);
 int  findSensor(const uint8_t* mac);
 void publishOtaStatus(const char* state, int pct, const char* err);
 void offerSensorOta(const uint8_t* mac);
-bool buildSensorOtaOffer(int slot, const char* version, const char* url,
-                         const char* sha, const char* sigB64);
+bool fillSensorOtaOffer(int slot, const char* version, const char* url,
+                        const char* sha, const char* sigB64);
+bool sizeSensorOtaImage(int slot);
+void prepareStagedImages();
 void streamImageToSensor(const uint8_t* mac, uint32_t imageSize, uint16_t chunkSize);
 void publishSensorOtaStatus(const char* state, int pct, const char* err);
+void publishSensorOtaStatusFor(const uint8_t* mac, const char* version,
+                               const char* state, int pct, const char* err);
 void publishLiveState(const uint8_t* mac, uint16_t durationS, uint16_t intervalS);
 static bool hexToDigest(const char* hex, uint8_t* out);
 void saveSensorConfig(int idx);
@@ -61,7 +65,7 @@ void confirmFirmwareValid();
 #define FW_MINOR 1
 #endif
 #ifndef FW_PATCH
-#define FW_PATCH 20
+#define FW_PATCH 21
 #endif
 #define STR_(x) #x
 #define STR(x)  STR_(x)
@@ -330,10 +334,18 @@ typedef struct __attribute__((packed)) {
 // Sizing the image needs an HTTP round trip, and the node listens for only a
 // few hundred milliseconds after transmitting -- long enough to receive a frame
 // that is already prepared, nowhere near long enough to fetch one first.
+//
+// Staging is recorded in two steps. The MQTT handler only fills the slot, and
+// prepareStagedImages() sizes the image later, from loop(), once no transfer
+// is running. A stage command can arrive during another sensor's transfer,
+// because every progress report pumps MQTT. Dropping it there lost the second
+// sensor for good: a retained message is delivered once per subscription, so
+// it never came back, and the dashboard showed it staged indefinitely.
 #define SOTA_MAX_STAGED 16   // kept equal to MAX_SENSORS, asserted below
 
 struct StagedImage {
   bool              used;
+  volatile bool     ready;   // offer sized and safe to send; set last
   uint8_t           mac[6];
   char              version[16];
   char              url[192];
@@ -1497,8 +1509,11 @@ void mqttCallback(char* topic, byte* payload, unsigned int length) {
           sscanf(hex, "%2hhX%2hhX%2hhX%2hhX%2hhX%2hhX",
                  &cmac[0], &cmac[1], &cmac[2], &cmac[3], &cmac[4], &cmac[5]) == 6) {
         int slot = sOtaSlotFor(cmac);
-        if (slot >= 0 && slot != sOtaActive) {
-          sOtaStaged[slot].used = false;
+        // sOtaActive keeps pointing at the last slot offered after its transfer
+        // ends, so only a transfer actually running protects a slot from this.
+        if (slot >= 0 && !(sOtaRunning && slot == sOtaActive)) {
+          sOtaStaged[slot].ready = false;
+          sOtaStaged[slot].used  = false;
           Serial.printf("[SOTA] Staged image cancelled for %02X:%02X:%02X:%02X:%02X:%02X\n",
                         cmac[0], cmac[1], cmac[2], cmac[3], cmac[4], cmac[5]);
           return;
@@ -1520,28 +1535,32 @@ void mqttCallback(char* topic, byte* payload, unsigned int length) {
       Serial.println("[SOTA] Incomplete sensor OTA command");
       return;
     }
-    if (sOtaRunning) {
-      Serial.println("[SOTA] Transfer already in progress");
-      return;
-    }
-    memcpy(sOtaMac, mac, 6);
-    ver.toCharArray(sOtaVersion, sizeof(sOtaVersion));
-
+    // This handler may be running inside another sensor's transfer, so it must
+    // not touch sOtaMac/sOtaVersion (they label that transfer's reports) and
+    // must not fetch anything (that would stall the transfer mid-stream).
     int slot = sOtaSlotClaim(mac);
     if (slot < 0) {
       Serial.println("[SOTA] No free staging slot");
-      publishSensorOtaStatus("failed", 0, "no free staging slot");
+      publishSensorOtaStatusFor(mac, ver.c_str(), "failed", 0, "no free staging slot");
       return;
     }
-    if (!buildSensorOtaOffer(slot, ver.c_str(), url.c_str(), sha.c_str(), sig.c_str())) {
-      publishSensorOtaStatus("failed", 0, "image unreachable");
+    if (sOtaRunning && slot == sOtaActive) {
+      // Its own image is being sent right now; swapping the URL under the
+      // transfer would corrupt it. That transfer's result settles the state.
+      Serial.printf("[SOTA] %s is mid-transfer - restage ignored\n", macStr.c_str());
       return;
     }
-    memcpy(sOtaStaged[slot].mac, mac, 6);
-    sOtaStaged[slot].used = true;
-    Serial.printf("[SOTA] Staged %s for %s - waiting for a button press on the node\n",
-                  sOtaVersion, macStr.c_str());
-    publishSensorOtaStatus("staged", 0, nullptr);
+    StagedImage &st = sOtaStaged[slot];
+    st.ready = false;   // first, so the receive callback stops offering this slot
+    if (!fillSensorOtaOffer(slot, ver.c_str(), url.c_str(), sha.c_str(), sig.c_str())) {
+      st.used = false;
+      publishSensorOtaStatusFor(mac, ver.c_str(), "failed", 0, "bad hash or signature");
+      return;
+    }
+    memcpy(st.mac, mac, 6);
+    st.used = true;
+    Serial.printf("[SOTA] Received %s for %s%s\n", ver.c_str(), macStr.c_str(),
+                  sOtaRunning ? " - queued behind the current transfer" : "");
     return;
   }
 
@@ -2736,28 +2755,35 @@ void publishLiveState(const uint8_t *mac, uint16_t durationS, uint16_t intervalS
   mqttClient.loop();
 }
 
+// Reports on the transfer in progress (sOtaMac/sOtaVersion).
 void publishSensorOtaStatus(const char *state, int pct, const char *err) {
+  publishSensorOtaStatusFor(sOtaMac, sOtaVersion, state, pct, err);
+}
+
+void publishSensorOtaStatusFor(const uint8_t *m, const char *version,
+                               const char *state, int pct, const char *err) {
   if (!cloudConfigured || !mqttClient.connected()) return;
   char mac[18];
   snprintf(mac, sizeof(mac), "%02X:%02X:%02X:%02X:%02X:%02X",
-           sOtaMac[0], sOtaMac[1], sOtaMac[2], sOtaMac[3], sOtaMac[4], sOtaMac[5]);
+           m[0], m[1], m[2], m[3], m[4], m[5]);
   char payload[256];
   if (err && *err) {
     snprintf(payload, sizeof(payload),
       "{\"sensor_mac\":\"%s\",\"state\":\"%s\",\"version\":\"%s\",\"pct\":%d,\"error\":\"%s\"}",
-      mac, state, sOtaVersion, pct, err);
+      mac, state, version, pct, err);
   } else {
     snprintf(payload, sizeof(payload),
       "{\"sensor_mac\":\"%s\",\"state\":\"%s\",\"version\":\"%s\",\"pct\":%d}",
-      mac, state, sOtaVersion, pct);
+      mac, state, version, pct);
   }
   mqttClient.publish(topicSensorOtaStatus, payload);
   mqttClient.loop();
 }
 
-// Prepare the frame the sensor will be sent. Done once, at staging time.
-bool buildSensorOtaOffer(int slot, const char *version, const char *url,
-                         const char *sha, const char *sigB64) {
+// Fill the parts of the offer that need no network. Safe to call from the MQTT
+// handler even while another sensor's transfer is running.
+bool fillSensorOtaOffer(int slot, const char *version, const char *url,
+                        const char *sha, const char *sigB64) {
   ota_offer_message offer = {};
   offer.msgType = MSG_OTA_OFFER;
   offer.schema  = 1;
@@ -2777,22 +2803,6 @@ bool buildSensorOtaOffer(int slot, const char *version, const char *url,
   offer.sigLen = (uint8_t)sigLen;
   strncpy(offer.version, version, sizeof(offer.version));
 
-  // The image size is not known until the first range request, so ask the
-  // server for it before offering -- the sensor needs it to size the transfer.
-  WiFiClient net;
-  HTTPClient http;
-  http.setTimeout(OTA_HTTP_TIMEOUT_MS);
-  http.setConnectTimeout(OTA_HTTP_TIMEOUT_MS);
-  if (!http.begin(net, url)) return false;
-  int code = http.GET();
-  int total = http.getSize();
-  http.end();
-  if (code != HTTP_CODE_OK || total <= 0) {
-    Serial.printf("[SOTA] Cannot size image (http %d)\n", code);
-    return false;
-  }
-  offer.imageSize = (uint32_t)total;
-
   StagedImage &st = sOtaStaged[slot];
   st.offer = offer;
   strncpy(st.version, version, sizeof(st.version) - 1);
@@ -2800,6 +2810,48 @@ bool buildSensorOtaOffer(int slot, const char *version, const char *url,
   strncpy(st.url, url, sizeof(st.url) - 1);
   st.url[sizeof(st.url) - 1] = 0;
   return true;
+}
+
+// The image size is not known until the first range request, so ask the
+// server for it before offering -- the sensor needs it to size the transfer.
+// Blocks for an HTTP round trip, so only loop() calls this, between transfers.
+bool sizeSensorOtaImage(int slot) {
+  StagedImage &st = sOtaStaged[slot];
+  WiFiClient net;
+  HTTPClient http;
+  http.setTimeout(OTA_HTTP_TIMEOUT_MS);
+  http.setConnectTimeout(OTA_HTTP_TIMEOUT_MS);
+  if (!http.begin(net, st.url)) return false;
+  int code = http.GET();
+  int total = http.getSize();
+  http.end();
+  if (code != HTTP_CODE_OK || total <= 0) {
+    Serial.printf("[SOTA] Cannot size image (http %d)\n", code);
+    return false;
+  }
+  st.offer.imageSize = (uint32_t)total;
+  return true;
+}
+
+// Finish staging whatever the MQTT handler recorded: right after it arrived,
+// or after the transfer that was running at the time has ended.
+void prepareStagedImages() {
+  for (int i = 0; i < SOTA_MAX_STAGED; i++) {
+    StagedImage &st = sOtaStaged[i];
+    if (!st.used || st.ready) continue;
+    char macStr[18];
+    snprintf(macStr, sizeof(macStr), "%02X:%02X:%02X:%02X:%02X:%02X",
+             st.mac[0], st.mac[1], st.mac[2], st.mac[3], st.mac[4], st.mac[5]);
+    if (!sizeSensorOtaImage(i)) {
+      st.used = false;
+      publishSensorOtaStatusFor(st.mac, st.version, "failed", 0, "image unreachable");
+      continue;
+    }
+    st.ready = true;
+    Serial.printf("[SOTA] Staged %s for %s - waiting for a button press on the node\n",
+                  st.version, macStr);
+    publishSensorOtaStatusFor(st.mac, st.version, "staged", 0, nullptr);
+  }
 }
 
 // Wait for the node's answer to an offer already sent from the receive
@@ -3689,6 +3741,7 @@ void OnDataRecv(const esp_now_recv_info_t* esp_now_info,
     // which can block for longer than that on its own. Only the transfer, which
     // takes seconds, waits for loop().
     int stagedSlot = sOtaRunning ? -1 : sOtaSlotFor(esp_now_info->src_addr);
+    if (stagedSlot >= 0 && !sOtaStaged[stagedSlot].ready) stagedSlot = -1;   // not sized yet
     if (stagedSlot >= 0) {
       StagedImage &st = sOtaStaged[stagedSlot];
       sOtaActive = stagedSlot;
@@ -3984,6 +4037,10 @@ void loop() {
     otaOfferWanted = false;
     offerSensorOta(otaOfferMac);
   }
+
+  // Images staged while a transfer held the radio (or just now) are sized
+  // here, between transfers, where an HTTP round trip stalls nothing.
+  if (!sOtaRunning && !otaInProgress) prepareStagedImages();
 
   // Flash write kept out of the ESP-NOW callback: an NVS commit there would
   // stall the WiFi task while sensors are mid-transmission.

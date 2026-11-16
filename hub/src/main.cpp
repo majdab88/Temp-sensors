@@ -32,10 +32,14 @@ void handleLogChunk(const uint8_t* mac, const log_message* msg);
 int  findSensor(const uint8_t* mac);
 void publishOtaStatus(const char* state, int pct, const char* err);
 void offerSensorOta(const uint8_t* mac);
-bool buildSensorOtaOffer(int slot, const char* version, const char* url,
-                         const char* sha, const char* sigB64);
+bool fillSensorOtaOffer(int slot, const char* version, const char* url,
+                        const char* sha, const char* sigB64);
+bool sizeSensorOtaImage(int slot);
+void prepareStagedImages();
 void streamImageToSensor(const uint8_t* mac, uint32_t imageSize, uint16_t chunkSize);
 void publishSensorOtaStatus(const char* state, int pct, const char* err);
+void publishSensorOtaStatusFor(const uint8_t* mac, const char* version,
+                               const char* state, int pct, const char* err);
 void publishLiveState(const uint8_t* mac, uint16_t durationS, uint16_t intervalS);
 static bool hexToDigest(const char* hex, uint8_t* out);
 void saveSensorConfig(int idx);
@@ -46,6 +50,8 @@ float jsonGetFloat(const String& json, const String& key);
 void saveOfflineBuffer();
 void loadOfflineBuffer();
 void performOtaUpdate();
+void onWiFiUp();
+void maintainTime();
 void checkOtaPendingVerify();
 void confirmFirmwareValid();
 
@@ -61,7 +67,7 @@ void confirmFirmwareValid();
 #define FW_MINOR 1
 #endif
 #ifndef FW_PATCH
-#define FW_PATCH 20
+#define FW_PATCH 21
 #endif
 #define STR_(x) #x
 #define STR(x)  STR_(x)
@@ -330,10 +336,18 @@ typedef struct __attribute__((packed)) {
 // Sizing the image needs an HTTP round trip, and the node listens for only a
 // few hundred milliseconds after transmitting -- long enough to receive a frame
 // that is already prepared, nowhere near long enough to fetch one first.
+//
+// Staging is recorded in two steps. The MQTT handler only fills the slot, and
+// prepareStagedImages() sizes the image later, from loop(), once no transfer
+// is running. A stage command can arrive during another sensor's transfer,
+// because every progress report pumps MQTT. Dropping it there lost the second
+// sensor for good: a retained message is delivered once per subscription, so
+// it never came back, and the dashboard showed it staged indefinitely.
 #define SOTA_MAX_STAGED 16   // kept equal to MAX_SENSORS, asserted below
 
 struct StagedImage {
   bool              used;
+  volatile bool     ready;   // offer sized and safe to send; set last
   uint8_t           mac[6];
   char              version[16];
   char              url[192];
@@ -433,6 +447,7 @@ static const uint8_t LMK_KEY[16] = {
 
 // --- TIMEOUTS ---
 #define WIFI_CONNECT_TIMEOUT_MS 30000  // ms to wait for WiFi after credentials received
+#define WIFI_BOOT_TRY_MS        10000  // ms of the one boot attempt before loop() retries
 
 // --- NTP CONFIGURATION ---
 const char*         ntpServer          = "pool.ntp.org";
@@ -441,6 +456,7 @@ const int           daylightOffset_sec = 3600;
 const unsigned long NTP_SYNC_INTERVAL  = 86400000;  // 24 h
 
 bool          timeConfigured = false;
+static bool   sntpStarted    = false;   // configTime() has been called once
 unsigned long lastNtpSync    = 0;
 
 // --- MESSAGE STRUCTURE (must be byte-for-byte identical on hub and all sensors) ---
@@ -580,24 +596,52 @@ struct SensorData {
 SensorData sensors[MAX_SENSORS];
 int        sensorCount = 0;
 
-// --- OFFLINE READING BUFFER ---
-// Readings received while MQTT is disconnected are stored here and flushed
-// to the cloud once the connection is restored.
-#define OFFLINE_BUFFER_SIZE 50
+// --- READING QUEUE ---
+// Every reading passes through this ring. The ESP-NOW callback (WiFi task)
+// only appends; loop() publishes from it whenever MQTT is up. The callback
+// used to publish directly, which put a blocking TLS write in the WiFi task
+// and drove one PubSubClient from two tasks at once -- it is not thread-safe.
+// The same ring is the offline buffer: when the cloud is unreachable it just
+// fills, and drains in order on reconnect.
+//
+// 500 entries: ten sensors at 15 min is about 12 h of outage. The old ring of
+// 50 (with a 21-byte text timestamp per entry) lost anything older than 75 min.
+#define OFFLINE_BUFFER_SIZE 500
 
 struct BufferedReading {
-  uint8_t mac[6];
-  float   temp;
-  float   hum;
-  int8_t  rssi;
-  uint8_t battery;
-  char    ts[21];   // ISO-8601 timestamp captured at the time of the reading
+  uint8_t  mac[6];
+  int8_t   rssi;
+  uint8_t  battery;
+  float    temp;
+  float    hum;
+  uint32_t epoch;    // UTC seconds at arrival; 0 = clock not set yet
+  uint32_t upSecs;   // uptime at arrival, to date it once the clock is set;
+                     // UINT32_MAX = from a previous boot, cannot be dated
+  uint16_t cfg_ver;
+  uint8_t  fw[3];
 };
 
 static BufferedReading offlineBuf[OFFLINE_BUFFER_SIZE];
 static int bufHead  = 0;   // next write slot (circular)
 static int bufTail  = 0;   // next read slot  (circular)
 static int bufCount = 0;
+static uint32_t bufDropped = 0;   // entries overwritten while the ring was full
+// Head, tail and count are changed from both tasks; every change to them is
+// made under this lock. Nothing slow (no I/O, no logging) happens inside it.
+static portMUX_TYPE bufMux = portMUX_INITIALIZER_UNLOCKED;
+// True while NVS holds a non-empty copy. Only then does draining the ring
+// need a flash write -- otherwise every reading would cost two NVS commits.
+static bool bufPersisted = false;
+
+// Loop-side state the callback may read without touching the MQTT client.
+static volatile bool cloudUp = false;            // MQTT connected, per loop()
+static volatile bool syncRequestWanted = false;  // publishSyncRequest() from loop()
+
+// Small messages produced in the callback (pairing request, config and live
+// state) wait here for loop() to publish them.
+struct OutboxMsg { char topic[80]; char payload[240]; };
+static QueueHandle_t mqttOutbox = nullptr;
+static TaskHandle_t  loopTaskHandle = nullptr;
 
 // The buffer above is RAM only, so a reboot used to discard everything queued
 // during an outage. That is exactly what happens during an OTA rollback, which
@@ -606,8 +650,9 @@ static int bufCount = 0;
 //
 // The most recent entries are mirrored to NVS and restored at boot. Capped well
 // below OFFLINE_BUFFER_SIZE to keep the blob small: the 20 KB NVS partition also
-// holds WiFi credentials, cloud credentials and the sensor list.
-#define OFFLINE_PERSIST_MAX 20
+// holds WiFi credentials, cloud credentials and the sensor list. 25 entries is
+// the same 800 bytes the old 20 took.
+#define OFFLINE_PERSIST_MAX 25
 
 // Set when the buffer changes. The actual flash write happens in loop(), never
 // in the ESP-NOW receive callback — a 10–20 ms NVS commit in that path would
@@ -1192,9 +1237,12 @@ void startBleProvisioning() {
 // EXISTING FUNCTIONS (unchanged)
 // ─────────────────────────────────────────────────────────────────────────────
 
+// Called from the ESP-NOW callback. The 0 matters: getLocalTime() otherwise
+// polls for up to 5 s while the clock is unset, which -- now that the hub
+// runs before NTP has synced -- would stall the WiFi task on every reading.
 void printCurrentTime() {
   struct tm timeinfo;
-  if (!getLocalTime(&timeinfo)) { Serial.println("Failed to obtain time"); return; }
+  if (!getLocalTime(&timeinfo, 0)) { Serial.println("time not set"); return; }
   Serial.println(&timeinfo, "%d/%m/%y - %H:%M:%S");
 }
 
@@ -1497,8 +1545,11 @@ void mqttCallback(char* topic, byte* payload, unsigned int length) {
           sscanf(hex, "%2hhX%2hhX%2hhX%2hhX%2hhX%2hhX",
                  &cmac[0], &cmac[1], &cmac[2], &cmac[3], &cmac[4], &cmac[5]) == 6) {
         int slot = sOtaSlotFor(cmac);
-        if (slot >= 0 && slot != sOtaActive) {
-          sOtaStaged[slot].used = false;
+        // sOtaActive keeps pointing at the last slot offered after its transfer
+        // ends, so only a transfer actually running protects a slot from this.
+        if (slot >= 0 && !(sOtaRunning && slot == sOtaActive)) {
+          sOtaStaged[slot].ready = false;
+          sOtaStaged[slot].used  = false;
           Serial.printf("[SOTA] Staged image cancelled for %02X:%02X:%02X:%02X:%02X:%02X\n",
                         cmac[0], cmac[1], cmac[2], cmac[3], cmac[4], cmac[5]);
           return;
@@ -1520,28 +1571,32 @@ void mqttCallback(char* topic, byte* payload, unsigned int length) {
       Serial.println("[SOTA] Incomplete sensor OTA command");
       return;
     }
-    if (sOtaRunning) {
-      Serial.println("[SOTA] Transfer already in progress");
-      return;
-    }
-    memcpy(sOtaMac, mac, 6);
-    ver.toCharArray(sOtaVersion, sizeof(sOtaVersion));
-
+    // This handler may be running inside another sensor's transfer, so it must
+    // not touch sOtaMac/sOtaVersion (they label that transfer's reports) and
+    // must not fetch anything (that would stall the transfer mid-stream).
     int slot = sOtaSlotClaim(mac);
     if (slot < 0) {
       Serial.println("[SOTA] No free staging slot");
-      publishSensorOtaStatus("failed", 0, "no free staging slot");
+      publishSensorOtaStatusFor(mac, ver.c_str(), "failed", 0, "no free staging slot");
       return;
     }
-    if (!buildSensorOtaOffer(slot, ver.c_str(), url.c_str(), sha.c_str(), sig.c_str())) {
-      publishSensorOtaStatus("failed", 0, "image unreachable");
+    if (sOtaRunning && slot == sOtaActive) {
+      // Its own image is being sent right now; swapping the URL under the
+      // transfer would corrupt it. That transfer's result settles the state.
+      Serial.printf("[SOTA] %s is mid-transfer - restage ignored\n", macStr.c_str());
       return;
     }
-    memcpy(sOtaStaged[slot].mac, mac, 6);
-    sOtaStaged[slot].used = true;
-    Serial.printf("[SOTA] Staged %s for %s - waiting for a button press on the node\n",
-                  sOtaVersion, macStr.c_str());
-    publishSensorOtaStatus("staged", 0, nullptr);
+    StagedImage &st = sOtaStaged[slot];
+    st.ready = false;   // first, so the receive callback stops offering this slot
+    if (!fillSensorOtaOffer(slot, ver.c_str(), url.c_str(), sha.c_str(), sig.c_str())) {
+      st.used = false;
+      publishSensorOtaStatusFor(mac, ver.c_str(), "failed", 0, "bad hash or signature");
+      return;
+    }
+    memcpy(st.mac, mac, 6);
+    st.used = true;
+    Serial.printf("[SOTA] Received %s for %s%s\n", ver.c_str(), macStr.c_str(),
+                  sOtaRunning ? " - queued behind the current transfer" : "");
     return;
   }
 
@@ -1803,6 +1858,29 @@ void saveSensorsToNVS() {
 
 // Publish the hub's current sensor list to the cloud so it can diff and reply.
 // Payload: {"sensors":[{"mac":"AA:BB:CC:DD:EE:FF","name":"Room 1"},…]}
+// Publish from whichever task we are on. loop() owns the MQTT client, so a
+// call from anywhere else (the ESP-NOW callback) is queued for loop() rather
+// than written to the socket from a second task.
+void cloudPublish(const char* topic, const char* payload) {
+  if (!cloudConfigured) return;
+  if (xTaskGetCurrentTaskHandle() == loopTaskHandle) {
+    if (mqttClient.connected()) mqttClient.publish(topic, payload);
+    return;
+  }
+  if (!cloudUp || !mqttOutbox) return;   // as before: no cloud, nothing sent
+  OutboxMsg m;
+  strncpy(m.topic, topic, sizeof(m.topic) - 1);     m.topic[sizeof(m.topic) - 1] = 0;
+  strncpy(m.payload, payload, sizeof(m.payload) - 1); m.payload[sizeof(m.payload) - 1] = 0;
+  xQueueSend(mqttOutbox, &m, 0);   // never block the WiFi task; drop if full
+}
+
+void drainOutbox() {
+  OutboxMsg m;
+  while (mqttOutbox && xQueueReceive(mqttOutbox, &m, 0) == pdTRUE) {
+    if (mqttClient.connected()) mqttClient.publish(m.topic, m.payload);
+  }
+}
+
 void publishSyncRequest() {
   if (!cloudConfigured || !mqttClient.connected()) return;
 
@@ -2020,6 +2098,116 @@ void applySyncFromCloud(const String& json) {
   Serial.printf("[Sync] Done. Local sensor count: %d\n", sensorCount);
 }
 
+// The broker's certificate is checked against Let's Encrypt's own roots, and
+// against its hostname. Before this the hub accepted any certificate, so
+// anyone on the path could stand in for the broker and read the shared
+// credential the hub sends in CONNECT.
+//
+// All four ISRG roots, not just the one in use today. In 2026 the broker chain
+// is YE2 <- Root YE <- ISRG Root X2 <- ISRG Root X1, and Let's Encrypt is
+// moving to the self-signed Generation Y roots, so the chain will get shorter
+// and may switch key type. A hub trusting only one of them would drop off the
+// cloud on a certificate renewal, years after it was installed.
+//
+// Validity dates are not checked (CONFIG_MBEDTLS_HAVE_TIME_DATE is off in this
+// core), so this works before NTP has set the clock -- which, since the hub
+// no longer waits for WiFi at boot, is not guaranteed.
+//
+// If this ever rejects the real broker, a newly installed image cannot confirm
+// itself and reverts through the normal OTA rollback.
+static const char MQTT_CA_ROOTS[] =
+  // ISRG Root X1
+  "-----BEGIN CERTIFICATE-----\n"
+  "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\n"
+  "-----END CERTIFICATE-----\n"
+  // ISRG Root X2
+  "-----BEGIN CERTIFICATE-----\n"
+  "MIICGzCCAaGgAwIBAgIQQdKd0XLq7qeAwSxs6S+HUjAKBggqhkjOPQQDAzBPMQsw\n"
+  "CQYDVQQGEwJVUzEpMCcGA1UEChMgSW50ZXJuZXQgU2VjdXJpdHkgUmVzZWFyY2gg\n"
+  "R3JvdXAxFTATBgNVBAMTDElTUkcgUm9vdCBYMjAeFw0yMDA5MDQwMDAwMDBaFw00\n"
+  "MDA5MTcxNjAwMDBaME8xCzAJBgNVBAYTAlVTMSkwJwYDVQQKEyBJbnRlcm5ldCBT\n"
+  "ZWN1cml0eSBSZXNlYXJjaCBHcm91cDEVMBMGA1UEAxMMSVNSRyBSb290IFgyMHYw\n"
+  "EAYHKoZIzj0CAQYFK4EEACIDYgAEzZvVn4CDCuwJSvMWSj5cz3es3mcFDR0HttwW\n"
+  "+1qLFNvicWDEukWVEYmO6gbf9yoWHKS5xcUy4APgHoIYOIvXRdgKam7mAHf7AlF9\n"
+  "ItgKbppbd9/w+kHsOdx1ymgHDB/qo0IwQDAOBgNVHQ8BAf8EBAMCAQYwDwYDVR0T\n"
+  "AQH/BAUwAwEB/zAdBgNVHQ4EFgQUfEKWrt5LSDv6kviejM9ti6lyN5UwCgYIKoZI\n"
+  "zj0EAwMDaAAwZQIwe3lORlCEwkSHRhtFcP9Ymd70/aTSVaYgLXTWNLxBo1BfASdW\n"
+  "tL4ndQavEi51mI38AjEAi/V3bNTIZargCyzuFJ0nN6T5U6VR5CmD1/iQMVtCnwr1\n"
+  "/q4AaOeMSQ+2b1tbFfLn\n"
+  "-----END CERTIFICATE-----\n"
+  // Root YE
+  "-----BEGIN CERTIFICATE-----\n"
+  "MIIB2TCCAWCgAwIBAgIRAKQCa6LvbHwg1AR+XmWmk4AwCgYIKoZIzj0EAwMwLjEL\n"
+  "MAkGA1UEBhMCVVMxDTALBgNVBAoTBElTUkcxEDAOBgNVBAMTB1Jvb3QgWUUwHhcN\n"
+  "MjUwOTAzMDAwMDAwWhcNNDUwOTAyMjM1OTU5WjAuMQswCQYDVQQGEwJVUzENMAsG\n"
+  "A1UEChMESVNSRzEQMA4GA1UEAxMHUm9vdCBZRTB2MBAGByqGSM49AgEGBSuBBAAi\n"
+  "A2IABDwS/6vhrcVqcbBo+wgdI3fwn9x7DNJJOY/lTOti0vkwuRN87RhEhTH17E7X\n"
+  "yFjWsPYhIPt/wzOqxTd2b+4ZJNy9ID04YywF9U5zasDVyGSNErVNtz8uSGh5izW8\n"
+  "7j77GaNCMEAwDgYDVR0PAQH/BAQDAgEGMA8GA1UdEwEB/wQFMAMBAf8wHQYDVR0O\n"
+  "BBYEFKPIJlqOoUzQNWP8myPIOq5W809WMAoGCCqGSM49BAMDA2cAMGQCMHhMr8N9\n"
+  "LdL1VQKs9BdV81r76eXRB6mtjuNjzk6/lBsPNToWLTDzGYgtQKO1jl63uAIwGV7m\n"
+  "onyF377c+MM1oqVNs17sgu7F9YKZwgLmVbeOMDbKAXHtKMDLbiGllCcs8f47\n"
+  "-----END CERTIFICATE-----\n"
+  // Root YR
+  "-----BEGIN CERTIFICATE-----\n"
+  "MIIFKTCCAxGgAwIBAgIRAOxGNJNgz0sP+KmC2Tqpyj0wDQYJKoZIhvcNAQELBQAw\n"
+  "LjELMAkGA1UEBhMCVVMxDTALBgNVBAoTBElTUkcxEDAOBgNVBAMTB1Jvb3QgWVIw\n"
+  "HhcNMjUwOTAzMDAwMDAwWhcNNDUwOTAyMjM1OTU5WjAuMQswCQYDVQQGEwJVUzEN\n"
+  "MAsGA1UEChMESVNSRzEQMA4GA1UEAxMHUm9vdCBZUjCCAiIwDQYJKoZIhvcNAQEB\n"
+  "BQADggIPADCCAgoCggIBANvGJnN78CTJdWL3+eGfsLN5TrNBJs+VH9hRXqRbwxu9\n"
+  "sGNiB0BD1fcOxbSUQCJIM1xE13Db+5Cw1w0s0EBYsvuIP/6joF0w8cuImbgR1OGg\n"
+  "YbSQ4OpzI+DG8SGuTlcE873OCS+kh3srlo6vl43M5OJg4Aeo1sfHp6kTJDoIiFBN\n"
+  "JAY+OKfX/FUvYKuhjT+no49lmqmupSBI5PkBQiqrEGtWU5uxU/cQWHGu8jSjFBzn\n"
+  "ZqvbNPLMXMLFxCb3WTfrJBXXjqvWG+v4bjzxjjeAtOlU7qarRDvNOyAuQYLln904\n"
+  "M+faKx8hnLCpJ15ZqaEgcNlY+9MMWcC5yvL2A2j3l9+2buggZX+dOE91zYmIdawT\n"
+  "vSZuVvlbRrAlLxIB6pwMBjneXCjYQ8+3BCCjssbSNpZU3hTcBDdhfAlEDlYr6pEa\n"
+  "tnMdmDT5BqnKC92bd0EhM1fbLHioLccLCuievT8ZkPhZrq7Mii7gNXAcUEAR8+lz\n"
+  "Yal+9zTg7C5DALyVOeG/CqfRAMn1KSHCR0NSA6P8tn/mGRlnCct5rtVCLnVySVpU\n"
+  "6H1qGg3DgTOuskf8eahTMiYbI5ezPJmO5ertalskQ1utp74+eDy92PI4ftHKTbq9\n"
+  "IWhH4YZKh3WnJEIt+oQvlYZbY8tpEroKrFB6PFGzrJIDRyts4HqvuH52RFj2zv/B\n"
+  "AgMBAAGjQjBAMA4GA1UdDwEB/wQEAwIBBjAPBgNVHRMBAf8EBTADAQH/MB0GA1Ud\n"
+  "DgQWBBTe51tg0CJtQCh9Pw0B/qS1UrRRlDANBgkqhkiG9w0BAQsFAAOCAgEAWHnf\n"
+  "713Bdkq7t5yN2dNIgQakUb94X9WuyhMEHHkgx4oDpSUlnG0w4g94MoqaEUE31ZjR\n"
+  "LU7L5LD1g9ujFHTQu8AD215AHMVQFbm6j8hQxdXHAzDajFNQnOlDJrLjzIx176oy\n"
+  "AjvUtejZx2NNmdb5fd0WGVGsCdoAJ3N8ozo7ajE8t6vfxStZb4BQ9WYJGHUDrv2N\n"
+  "i5tJF6CNiPnlzs3BUfECRbE4JSk+jvy8+VoGiFE8qsH/j78x2fjgQhAQFV7P7Zxy\n"
+  "dBTZ1wEkNpZNW2qnaK1SKBLa+xf6E06YRIq5uaI+HWH8SY1y5VbRgzq40EKg3yxP\n"
+  "06fz+uYAUIFJoLNfhwRCc3Q6pQVuMX3yAjHAes4gk4moGcLQ5p7HAh39yeylZc1J\n"
+  "41sx/jKwLIkPE6Rr1Nf4pxdsxf9SA4yOEiAkDgq04DVxn8hgYFdUtBCuiuVC2heA\n"
+  "EiqVEa+8QZjuw8Gj0EbHXcRd1nInvGqRS1o9Is7YBdQN57X1AYveGBNNqjICSb7c\n"
+  "awuw1EawTDrs13VUlJVEsbQ0/O/1aaV73mCdOQ8azqL2KTv1Ewu1xbquE2S+kdQU\n"
+  "To9TUwat3wUA6cwXh1EfpS/3fJ0aGah5hdpRyoCLDlsSn8tkrjMfFFX0viC+GxHc\n"
+  "sI1ANRYvqSFC2X1VRZfDg+wD6E21BccmifG4yWc=\n"
+  "-----END CERTIFICATE-----\n";
+
 // Connect to the MQTT broker over TLS and set up LWT + subscriptions.
 // Returns true on success.  lastMqttState is set to the PubSubClient rc so
 // callers (especially BLE provisioning) can report a meaningful error.
@@ -2047,9 +2235,7 @@ bool connectCloud() {
   // cleanly — especially during BLE provisioning while NimBLE is co-resident.
   wifiSecure.stop();
 
-  // Encrypt the connection but skip CA certificate validation.
-  // The broker address is trusted via network (VPS + Let's Encrypt TLS).
-  wifiSecure.setInsecure();
+  wifiSecure.setCACert(MQTT_CA_ROOTS);
 
   // Bound the TLS handshake. Without this, mbedtls retries internally for
   // ~130 s on a flaky connection (this is what produced the long "connecting"
@@ -2120,91 +2306,140 @@ bool connectCloud() {
 // Mirror the newest queued readings to NVS. Each entry already carries the
 // timestamp captured when the reading arrived, so a restored reading is stored
 // at its true time rather than the time it was eventually flushed.
+// Stored under "q2": the entry layout changed when timestamps became epoch
+// seconds, and the old "q" blob would otherwise be misread as the new one.
 void saveOfflineBuffer() {
+  static BufferedReading tmp[OFFLINE_PERSIST_MAX];
+  int n;
+  portENTER_CRITICAL(&bufMux);
+  n = bufCount > OFFLINE_PERSIST_MAX ? OFFLINE_PERSIST_MAX : bufCount;
+  // Keep the newest n, in chronological order.
+  int start = (bufHead - n + OFFLINE_BUFFER_SIZE) % OFFLINE_BUFFER_SIZE;
+  for (int i = 0; i < n; i++) tmp[i] = offlineBuf[(start + i) % OFFLINE_BUFFER_SIZE];
+  portEXIT_CRITICAL(&bufMux);
+
   Preferences bp;
   bp.begin("buf", false);
-
-  if (bufCount == 0) {
-    if (bp.isKey("q")) bp.remove("q");   // remove() logs an error if absent
+  if (n == 0) {
+    if (bp.isKey("q2")) bp.remove("q2");   // remove() logs an error if absent
   } else {
-    int n = bufCount > OFFLINE_PERSIST_MAX ? OFFLINE_PERSIST_MAX : bufCount;
-    static BufferedReading tmp[OFFLINE_PERSIST_MAX];
-    // Keep the newest n, in chronological order.
-    int start = (bufHead - n + OFFLINE_BUFFER_SIZE) % OFFLINE_BUFFER_SIZE;
-    for (int i = 0; i < n; i++) {
-      tmp[i] = offlineBuf[(start + i) % OFFLINE_BUFFER_SIZE];
-    }
-    bp.putBytes("q", tmp, n * sizeof(BufferedReading));
+    bp.putBytes("q2", tmp, n * sizeof(BufferedReading));
   }
   bp.end();
+  bufPersisted = (n > 0);
 }
 
+// Runs in setup(), before the ESP-NOW callback is registered.
 void loadOfflineBuffer() {
   Preferences bp;
-  bp.begin("buf", true);
-  size_t len = bp.isKey("q") ? bp.getBytesLength("q") : 0;
+  bp.begin("buf", false);
+  if (bp.isKey("q")) bp.remove("q");   // pre-1.1.21 layout; cannot be read
+  size_t len = bp.isKey("q2") ? bp.getBytesLength("q2") : 0;
 
   if (len >= sizeof(BufferedReading) && (len % sizeof(BufferedReading)) == 0) {
     int n = len / sizeof(BufferedReading);
     if (n > OFFLINE_BUFFER_SIZE) n = OFFLINE_BUFFER_SIZE;
-    bp.getBytes("q", offlineBuf, n * sizeof(BufferedReading));
+    bp.getBytes("q2", offlineBuf, n * sizeof(BufferedReading));
+    // Uptime from a previous boot means nothing now.
+    for (int i = 0; i < n; i++) offlineBuf[i].upSecs = UINT32_MAX;
     bufTail  = 0;
     bufHead  = n % OFFLINE_BUFFER_SIZE;
     bufCount = n;
+    bufPersisted = true;
     Serial.printf("[Buffer] Restored %d reading(s) queued before the last reboot\n", n);
   }
   bp.end();
 }
 
+// Send queued readings in order. loop() calls this whenever the cloud is up,
+// so it is also the normal path for every live reading, not just a recovery.
 void flushOfflineBuffer() {
   if (bufCount == 0) return;
-  Serial.printf("[Buffer] Flushing %d buffered reading(s)...\n", bufCount);
+  bool backlog = bufCount > 1;
+  if (backlog) Serial.printf("[Buffer] Flushing %d buffered reading(s)...\n", (int)bufCount);
 
   while (bufCount > 0 && mqttClient.connected()) {
-    const BufferedReading& r = offlineBuf[bufTail];
+    // A sensor is waiting for its firmware handshake, which is timed from the
+    // offer. Stop here and let loop() serve it; the rest goes afterwards.
+    if (otaOfferWanted) break;
+
+    BufferedReading r;
+    uint32_t droppedBefore;
+    portENTER_CRITICAL(&bufMux);
+    r = offlineBuf[bufTail];
+    droppedBefore = bufDropped;
+    portEXIT_CRITICAL(&bufMux);
+
+    // A reading taken before NTP synced is dated now, from how long ago it
+    // arrived. One restored from before a reboot cannot be, and goes undated
+    // -- the cloud then uses its own receive time.
+    time_t now = time(nullptr);
+    uint32_t epoch = r.epoch;
+    if (epoch == 0 && now > 1000000000 && r.upSecs != UINT32_MAX) {
+      epoch = (uint32_t)now - (millis() / 1000 - r.upSecs);
+    }
+    char ts[21] = "";
+    if (epoch) {
+      time_t t = (time_t)epoch;
+      struct tm utcTm;
+      gmtime_r(&t, &utcTm);   // UTC; getLocalTime() would be mislabelled by the 'Z'
+      strftime(ts, sizeof(ts), "%Y-%m-%dT%H:%M:%SZ", &utcTm);
+    }
 
     char sensorMacStr[18];
-    snprintf(sensorMacStr, sizeof(sensorMacStr),
-             "%02X:%02X:%02X:%02X:%02X:%02X",
-             r.mac[0], r.mac[1], r.mac[2],
-             r.mac[3], r.mac[4], r.mac[5]);
+    snprintf(sensorMacStr, sizeof(sensorMacStr), "%02X:%02X:%02X:%02X:%02X:%02X",
+             r.mac[0], r.mac[1], r.mac[2], r.mac[3], r.mac[4], r.mac[5]);
 
-    char payload[220];
+    char payload[256];
     snprintf(payload, sizeof(payload),
              "{\"sensor_mac\":\"%s\",\"temp\":%.2f,\"hum\":%.2f,"
-             "\"battery\":%d,\"rssi\":%d,\"ts\":\"%s\"}",
-             sensorMacStr, r.temp, r.hum, r.battery, r.rssi, r.ts);
+             "\"battery\":%d,\"rssi\":%d,\"ts\":\"%s\","
+             "\"fw\":\"%u.%u.%u\",\"cfg_ver\":%u}",
+             sensorMacStr, r.temp, r.hum, r.battery, r.rssi, ts,
+             r.fw[0], r.fw[1], r.fw[2], r.cfg_ver);
 
-    mqttClient.publish(topicData, payload);
+    if (!mqttClient.publish(topicData, payload)) break;   // keep it for next time
     mqttClient.loop();   // let PubSubClient process the outgoing packet
 
-    bufTail = (bufTail + 1) % OFFLINE_BUFFER_SIZE;
-    bufCount--;
+    // Pop only now that it is sent. If the callback filled the ring meanwhile,
+    // its first overwrite dropped the oldest entry -- this one -- and moved the
+    // tail past it already.
+    portENTER_CRITICAL(&bufMux);
+    if (bufCount > 0 && bufDropped == droppedBefore) {
+      bufTail = (bufTail + 1) % OFFLINE_BUFFER_SIZE;
+      bufCount--;
+    }
+    portEXIT_CRITICAL(&bufMux);
 
-    delay(20);   // brief yield to avoid flooding the broker
+    if (backlog) delay(20);   // brief yield to avoid flooding the broker
   }
 
-  offlineBufDirty = true;   // stored copy must match whatever is left
+  if (bufPersisted) offlineBufDirty = true;   // stored copy must match what is left
 
-  if (bufCount == 0) {
-    Serial.println("[Buffer] Flush complete.");
-  } else {
-    Serial.printf("[Buffer] Flush interrupted — %d reading(s) remain.\n", bufCount);
+  if (backlog) {
+    if (bufCount == 0) Serial.println("[Buffer] Flush complete.");
+    else Serial.printf("[Buffer] Flush paused — %d reading(s) remain.\n", (int)bufCount);
   }
 }
 
 // Call every loop() iteration: keeps MQTT alive and reconnects after drops.
 void maintainCloud() {
   if (!cloudConfigured) return;
-  if (WiFi.status() != WL_CONNECTED) return;  // no WiFi → no TCP; don't block the radio
-  if (mqttClient.connected()) {
-    mqttClient.loop();
+  if (WiFi.status() != WL_CONNECTED) {  // no WiFi → no TCP; don't block the radio
+    cloudUp = false;
     return;
   }
+  if (mqttClient.connected()) {
+    mqttClient.loop();
+    cloudUp = mqttClient.connected();
+    return;
+  }
+  cloudUp = false;
   if (millis() - lastMqttReconnect < MQTT_RECONNECT_MS) return;
   lastMqttReconnect = millis();
   Serial.println("[MQTT] Reconnecting...");
   if (connectCloud()) {
+    cloudUp = true;
     // Tighten socket timeout for normal operation so reconnect attempts
     // don't block the loop() and starve ESP-NOW ACKs.
     mqttClient.setSocketTimeout(3);
@@ -2631,9 +2866,9 @@ void loadSensorConfig(int idx) {
 
 // Report what a sensor is actually running, so the dashboard can tell a landed
 // change from a pending one rather than guessing.
+// Called from both loop() and the ESP-NOW callback; cloudPublish() routes it.
 void publishConfigState(int idx) {
   if (idx < 0 || idx >= sensorCount) return;
-  if (!cloudConfigured || !mqttClient.connected()) return;
 
   char mac[18];
   snprintf(mac, sizeof(mac), "%02X:%02X:%02X:%02X:%02X:%02X",
@@ -2649,7 +2884,7 @@ void publishConfigState(int idx) {
     sensors[idx].cfgSleepSecs, sensors[idx].cfgShA, sensors[idx].cfgShB,
     sensors[idx].cfgShC, sensors[idx].cfgRSeries);
 
-  mqttClient.publish(topicCfgState, payload);
+  cloudPublish(topicCfgState, payload);
 }
 
 // Called from OnDataRecv the moment a sensor reports in — that frame is the only
@@ -2722,8 +2957,8 @@ static const char *sensorOtaDeclineName(uint8_t r) {
 // Tell the cloud a live request actually reached the node. Without this the
 // dashboard can only say it asked -- it cannot say the sensor is awake, which
 // is the part someone watching a live reading needs to know.
+// Runs in the ESP-NOW callback, so it is queued for loop() by cloudPublish().
 void publishLiveState(const uint8_t *mac, uint16_t durationS, uint16_t intervalS) {
-  if (!cloudConfigured || !mqttClient.connected()) return;
   char macStr[18];
   snprintf(macStr, sizeof(macStr), "%02X:%02X:%02X:%02X:%02X:%02X",
            mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
@@ -2732,32 +2967,38 @@ void publishLiveState(const uint8_t *mac, uint16_t durationS, uint16_t intervalS
     "{\"sensor_mac\":\"%s\",\"state\":\"%s\",\"duration_s\":%u,\"interval_s\":%u}",
     macStr, durationS == 0 ? "stopped" : "started",
     (unsigned)durationS, (unsigned)intervalS);
-  mqttClient.publish(topicLiveState, payload);
-  mqttClient.loop();
+  cloudPublish(topicLiveState, payload);
 }
 
+// Reports on the transfer in progress (sOtaMac/sOtaVersion).
 void publishSensorOtaStatus(const char *state, int pct, const char *err) {
+  publishSensorOtaStatusFor(sOtaMac, sOtaVersion, state, pct, err);
+}
+
+void publishSensorOtaStatusFor(const uint8_t *m, const char *version,
+                               const char *state, int pct, const char *err) {
   if (!cloudConfigured || !mqttClient.connected()) return;
   char mac[18];
   snprintf(mac, sizeof(mac), "%02X:%02X:%02X:%02X:%02X:%02X",
-           sOtaMac[0], sOtaMac[1], sOtaMac[2], sOtaMac[3], sOtaMac[4], sOtaMac[5]);
+           m[0], m[1], m[2], m[3], m[4], m[5]);
   char payload[256];
   if (err && *err) {
     snprintf(payload, sizeof(payload),
       "{\"sensor_mac\":\"%s\",\"state\":\"%s\",\"version\":\"%s\",\"pct\":%d,\"error\":\"%s\"}",
-      mac, state, sOtaVersion, pct, err);
+      mac, state, version, pct, err);
   } else {
     snprintf(payload, sizeof(payload),
       "{\"sensor_mac\":\"%s\",\"state\":\"%s\",\"version\":\"%s\",\"pct\":%d}",
-      mac, state, sOtaVersion, pct);
+      mac, state, version, pct);
   }
   mqttClient.publish(topicSensorOtaStatus, payload);
   mqttClient.loop();
 }
 
-// Prepare the frame the sensor will be sent. Done once, at staging time.
-bool buildSensorOtaOffer(int slot, const char *version, const char *url,
-                         const char *sha, const char *sigB64) {
+// Fill the parts of the offer that need no network. Safe to call from the MQTT
+// handler even while another sensor's transfer is running.
+bool fillSensorOtaOffer(int slot, const char *version, const char *url,
+                        const char *sha, const char *sigB64) {
   ota_offer_message offer = {};
   offer.msgType = MSG_OTA_OFFER;
   offer.schema  = 1;
@@ -2777,22 +3018,6 @@ bool buildSensorOtaOffer(int slot, const char *version, const char *url,
   offer.sigLen = (uint8_t)sigLen;
   strncpy(offer.version, version, sizeof(offer.version));
 
-  // The image size is not known until the first range request, so ask the
-  // server for it before offering -- the sensor needs it to size the transfer.
-  WiFiClient net;
-  HTTPClient http;
-  http.setTimeout(OTA_HTTP_TIMEOUT_MS);
-  http.setConnectTimeout(OTA_HTTP_TIMEOUT_MS);
-  if (!http.begin(net, url)) return false;
-  int code = http.GET();
-  int total = http.getSize();
-  http.end();
-  if (code != HTTP_CODE_OK || total <= 0) {
-    Serial.printf("[SOTA] Cannot size image (http %d)\n", code);
-    return false;
-  }
-  offer.imageSize = (uint32_t)total;
-
   StagedImage &st = sOtaStaged[slot];
   st.offer = offer;
   strncpy(st.version, version, sizeof(st.version) - 1);
@@ -2800,6 +3025,48 @@ bool buildSensorOtaOffer(int slot, const char *version, const char *url,
   strncpy(st.url, url, sizeof(st.url) - 1);
   st.url[sizeof(st.url) - 1] = 0;
   return true;
+}
+
+// The image size is not known until the first range request, so ask the
+// server for it before offering -- the sensor needs it to size the transfer.
+// Blocks for an HTTP round trip, so only loop() calls this, between transfers.
+bool sizeSensorOtaImage(int slot) {
+  StagedImage &st = sOtaStaged[slot];
+  WiFiClient net;
+  HTTPClient http;
+  http.setTimeout(OTA_HTTP_TIMEOUT_MS);
+  http.setConnectTimeout(OTA_HTTP_TIMEOUT_MS);
+  if (!http.begin(net, st.url)) return false;
+  int code = http.GET();
+  int total = http.getSize();
+  http.end();
+  if (code != HTTP_CODE_OK || total <= 0) {
+    Serial.printf("[SOTA] Cannot size image (http %d)\n", code);
+    return false;
+  }
+  st.offer.imageSize = (uint32_t)total;
+  return true;
+}
+
+// Finish staging whatever the MQTT handler recorded: right after it arrived,
+// or after the transfer that was running at the time has ended.
+void prepareStagedImages() {
+  for (int i = 0; i < SOTA_MAX_STAGED; i++) {
+    StagedImage &st = sOtaStaged[i];
+    if (!st.used || st.ready) continue;
+    char macStr[18];
+    snprintf(macStr, sizeof(macStr), "%02X:%02X:%02X:%02X:%02X:%02X",
+             st.mac[0], st.mac[1], st.mac[2], st.mac[3], st.mac[4], st.mac[5]);
+    if (!sizeSensorOtaImage(i)) {
+      st.used = false;
+      publishSensorOtaStatusFor(st.mac, st.version, "failed", 0, "image unreachable");
+      continue;
+    }
+    st.ready = true;
+    Serial.printf("[SOTA] Staged %s for %s - waiting for a button press on the node\n",
+                  st.version, macStr);
+    publishSensorOtaStatusFor(st.mac, st.version, "staged", 0, nullptr);
+  }
 }
 
 // Wait for the node's answer to an offer already sent from the receive
@@ -3015,71 +3282,55 @@ void completePairing(const uint8_t* mac) {
   // Grace window: suppress cloud-sync removals while the cloud persists this sensor.
   pairingGraceUntil = millis() + PAIRING_GRACE_MS;
 
-  // Tell the cloud the pairing is complete so it can persist the sensor to its database.
-  publishSyncRequest();
+  // Tell the cloud the pairing is complete so it can persist the sensor to its
+  // database. From loop(): this can run in the ESP-NOW callback.
+  syncRequestWanted = true;
 
   digitalWrite(LED_PIN, HIGH); delay(200); digitalWrite(LED_PIN, LOW);
 }
 
-// Publish one sensor reading to the cloud.
-// Called from updateSensor() after the local store is updated.
+// Queue one sensor reading for the cloud. Runs in the ESP-NOW callback, so it
+// does no network I/O at all: loop() publishes it, immediately when the cloud
+// is up, or after reconnecting when it is not, or after a sensor transfer that
+// holds the network. Called from updateSensor() after the local store is updated.
 void publishSensorData(int idx) {
   const SensorData& s = sensors[idx];
 
-  // ISO-8601 timestamp (UTC) — captured now so buffered readings keep their
-  // original read time rather than the later flush time.
-  // Use time()+gmtime_r() to get true UTC; getLocalTime() returns local time
-  // (UTC+2) which would be mislabelled by the literal 'Z' suffix.
-  char ts[21] = "";
+  BufferedReading r;
+  memcpy(r.mac, s.mac, 6);
+  r.rssi    = (int8_t)s.rssi;
+  r.battery = s.battery;
+  r.temp    = s.temp;
+  r.hum     = s.hum;
+  // Captured now so a queued reading keeps its read time, not its send time.
+  // If NTP has not synced yet (the hub no longer waits for WiFi at boot) the
+  // uptime is kept instead, and the reading is dated when it is sent.
   time_t now = time(nullptr);
-  if (now > 1000000000UL) {   // sanity-check: after 2001 means NTP has synced
-    struct tm utcTm;
-    gmtime_r(&now, &utcTm);
-    strftime(ts, sizeof(ts), "%Y-%m-%dT%H:%M:%SZ", &utcTm);
+  r.epoch   = (now > 1000000000) ? (uint32_t)now : 0;   // after 2001 = synced
+  r.upSecs  = millis() / 1000;
+  r.cfg_ver = s.cfg_ver;
+  r.fw[0] = s.fw_major; r.fw[1] = s.fw_minor; r.fw[2] = s.fw_patch;
+
+  int n;
+  portENTER_CRITICAL(&bufMux);
+  offlineBuf[bufHead] = r;
+  bufHead = (bufHead + 1) % OFFLINE_BUFFER_SIZE;
+  if (bufCount < OFFLINE_BUFFER_SIZE) {
+    bufCount++;
+  } else {
+    // Full: overwrite the oldest entry and advance the read pointer.
+    bufTail = (bufTail + 1) % OFFLINE_BUFFER_SIZE;
+    bufDropped++;
   }
+  n = bufCount;
+  portEXIT_CRITICAL(&bufMux);
 
-  // A sensor firmware transfer streams over HTTP from loop(), and this runs in
-  // the ESP-NOW callback -- so publishing here would put a second network
-  // operation in a second task alongside it. That is what hung a transfer at
-  // 59% when another sensor happened to report mid-stream.
-  //
-  // The reading is not lost: the offline buffer already exists for exactly this
-  // shape of problem, and is flushed when the transfer finishes.
-  if (!cloudConfigured || !mqttClient.connected() || sOtaRunning) {
-    // MQTT offline or busy — store the reading in the circular buffer.
-    BufferedReading& r = offlineBuf[bufHead];
-    memcpy(r.mac, s.mac, 6);
-    r.temp    = s.temp;
-    r.hum     = s.hum;
-    r.rssi    = (int8_t)s.rssi;
-    r.battery = s.battery;
-    memcpy(r.ts, ts, sizeof(r.ts));
-
-    bufHead = (bufHead + 1) % OFFLINE_BUFFER_SIZE;
-    if (bufCount < OFFLINE_BUFFER_SIZE) {
-      bufCount++;
-    } else {
-      // Buffer full — overwrite oldest entry; advance the read pointer.
-      bufTail = (bufTail + 1) % OFFLINE_BUFFER_SIZE;
-    }
-    Serial.printf("[Buffer] Queued reading (%d buffered)\n", bufCount);
-    offlineBufDirty = true;   // persisted from loop(), not here
-    return;
+  // Only a reading that is genuinely waiting on the cloud is worth a flash
+  // write; one loop() will send in a moment is not. Persisted from loop().
+  if (!cloudUp) {
+    Serial.printf("[Buffer] Queued reading (%d buffered)\n", n);
+    offlineBufDirty = true;
   }
-
-  char sensorMacStr[18];
-  snprintf(sensorMacStr, sizeof(sensorMacStr), "%02X:%02X:%02X:%02X:%02X:%02X",
-           s.mac[0], s.mac[1], s.mac[2], s.mac[3], s.mac[4], s.mac[5]);
-
-  char payload[256];
-  snprintf(payload, sizeof(payload),
-    "{\"sensor_mac\":\"%s\",\"temp\":%.2f,\"hum\":%.2f,"
-    "\"battery\":%d,\"rssi\":%d,\"ts\":\"%s\","
-    "\"fw\":\"%u.%u.%u\",\"cfg_ver\":%u}",
-    sensorMacStr, s.temp, s.hum, s.battery, s.rssi, ts,
-    s.fw_major, s.fw_minor, s.fw_patch, s.cfg_ver);
-
-  mqttClient.publish(topicData, payload);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -3534,7 +3785,7 @@ void OnDataRecv(const esp_now_recv_info_t* esp_now_info,
       return;
     }
 
-    if (cloudConfigured && mqttClient.connected() && !pendingPairing.active) {
+    if (cloudConfigured && cloudUp && !pendingPairing.active) {
       // Cloud connected: publish request and wait for dashboard approval in loop()
       memcpy(pendingPairing.mac, esp_now_info->src_addr, 6);
       pendingPairing.startedAt = millis();
@@ -3549,8 +3800,8 @@ void OnDataRecv(const esp_now_recv_info_t* esp_now_info,
                esp_now_info->src_addr[4], esp_now_info->src_addr[5]);
       char req[80];
       snprintf(req, sizeof(req), "{\"sensor_mac\":\"%s\"}", sensorMacStr);
-      mqttClient.publish(topicPairReq, req);
-      Serial.printf("[MQTT] Pairing request sent to cloud for %s\n", sensorMacStr);
+      cloudPublish(topicPairReq, req);
+      Serial.printf("[MQTT] Pairing request queued for the cloud: %s\n", sensorMacStr);
 
     } else if (pendingPairing.active) {
       if (memcmp(esp_now_info->src_addr, pendingPairing.mac, 6) == 0) {
@@ -3689,6 +3940,7 @@ void OnDataRecv(const esp_now_recv_info_t* esp_now_info,
     // which can block for longer than that on its own. Only the transfer, which
     // takes seconds, waits for loop().
     int stagedSlot = sOtaRunning ? -1 : sOtaSlotFor(esp_now_info->src_addr);
+    if (stagedSlot >= 0 && !sOtaStaged[stagedSlot].ready) stagedSlot = -1;   // not sized yet
     if (stagedSlot >= 0) {
       StagedImage &st = sOtaStaged[stagedSlot];
       sOtaActive = stagedSlot;
@@ -3779,6 +4031,9 @@ void setup() {
   Serial.println("\n=== XIAO ESP32-C6 Hub ===");
   Serial.println("Firmware " FW_VERSION);
   Serial.println(FW_VERSION_TAG);
+  // Before the ESP-NOW callback exists: it publishes through these.
+  loopTaskHandle = xTaskGetCurrentTaskHandle();   // setup() runs in the loop task
+  mqttOutbox     = xQueueCreate(8, sizeof(OutboxMsg));
   loadOfflineBuffer();   // readings queued before the last reboot
 
   // Must run before anything can reboot us: if this image is pending
@@ -3815,7 +4070,6 @@ void setup() {
   strncpy(wifiSsid, storedSsid.c_str(), sizeof(wifiSsid) - 1);
   strncpy(wifiPass, storedPass.c_str(), sizeof(wifiPass) - 1);
 
-  Serial.printf("Connecting to WiFi: %s\n", wifiSsid);
   WiFi.mode(WIFI_AP_STA);
   WiFi.setTxPower(WIFI_POWER_19_5dBm);
   esp_wifi_set_protocol(WIFI_IF_STA, WIFI_PROTOCOL_11B | WIFI_PROTOCOL_11G |
@@ -3824,65 +4078,45 @@ void setup() {
   // maintainWiFi() in loop() issues one targeted reconnect attempt every 30 s.
   WiFi.setAutoReconnect(false);
   WiFi.onEvent(onWiFiEvent);
-  WiFi.begin(wifiSsid, wifiPass);
-
-  unsigned long wifiStart = millis();
-  while (WiFi.status() != WL_CONNECTED) {
-    // Escape hatch for an unreachable saved network. Without this, a bad/gone
-    // WiFi makes the 30 s timeout → ESP.restart() cycle repeat forever and
-    // loop() (where the BOOT-button reset lives) is never reached, so the
-    // button appears dead. A 3 s hold here erases creds and re-provisions.
-    checkReprovisionButton();
-    if (millis() - wifiStart > WIFI_CONNECT_TIMEOUT_MS) {
-      // Network outage / router down — keep credentials and restart so the
-      // boot logic tries again. Wiping NVS here would force the user to
-      // re-provision after any transient disconnect (router reboot, ISP outage).
-      // The BOOT button is the only sanctioned way to clear WiFi creds.
-      Serial.println("WiFi connection timed out — restarting (credentials preserved).");
-      ESP.restart();
-    }
-    delay(200);
-  }
-  Serial.printf("✓ WiFi connected! IP: %s\n", WiFi.localIP().toString().c_str());
   esp_wifi_set_ps(WIFI_PS_NONE);  // disable power save — radio must always be listening
 
-  // ── MQTT cloud uplink ────────────────────────────────────────────────────
+  // ── Listen for sensors before waiting for the router ────────────────────
+  // The hub used to wait for WiFi, restart every 30 s until it got it, and
+  // only then start ESP-NOW. After a power cut the router is often the last
+  // thing back, so the hub acknowledged nothing, the sensors gave up on it,
+  // and the offline buffer -- which exists for exactly this -- was never
+  // reached. Now the hub listens first, on channel 1 (the channel sensors
+  // fall back to when they cannot see the hub's AP), and readings queue
+  // until the cloud is reachable.
+  //
+  // The hidden AP is required internally for ESP-NOW; it should not be visible
+  // to end users. It starts on channel 1 and follows the STA to the router's
+  // channel when WiFi connects -- AP and STA always share a channel on ESP32.
+  WiFi.softAP("TempHub-AP", "", 1, /*hidden=*/1);
+
   loadCloudConfig();
-  if (cloudConfigured) {
-    buildTopics();
-    connectCloud();  // non-fatal if it fails; maintainCloud() retries in loop()
-  }
+  if (cloudConfigured) buildTopics();
 
-  // Hide the AP — it is required internally for ESP-NOW but should not be
-  // visible to end users.  Must be called after STA connects so the channel
-  // is known; AP and STA must share the same channel on ESP32.
-  WiFi.softAP("TempHub-AP", "", WiFi.channel(), /*hidden=*/1);
-
-  // ── mDNS — device is reachable at http://temp-master.local/ ─────────────
-  if (MDNS.begin("temp-hub")) {
-    Serial.println("✓ mDNS started: http://temp-hub.local/");
-    MDNS.addService("http", "tcp", 80);
+  if (esp_now_init() != ESP_OK) {
+    Serial.println("✗ ESP-NOW init failed! Sensor receiving disabled.");
   } else {
-    Serial.println("mDNS start failed (non-fatal)");
-  }
+    esp_now_set_pmk(PMK_KEY);
 
-  // ── NTP ─────────────────────────────────────────────────────────────────
-  Serial.print("Syncing time");
-  configTime(gmtOffset_sec, daylightOffset_sec, ntpServer);
-  struct tm timeinfo;
-  int attempts = 0;
-  while (!getLocalTime(&timeinfo) && attempts < 20) {
-    Serial.print("."); delay(500); attempts++;
-  }
-  if (attempts < 20) {
-    Serial.println("\n✓ Time synced!"); printCurrentTime();
-    timeConfigured = true; lastNtpSync = millis();
-  } else {
-    Serial.println("\n✗ Time sync failed, continuing anyway...");
+    // Cached once: every message this hub signs is tagged with its own address,
+    // which is what a sensor checks the tag against.
+    WiFi.macAddress(authSelfMac);
+    Serial.println("✓ ESP-NOW initialized (authenticated messages)");
+
+    loadPairedSensors();
+    esp_now_register_recv_cb(OnDataRecv);
+
+    esp_now_peer_num_t pn = {};
+    esp_now_get_peer_num(&pn);
+    Serial.printf("ESP-NOW peers: %d of 20 used (max %d sensors)\n",
+                  pn.total_num, MAX_SENSORS);
   }
 
   // ── Web server ───────────────────────────────────────────────────────────
-  // Start before ESP-NOW so the dashboard is available even if ESP-NOW fails.
   server.on("/", handleRoot);
   server.on("/logs", handleLogs);
   server.on("/api/sensors", HTTP_GET,    handleJSON);
@@ -3891,37 +4125,71 @@ void setup() {
   server.begin();
   Serial.println("✓ Web server started");
 
-  // ── ESP-NOW ─────────────────────────────────────────────────────────────
-  Serial.printf("WiFi channel: %d\n", WiFi.channel());
-
-  if (esp_now_init() != ESP_OK) {
-    Serial.println("✗ ESP-NOW init failed! Sensor receiving disabled.");
-    return;
+  // ── WiFi: one bounded attempt, then loop() takes over ───────────────────
+  // Short, because the radio scans away from the sensors' channel while it
+  // tries. A router that is up answers in a few seconds; one that is not
+  // gets maintainWiFi()'s attempt every 30 s instead of a restart loop.
+  Serial.printf("Connecting to WiFi: %s\n", wifiSsid);
+  WiFi.begin(wifiSsid, wifiPass);
+  unsigned long wifiStart = millis();
+  while (WiFi.status() != WL_CONNECTED && millis() - wifiStart < WIFI_BOOT_TRY_MS) {
+    checkReprovisionButton();   // escape hatch for a saved network that is gone
+    delay(100);
   }
-  esp_now_set_pmk(PMK_KEY);
 
-  // Cached once: every message this hub signs is tagged with its own address,
-  // which is what a sensor checks the tag against.
-  WiFi.macAddress(authSelfMac);
-  Serial.println("✓ ESP-NOW initialized (authenticated messages)");
-
-  loadPairedSensors();
-  esp_now_register_recv_cb(OnDataRecv);
-
-  // Now that the sensor list is loaded from NVS, tell the cloud what we have.
-  // The cloud responds with its authoritative list (retained); applySyncFromCloud
-  // in loop() will add/remove sensors to match the cloud truth.
-  publishSyncRequest();
-
-  {
-    esp_now_peer_num_t pn = {};
-    esp_now_get_peer_num(&pn);
-    Serial.printf("ESP-NOW peers: %d of 20 used (max %d sensors)\n",
-                  pn.total_num, MAX_SENSORS);
+  if (WiFi.status() == WL_CONNECTED) {
+    Serial.printf("✓ WiFi connected! IP: %s\n", WiFi.localIP().toString().c_str());
+    onWiFiUp();
+    if (cloudConfigured && connectCloud()) {
+      // Now that the sensor list is loaded from NVS, tell the cloud what we
+      // have. The cloud responds with its authoritative list (retained);
+      // applySyncFromCloud in loop() will add/remove sensors to match.
+      publishSyncRequest();
+    }
+    // Otherwise maintainCloud() retries, and syncs, from loop().
+  } else {
+    // Stop the IDF's own retries so they do not keep the radio off ch 1.
+    WiFi.disconnect(false);
+    delay(100);
+    esp_wifi_set_channel(1, WIFI_SECOND_CHAN_NONE);
+    lastWifiReconnect = millis();
+    Serial.println("WiFi not available — listening on ch 1, readings will queue");
   }
 
   Serial.println("\n=== Hub Ready ===");
   Serial.println("Waiting for sensor data...\n");
+}
+
+// Things that need the network once, whenever WiFi first comes up -- at boot
+// or, after a power cut that the router outlasted, from maintainWiFi().
+void onWiFiUp() {
+  static bool mdnsStarted = false;
+  if (!mdnsStarted) {
+    // ── mDNS — device is reachable at http://temp-hub.local/ ──
+    if (MDNS.begin("temp-hub")) {
+      mdnsStarted = true;
+      Serial.println("✓ mDNS started: http://temp-hub.local/");
+      MDNS.addService("http", "tcp", 80);
+    } else {
+      Serial.println("mDNS start failed (non-fatal)");
+    }
+  }
+  if (!sntpStarted) {
+    // Non-blocking: SNTP keeps trying by itself; maintainTime() notices.
+    configTime(gmtOffset_sec, daylightOffset_sec, ntpServer);
+    sntpStarted = true;
+  }
+}
+
+// Called from loop(). Readings queued before the clock was set are dated
+// from their uptime when sent, so nothing here has to wait.
+void maintainTime() {
+  if (timeConfigured) { resyncNTP(); return; }
+  if (!sntpStarted || time(nullptr) < 1000000000) return;
+  timeConfigured = true;
+  lastNtpSync = millis();
+  Serial.print("✓ Time synced: ");
+  printCurrentTime();
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -3958,7 +4226,9 @@ void maintainWiFi() {
     delay(100);
     esp_wifi_set_channel(1, WIFI_SECOND_CHAN_NONE);
     Serial.println("[WiFi] Reconnect failed — restored ch 1");
+    return;
   }
+  onWiFiUp();   // first connection may be this one, if the router was down at boot
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -3984,6 +4254,25 @@ void loop() {
     otaOfferWanted = false;
     offerSensorOta(otaOfferMac);
   }
+
+  // Images staged while a transfer held the radio (or just now) are sized
+  // here, between transfers, where an HTTP round trip stalls nothing.
+  if (!sOtaRunning && !otaInProgress) prepareStagedImages();
+
+  // Everything the ESP-NOW callback wanted sent. It only queues; the MQTT
+  // client belongs to this task.
+  //
+  // Readings wait while a sensor transfer streams: that is a second network
+  // operation, and publishing alongside it is what once hung a transfer at
+  // 59%. They go as soon as it finishes.
+  drainOutbox();
+  if (syncRequestWanted && mqttClient.connected()) {
+    syncRequestWanted = false;
+    publishSyncRequest();
+  }
+  if (!sOtaRunning && !otaInProgress) flushOfflineBuffer();
+
+  maintainTime();
 
   // Flash write kept out of the ESP-NOW callback: an NVS commit there would
   // stall the WiFi task while sensors are mid-transmission.
@@ -4012,8 +4301,16 @@ void loop() {
       }
       pendingPairing.active = false;
     } else if (millis() - pendingPairing.startedAt > PAIRING_TIMEOUT_MS) {
-      Serial.println("[Pairing] Cloud timeout — auto-accepting");
-      completePairing(pendingPairing.mac);  // fallback: auto-accept
+      // Silence from a connected cloud means nobody approved it, and approval
+      // has to mean approval -- auto-accepting here turned it into a veto that
+      // a request nobody looked at always passed. Only a cloud that went away
+      // mid-request still falls back to accepting, as an offline hub does.
+      if (mqttClient.connected()) {
+        Serial.println("[Pairing] No approval from the dashboard — rejecting");
+      } else {
+        Serial.println("[Pairing] Cloud lost while waiting — auto-accepting");
+        completePairing(pendingPairing.mac);
+      }
       pendingPairing.active = false;
     }
   }
@@ -4026,8 +4323,6 @@ void loop() {
       mqttClient.publish(topicPairStatus, "{\"pairing_mode\":false}");
     }
   }
-
-  if (timeConfigured) resyncNTP();
 
   // BOOT button: hold 3 s to erase WiFi credentials → restart into BLE provisioning
   checkReprovisionButton();

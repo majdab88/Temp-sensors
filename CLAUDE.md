@@ -114,11 +114,21 @@ file as a description of reality.
 - Hold D0 (GPIO 0) for 3 s to erase pairing. Works from deep sleep: the button
   wakes the node, then `checkFactoryReset()` sees the held press.
 - Retries transmission `MAX_RETRIES` (5) times, then counts a failed wake.
-  After `BACKOFF_AFTER_FAILED_WAKES` (4) it **backs off** — 1 h, 2 h, 4 h, then
-  every 6 h, rescanning the channel on each attempt — and returns to its
-  interval on the first delivery. A paired node never sleeps without a timer:
-  the old button-only "hibernate" left a whole site needing visits after one
-  hour of hub outage.
+  After `BACKOFF_AFTER_FAILED_WAKES` (4) the hub counts as down, and the node
+  **keeps its normal interval**: a quick attempt every wake (one send, cached
+  channel, no scan) and a full one (rescan + retries) every
+  `FULL_ATTEMPT_INTERVAL_S` (1 h). Readings resume within one interval of the
+  hub returning. This replaced a 1/2/4/6 h backoff, which left a node silent
+  for up to 6 h after its hub came back, and before that a button-only
+  "hibernate" that left a whole site needing visits after one hour of outage.
+- **Store and forward.** A reading the hub did not get is kept in RTC memory
+  (`STORE_MAX` 300, ~75 h) and sent on the next contact as `MSG_BACKLOG`,
+  oldest first and **before** the current reading — the cloud evaluates alarms
+  in arrival order. Entries carry their age; the hub turns it into a time. A
+  frame is deleted only on the hub's `MSG_BACKLOG_ACK`, never on the radio ACK:
+  a hub that does not know the message would radio-ACK it and drop it. The
+  store survives deep sleep only; any other reset clears it, because the clock
+  the ages are measured on restarts.
 - Accepts remote configuration, live mode, and signed firmware over ESP-NOW.
 - Deinits ESP-NOW and stops WiFi before deep sleep — mandatory on the C6.
 
@@ -153,6 +163,8 @@ typedef struct struct_message {
 | 8 | `MSG_OTA_ACK` | sensor → hub | Next sequence expected |
 | 9 | `MSG_OTA_DONE` | sensor → hub | Final result |
 | 10 | `MSG_LIVE` | hub → sensor | Report faster for a while; `duration_s = 0` stops |
+| 11 | `MSG_BACKLOG` | sensor → hub | Up to 24 stored readings with their ages, oldest first |
+| 12 | `MSG_BACKLOG_ACK` | hub → sensor | Those readings are queued; the sensor may delete them |
 
 ---
 
@@ -486,8 +498,9 @@ Set the **ESP-PROG VDD jumper to 3.3 V** before connecting; 5 V will damage the 
 | `MAX_RETRIES` | 5 | TX attempts per wake |
 | `RETRY_DELAY_MS` | 100 ms | Between retries |
 | `TX_TIMEOUT_MS` | 500 ms | Wait for the ACK callback |
-| `BACKOFF_AFTER_FAILED_WAKES` | 4 | ≈ 1 h of outage at the normal interval before backing off |
-| `BACKOFF_FIRST_S` / `BACKOFF_MAX_S` | 3600 / 21600 s | Backoff doubles from 1 h to a 6 h ceiling |
+| `BACKOFF_AFTER_FAILED_WAKES` | 4 | ≈ 1 h of full attempts before the hub counts as down |
+| `FULL_ATTEMPT_INTERVAL_S` | 3600 s | Rescan + full retries this often during an outage; quick attempts between |
+| `STORE_MAX` | 300 | Undelivered readings kept in RTC memory (~75 h at 15 min) |
 | `PAIRING_WINDOWS` | 4 | 70 s broadcast windows before an unpaired node waits for the button |
 | `BAT_MIN_RUNNING_V` | 1.3 V regulated / 2.5 V direct | Below this a battery reading is a failed read (`255`) |
 | `ESPNOW_CHANNEL` | 0 | Auto-detect |

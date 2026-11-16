@@ -67,7 +67,7 @@ void confirmFirmwareValid();
 #define FW_MINOR 1
 #endif
 #ifndef FW_PATCH
-#define FW_PATCH 23
+#define FW_PATCH 24
 #endif
 #define STR_(x) #x
 #define STR(x)  STR_(x)
@@ -2366,7 +2366,9 @@ static bool waitsForClock(const BufferedReading& r, time_t now) {
 // Send queued readings in order. loop() calls this whenever the cloud is up,
 // so it is also the normal path for every live reading, not just a recovery.
 void flushOfflineBuffer() {
-  if (bufCount == 0) return;
+  // loop() calls this on every pass, so with the cloud down it would print
+  // the backlog header and "paused" thousands of times a minute.
+  if (bufCount == 0 || !mqttClient.connected()) return;
   {
     // Checked quietly up front too: loop() calls this every pass while the
     // head waits for the clock, and the backlog messages below would repeat.

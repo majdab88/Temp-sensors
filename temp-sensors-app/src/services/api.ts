@@ -137,8 +137,17 @@ export const getAccount = () =>
 export const updateAccount = (data: { username?: string; email?: string }) =>
   api.put('/account', data);
 
-export const changePassword = (currentPassword: string, newPassword: string) =>
-  api.put('/account/password', { currentPassword, newPassword });
+// The change ends every session, this one included. Keep the tokens it returns
+// so this device stays logged in.
+export const changePassword = async (currentPassword: string, newPassword: string) => {
+  const res = await api.put<{ accessToken?: string; refreshToken?: string }>(
+    '/account/password', { currentPassword, newPassword });
+  if (res.data.accessToken && res.data.refreshToken) {
+    await SecureStore.setItemAsync('jwt_token', res.data.accessToken);
+    await SecureStore.setItemAsync('jwt_refresh', res.data.refreshToken);
+  }
+  return res;
+};
 
 // Users (superadmin)
 export const getUsers = () =>

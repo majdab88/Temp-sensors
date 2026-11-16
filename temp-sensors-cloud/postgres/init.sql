@@ -12,6 +12,7 @@ CREATE TABLE users (
   email         VARCHAR(255) UNIQUE,               -- primary login for owners/members
   password_hash VARCHAR(255) NOT NULL,
   role          VARCHAR(12) DEFAULT 'owner' CHECK (role IN ('superadmin', 'owner', 'member')),
+  token_version INTEGER NOT NULL DEFAULT 0,          -- bumped to end every session (18-token-version.sql)
   created_at    TIMESTAMPTZ DEFAULT NOW()
 );
 

@@ -3,8 +3,9 @@
 const express = require('express');
 const bcrypt  = require('bcryptjs');
 const { query } = require('../db');
-const { requireAuth } = require('../middleware/auth');
+const { requireAuth, revokeSessions, signSession } = require('../middleware/auth');
 const { audit } = require('../audit');
+const { passwordProblem } = require('../passwords');
 
 const router = express.Router();
 router.use(requireAuth);
@@ -87,9 +88,8 @@ router.put('/password', async (req, res) => {
   if (!currentPassword || !newPassword) {
     return res.status(400).json({ error: 'currentPassword and newPassword are required' });
   }
-  if (typeof newPassword !== 'string' || newPassword.length < 6) {
-    return res.status(400).json({ error: 'newPassword must be at least 6 characters' });
-  }
+  const problem = passwordProblem(newPassword, 'newPassword');
+  if (problem) return res.status(400).json({ error: problem });
 
   try {
     const userRes = await query('SELECT password_hash FROM users WHERE id = $1', [req.user.sub]);
@@ -103,8 +103,15 @@ router.put('/password', async (req, res) => {
     const hash = await bcrypt.hash(newPassword, 12);
     await query('UPDATE users SET password_hash = $1 WHERE id = $2', [hash, req.user.sub]);
 
+    // A changed password ends every other session -- the usual reason to change
+    // one is that someone else may know it. This one continues on the tokens
+    // returned here; a client that ignores them is simply asked to log in again.
+    const tv = await revokeSessions(req.user.sub);
+    const { iat, exp, ...claims } = req.user;
+    const tokens = signSession({ ...claims, tv });
+
     await audit({ req, action: 'account.password_change', targetType: 'user', targetId: req.user.sub });
-    res.json({ message: 'Password updated' });
+    res.json({ message: 'Password updated', ...tokens });
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'Database error' });

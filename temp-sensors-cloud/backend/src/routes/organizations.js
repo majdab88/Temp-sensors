@@ -6,6 +6,7 @@ const { query } = require('../db');
 const { requireAuth, requireSuperadmin, requireOwner, isSuperadminUnscoped } = require('../middleware/auth');
 const { requireOrgPermission, clearPermissionCache } = require('../middleware/permissions');
 const { audit } = require('../audit');
+const { passwordProblem } = require('../passwords');
 
 const router = express.Router();
 router.use(requireAuth);
@@ -126,9 +127,8 @@ router.post('/:id/members', requireOrgPermission('admin'), async (req, res) => {
     }
 
     // New user — password required
-    if (!password || typeof password !== 'string' || password.length < 6) {
-      return res.status(400).json({ error: 'password (min 6 characters) is required for new members' });
-    }
+    const problem = passwordProblem(password);
+    if (problem) return res.status(400).json({ error: `${problem} (required for new members)` });
 
     const hash = await bcrypt.hash(password, 12);
     const username = emailStr.split('@')[0].slice(0, 64);

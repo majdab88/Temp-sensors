@@ -22,7 +22,7 @@ export default function EditUserModal({ user, onClose }) {
     const emailStr = email.trim().toLowerCase()
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(emailStr)) return setError('Enter a valid email')
     if (username.trim().length < 2) return setError('Username must be at least 2 characters')
-    if (password && password.length < 6) return setError('New password must be at least 6 characters')
+    if (password && password.length < 10) return setError('New password must be at least 10 characters')
 
     const payload = { email: emailStr, username: username.trim(), role }
     if (password) payload.password = password

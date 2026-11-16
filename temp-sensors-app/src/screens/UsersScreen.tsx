@@ -67,8 +67,8 @@ export default function UsersScreen() {
       Alert.alert('Error', 'Email is required.');
       return;
     }
-    if (formPassword.length < 6) {
-      Alert.alert('Error', 'Password must be at least 6 characters.');
+    if (formPassword.length < 10) {
+      Alert.alert('Error', 'Password must be at least 10 characters.');
       return;
     }
     setCreating(true);
@@ -130,7 +130,7 @@ export default function UsersScreen() {
                   style={styles.input}
                   value={formPassword}
                   onChangeText={setFormPassword}
-                  placeholder="Password (min 6 chars)"
+                  placeholder="Password (min 10 chars)"
                   placeholderTextColor="#64748b"
                   secureTextEntry
                 />

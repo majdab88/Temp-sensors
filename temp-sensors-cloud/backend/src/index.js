@@ -6,6 +6,7 @@ const { Server } = require('socket.io');
 const jwt      = require('jsonwebtoken');
 
 const { query } = require('./db');
+const { currentUser } = require('./middleware/auth');
 const { initMqtt, getHubStatus } = require('./mqtt');
 const { initAlerts } = require('./alerts');
 const { startHealthMonitor } = require('./health');
@@ -82,9 +83,12 @@ const MAC_RE = /^[0-9A-Fa-f]{2}(:[0-9A-Fa-f]{2}){5}$/;
 // requests and OTA status. Clients send the access token in the handshake
 // (`auth: { token }`); it is checked once per connection, so an expired token
 // is only refused when the socket reconnects, and the clients refresh it then.
-io.use((socket, next) => {
+// A revoked session (password changed, user deleted) is refused the same way.
+io.use(async (socket, next) => {
   try {
-    socket.data.user = jwt.verify(socket.handshake.auth?.token, process.env.JWT_SECRET);
+    const decoded = jwt.verify(socket.handshake.auth?.token, process.env.JWT_SECRET);
+    if (!(await currentUser(decoded))) return next(new Error('unauthorized'));
+    socket.data.user = decoded;
     next();
   } catch {
     next(new Error('unauthorized'));

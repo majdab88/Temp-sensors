@@ -93,8 +93,12 @@ file as a description of reality.
 - Tracks up to `MAX_SENSORS` (10) sensors by MAC; syncs its list with the cloud.
 - Pairing approval: with the cloud connected, a request nobody approves within
   60 s is **rejected**. Auto-accept only when the cloud is unreachable.
-- Syncs time via NTP (UTC+2, +1 h DST), without blocking; readings taken
-  before the clock is set are dated from uptime when sent.
+- Syncs time via NTP (UTC+2, +1 h DST), without blocking. A reading taken
+  before the clock is set is dated from uptime when sent; if the clock is
+  still unset then, it goes out with `age_s` instead of `ts` and the cloud
+  dates it from its own receive time. Never hold readings for the clock:
+  after a power cut NTP has taken 101 s, and a 60 s hold that ran out put a
+  whole outage on one timestamp.
 - Relays remote management to sensors: config, live mode, firmware.
 - Takes its **own** firmware over the air, signed and rollback-protected.
 - Hold BOOT (GPIO 9) or external D0 (GPIO 0) for 3 s to erase credentials.

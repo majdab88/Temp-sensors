@@ -4177,8 +4177,16 @@ void loop() {
       }
       pendingPairing.active = false;
     } else if (millis() - pendingPairing.startedAt > PAIRING_TIMEOUT_MS) {
-      Serial.println("[Pairing] Cloud timeout — auto-accepting");
-      completePairing(pendingPairing.mac);  // fallback: auto-accept
+      // Silence from a connected cloud means nobody approved it, and approval
+      // has to mean approval -- auto-accepting here turned it into a veto that
+      // a request nobody looked at always passed. Only a cloud that went away
+      // mid-request still falls back to accepting, as an offline hub does.
+      if (mqttClient.connected()) {
+        Serial.println("[Pairing] No approval from the dashboard — rejecting");
+      } else {
+        Serial.println("[Pairing] Cloud lost while waiting — auto-accepting");
+        completePairing(pendingPairing.mac);
+      }
       pendingPairing.active = false;
     }
   }

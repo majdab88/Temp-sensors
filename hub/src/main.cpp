@@ -67,7 +67,7 @@ void confirmFirmwareValid();
 #define FW_MINOR 1
 #endif
 #ifndef FW_PATCH
-#define FW_PATCH 24
+#define FW_PATCH 25
 #endif
 #define STR_(x) #x
 #define STR(x)  STR_(x)
@@ -258,6 +258,57 @@ typedef struct __attribute__((packed)) {
 } live_message;
 
 #define LIVE_BODY_LEN offsetof(live_message, auth_ctr)
+
+// --- STORE AND FORWARD (sensor -> hub, then an acknowledgement back) ---
+// A sensor that could not reach the hub keeps its readings and sends them on
+// the next contact, oldest first and before its current reading -- the cloud
+// evaluates alarms in arrival order. Each entry carries its age rather than a
+// time: the sensor has no clock, the hub turns the age into one.
+//
+// Acknowledged explicitly, not by the radio's own ACK. The radio confirms a
+// frame arrived, not that anything kept it: a hub that does not know this
+// message type (or this sensor) would ACK it and drop it, and the sensor would
+// delete readings nobody stored. A sensor keeps a frame until this comes back.
+//
+// Byte-for-byte identical on hub and sensor; kept under the 250-byte ESP-NOW
+// v1 limit.
+#define MSG_BACKLOG       11   // sensor -> hub: readings the hub missed
+#define MSG_BACKLOG_ACK   12   // hub -> sensor: those readings are queued
+#define BACKLOG_PER_FRAME 24
+
+typedef struct __attribute__((packed)) {
+  uint32_t age_s;       // how long ago the reading was taken
+  int16_t  temp_c100;   // hundredths of a degree; INT16_MIN = probe error
+  uint8_t  battery;     // 0-100 %, 255 = read error
+  uint8_t  pad;
+} backlog_entry;
+
+typedef struct __attribute__((packed)) {
+  uint8_t       msgType;   // MSG_BACKLOG
+  uint8_t       count;     // valid entries in e[]
+  uint16_t      cfg_ver;
+  uint8_t       fw_major;
+  uint8_t       fw_minor;
+  uint8_t       fw_patch;
+  uint8_t       pad;
+  backlog_entry e[BACKLOG_PER_FRAME];   // oldest first
+  uint32_t      auth_ctr;
+  uint8_t       auth[AUTH_TAG_LEN];
+} backlog_message;
+
+#define BACKLOG_BODY_LEN offsetof(backlog_message, auth_ctr)
+static_assert(sizeof(backlog_message) <= 250, "must fit an ESP-NOW v1 frame");
+
+typedef struct __attribute__((packed)) {
+  uint8_t  msgType;   // MSG_BACKLOG_ACK
+  uint8_t  count;
+  uint16_t pad;
+  uint32_t ref_ctr;   // auth_ctr of the backlog frame being acknowledged
+  uint32_t auth_ctr;
+  uint8_t  auth[AUTH_TAG_LEN];
+} backlog_ack_message;
+
+#define BACKLOG_ACK_BODY_LEN offsetof(backlog_ack_message, auth_ctr)
 
 // One request per sensor, delivered on that node's next contact of any kind --
 // unlike firmware, which needs a button press, because this only changes how
@@ -572,6 +623,11 @@ struct SensorData {
   // judged against one -- which is also what happens after a hub restart.
   uint32_t      authCtrSeen;
 
+  // Counter of the last backlog frame queued from this sensor. A frame arriving
+  // again with it means our acknowledgement was lost: acknowledge again, but do
+  // not queue the readings twice.
+  uint32_t      backlogCtr;
+
   // Reported by the sensor in every data frame. All zero until the sensor has
   // been updated to firmware that sends them.
   uint8_t       fw_major;
@@ -621,14 +677,18 @@ struct BufferedReading {
   uint8_t  battery;
   float    temp;
   float    hum;
-  uint32_t epoch;    // UTC seconds at arrival; 0 = clock not set yet
-  uint32_t upSecs;   // uptime at arrival, to date it once the clock is set;
-                     // UINT32_MAX = from a previous boot, cannot be dated
+  uint32_t epoch;    // UTC seconds when taken; 0 = clock not set yet
+  int32_t  upSecs;   // uptime when taken, to date it once the clock is set.
+                     // Negative for a sensor's stored reading older than this
+                     // boot; UPSECS_UNKNOWN = from a previous boot, undatable
   uint16_t cfg_ver;
   uint8_t  fw[3];
 };
 
+#define UPSECS_UNKNOWN INT32_MIN
+
 static BufferedReading offlineBuf[OFFLINE_BUFFER_SIZE];
+int ringAppend(const BufferedReading &r);
 static int bufHead  = 0;   // next write slot (circular)
 static int bufTail  = 0;   // next read slot  (circular)
 static int bufCount = 0;
@@ -2348,7 +2408,7 @@ void loadOfflineBuffer() {
     if (n > OFFLINE_BUFFER_SIZE) n = OFFLINE_BUFFER_SIZE;
     bp.getBytes("q2", offlineBuf, n * sizeof(BufferedReading));
     // Uptime from a previous boot means nothing now.
-    for (int i = 0; i < n; i++) offlineBuf[i].upSecs = UINT32_MAX;
+    for (int i = 0; i < n; i++) offlineBuf[i].upSecs = UPSECS_UNKNOWN;
     bufTail  = 0;
     bufHead  = n % OFFLINE_BUFFER_SIZE;
     bufCount = n;
@@ -2359,7 +2419,7 @@ void loadOfflineBuffer() {
 }
 
 static bool waitsForClock(const BufferedReading& r, time_t now) {
-  return r.epoch == 0 && r.upSecs != UINT32_MAX && now <= 1000000000 &&
+  return r.epoch == 0 && r.upSecs != UPSECS_UNKNOWN && now <= 1000000000 &&
          sntpStarted && millis() - sntpStartedAt < CLOCK_WAIT_MS;
 }
 
@@ -2406,8 +2466,8 @@ void flushOfflineBuffer() {
     if (waitsForClock(r, now)) break;
 
     uint32_t epoch = r.epoch;
-    if (epoch == 0 && now > 1000000000 && r.upSecs != UINT32_MAX) {
-      epoch = (uint32_t)now - (millis() / 1000 - r.upSecs);
+    if (epoch == 0 && now > 1000000000 && r.upSecs != UPSECS_UNKNOWN) {
+      epoch = (uint32_t)((int64_t)now - ((int64_t)(millis() / 1000) - r.upSecs));
     }
     char ts[21] = "";
     if (epoch) {
@@ -3338,10 +3398,23 @@ void publishSensorData(int idx) {
   // uptime is kept instead, and the reading is dated when it is sent.
   time_t now = time(nullptr);
   r.epoch   = (now > 1000000000) ? (uint32_t)now : 0;   // after 2001 = synced
-  r.upSecs  = millis() / 1000;
+  r.upSecs  = (int32_t)(millis() / 1000);
   r.cfg_ver = s.cfg_ver;
   r.fw[0] = s.fw_major; r.fw[1] = s.fw_minor; r.fw[2] = s.fw_patch;
 
+  int n = ringAppend(r);
+
+  // Only a reading that is genuinely waiting on the cloud is worth a flash
+  // write; one loop() will send in a moment is not. Persisted from loop().
+  if (!cloudUp) {
+    Serial.printf("[Buffer] Queued reading (%d buffered)\n", n);
+    offlineBufDirty = true;
+  }
+}
+
+// Append to the reading ring; returns how many are queued. Callable from the
+// ESP-NOW callback: a few copies under the lock, nothing else.
+int ringAppend(const BufferedReading &r) {
   int n;
   portENTER_CRITICAL(&bufMux);
   offlineBuf[bufHead] = r;
@@ -3355,13 +3428,79 @@ void publishSensorData(int idx) {
   }
   n = bufCount;
   portEXIT_CRITICAL(&bufMux);
+  return n;
+}
 
-  // Only a reading that is genuinely waiting on the cloud is worth a flash
-  // write; one loop() will send in a moment is not. Persisted from loop().
-  if (!cloudUp) {
-    Serial.printf("[Buffer] Queued reading (%d buffered)\n", n);
-    offlineBufDirty = true;
+static void sendBacklogAck(const uint8_t *mac, const backlog_message *m) {
+  backlog_ack_message a = {};
+  a.msgType  = MSG_BACKLOG_ACK;
+  a.count    = m->count;
+  a.ref_ctr  = m->auth_ctr;
+  a.auth_ctr = authNextTxCtr();
+  authTagSelf(a.auth_ctr, (const uint8_t *)&a, BACKLOG_ACK_BODY_LEN, a.auth);
+  esp_now_send(mac, (const uint8_t *)&a, sizeof(a));
+}
+
+// Readings a sensor stored while it could not reach us. Runs in the ESP-NOW
+// callback: queue them and acknowledge, nothing slow. Sent oldest first and
+// before the sensor's current reading, so the ring -- and the cloud's alarm
+// evaluation after it -- sees them in the order they were taken.
+void handleBacklog(const esp_now_recv_info_t *info, const backlog_message *m) {
+  const uint8_t *src = info->src_addr;
+  int idx = findSensor(src);
+  if (idx < 0) return;   // not ours: no acknowledgement, so the sensor keeps them
+
+  uint8_t expect[AUTH_TAG_LEN];
+  authTag(src, m->auth_ctr, (const uint8_t *)m, BACKLOG_BODY_LEN, expect);
+  if (!authTagEqual(expect, m->auth)) {
+    Serial.println("[STORE] Dropped a backlog frame - bad tag");
+    return;
   }
+  // Checked before the replay rule: the sensor resends a frame, same counter,
+  // when our acknowledgement did not reach it. It is already queued.
+  if (m->auth_ctr == sensors[idx].backlogCtr) {
+    sendBacklogAck(src, m);
+    return;
+  }
+  if (sensors[idx].authCtrSeen != 0 && m->auth_ctr <= sensors[idx].authCtrSeen) {
+    Serial.printf("[STORE] Dropped a replayed backlog frame (ctr %u)\n", (unsigned)m->auth_ctr);
+    return;
+  }
+  sensors[idx].authCtrSeen = m->auth_ctr;
+
+  // The sensor sends ages; turn them into times. Without a clock yet, keep the
+  // uptime at which each was taken -- negative when it predates this boot, as
+  // after a power cut -- and let the flush date it once NTP has synced.
+  time_t   now   = time(nullptr);
+  uint32_t epoch = (now > 1000000000) ? (uint32_t)now : 0;
+  int32_t  upNow = (int32_t)(millis() / 1000);
+  int n = m->count > BACKLOG_PER_FRAME ? BACKLOG_PER_FRAME : m->count;
+  int queued = 0;
+  for (int i = 0; i < n; i++) {
+    const backlog_entry &e = m->e[i];
+    float temp = (e.temp_c100 == INT16_MIN) ? -999.0f : e.temp_c100 / 100.0f;
+    if (temp != -999.0f && (temp < -50 || temp > 100)) continue;   // as for live readings
+
+    BufferedReading r;
+    memcpy(r.mac, src, 6);
+    r.rssi    = (int8_t)info->rx_ctrl->rssi;
+    r.battery = e.battery;
+    r.temp    = temp;
+    r.hum     = -999;
+    r.epoch   = epoch ? epoch - e.age_s : 0;
+    r.upSecs  = upNow - (int32_t)e.age_s;
+    r.cfg_ver = m->cfg_ver;
+    r.fw[0] = m->fw_major; r.fw[1] = m->fw_minor; r.fw[2] = m->fw_patch;
+    ringAppend(r);
+    queued++;
+  }
+  sensors[idx].backlogCtr = m->auth_ctr;
+  sendBacklogAck(src, m);
+
+  if (!cloudUp) offlineBufDirty = true;
+  Serial.printf("[STORE] %d stored reading(s) from %02X:%02X:%02X:%02X:%02X:%02X, oldest %u min old\n",
+                queued, src[0], src[1], src[2], src[3], src[4], src[5],
+                n ? (unsigned)(m->e[0].age_s / 60) : 0);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -3786,6 +3925,11 @@ void OnDataRecv(const esp_now_recv_info_t* esp_now_info,
     const ota_done_message* d = (const ota_done_message*)incomingDataBytes;
     sOtaDoneResult = d->result;
     sOtaDoneReady  = true;
+    return;
+  }
+
+  if (msgType == MSG_BACKLOG && len >= (int)sizeof(backlog_message)) {
+    handleBacklog(esp_now_info, (const backlog_message*)incomingDataBytes);
     return;
   }
 

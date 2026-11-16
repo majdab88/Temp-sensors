@@ -80,11 +80,21 @@ file as a description of reality.
 - **BLE provisioning** via NimBLE (replaced WiFiManager). The mobile app or
   `ble-provision.html` pushes WiFi credentials; no captive portal, no IP typing.
 - Receives sensor data over ESP-NOW, encrypted with a shared PMK/LMK.
-- Publishes readings to the cloud over MQTT/TLS; **buffers to NVS when offline**
-  (`OFFLINE_BUFFER_SIZE` 50) and flushes on reconnect.
+- **Listens before it connects.** ESP-NOW starts on channel 1 at boot, before
+  WiFi; WiFi gets one 10 s attempt, then `maintainWiFi()` retries every 30 s.
+  The hub never restarts for lack of WiFi — after a power cut the router is
+  often the last thing back.
+- Publishes readings to the cloud over MQTT/TLS. Every reading passes through
+  one ring (`OFFLINE_BUFFER_SIZE` 500) that `loop()` drains; while the cloud is
+  down it simply fills, and the newest entries are mirrored to NVS.
+- The broker certificate is **validated** against the four ISRG roots, with
+  hostname check — no `setInsecure()`.
 - Serves a local dashboard and JSON API for on-site use without the cloud.
 - Tracks up to `MAX_SENSORS` (10) sensors by MAC; syncs its list with the cloud.
-- Syncs time via NTP (UTC+2, +1 h DST).
+- Pairing approval: with the cloud connected, a request nobody approves within
+  60 s is **rejected**. Auto-accept only when the cloud is unreachable.
+- Syncs time via NTP (UTC+2, +1 h DST), without blocking; readings taken
+  before the clock is set are dated from uptime when sent.
 - Relays remote management to sensors: config, live mode, firmware.
 - Takes its **own** firmware over the air, signed and rollback-protected.
 - Hold BOOT (GPIO 9) or external D0 (GPIO 0) for 3 s to erase credentials.
@@ -462,7 +472,7 @@ Set the **ESP-PROG VDD jumper to 3.3 V** before connecting; 5 V will damage the 
 | Constant | Value | Notes |
 |----------|-------|-------|
 | `MAX_SENSORS` | 10 | Also the size of the staging and live-request tables |
-| `OFFLINE_BUFFER_SIZE` | 50 | Readings held in NVS while MQTT is down |
+| `OFFLINE_BUFFER_SIZE` | 500 | Reading ring in RAM (~12 h for ten sensors); newest 25 mirrored to NVS |
 | `OTA_MAX_BOOT_TRIES` | 3 | Attempts before reverting to the other slot |
 | `OTA_VERIFY_WINDOW_MS` | 300000 | 5 min per attempt → ~15 min to revert |
 | `NTP_SYNC_INTERVAL` | 86400000 ms | Re-sync every 24 h |
@@ -682,6 +692,16 @@ dashboard reporting "Failed to load sensors" rather than one absent field.
   queued behind it.
 - Send anything the node must receive **before** `updateSensor()`.
 - Hand anything slow to `loop()` via a flag.
+- **Never touch `mqttClient` here**, not even `connected()`. PubSubClient and
+  the TLS socket belong to the loop task. Readings go into the ring, small
+  messages through `cloudPublish()` (which queues when called off the loop
+  task), and the callback reads `cloudUp` to know whether the cloud is there.
+- Nothing that waits for the clock: `getLocalTime()` polls for 5 s by default
+  while it is unset, which is normal for a while after boot. Pass `0`.
+- An MQTT command can arrive **in the middle of a sensor transfer** — every
+  progress report pumps the client. Handlers must record, not act: the sensor
+  firmware stage handler once dropped such a command, and since a retained
+  message is delivered once per subscription, the sensor was never staged.
 - Take the radio (`sOtaRunning`) for the whole handshake, not just the transfer,
   and release it on **every** exit path.
 

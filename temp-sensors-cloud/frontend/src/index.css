@@ -1027,6 +1027,18 @@ tbody tr:hover td { background: #f8fafc; }
   margin-top: 4px;
 }
 
+/* Firmware page: why an update did not happen, under its row */
+.ota-note {
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--text-2);
+  margin: 3px 0 6px;
+  padding-left: 8px;
+  border-left: 2px solid var(--border);
+}
+.ota-note b { font-weight: 600; color: var(--text-1); }
+.ota-note-bad { border-left-color: #dc2626; }
+
 /* WiFi scan header row */
 .prov-scan-hdr {
   display: flex;

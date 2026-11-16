@@ -568,11 +568,15 @@ async function handleLiveState(hubMac, data) {
   const interval = Number.isInteger(data.interval_s) ? data.interval_s : null;
 
   try {
+    // $3 is cast: node-postgres sends parameters untyped, and inside a CASE
+    // with a NULL branch Postgres infers text, which the integer column then
+    // refuses. Every "started" report failed that way, so a live session never
+    // reached the database and the dashboard never showed one.
     const r = await query(
       `UPDATE sensors
           SET live_until       = CASE WHEN $1 THEN NOW() + ($2 || ' seconds')::interval
                                       ELSE NULL END,
-              live_interval_s  = CASE WHEN $1 THEN $3 ELSE NULL END,
+              live_interval_s  = CASE WHEN $1 THEN $3::int ELSE NULL END,
               live_requested_at = NULL
         WHERE mac = $4
         RETURNING id, live_until, live_interval_s`,

@@ -67,7 +67,7 @@ void confirmFirmwareValid();
 #define FW_MINOR 1
 #endif
 #ifndef FW_PATCH
-#define FW_PATCH 21
+#define FW_PATCH 22
 #endif
 #define STR_(x) #x
 #define STR(x)  STR_(x)
@@ -457,6 +457,11 @@ const unsigned long NTP_SYNC_INTERVAL  = 86400000;  // 24 h
 
 bool          timeConfigured = false;
 static bool   sntpStarted    = false;   // configTime() has been called once
+static unsigned long sntpStartedAt = 0;
+// How long queued readings wait for the clock after SNTP starts, so they can
+// be dated, before going out undated. NTP answers in a few seconds; this only
+// runs out where it is blocked.
+const unsigned long CLOCK_WAIT_MS = 60000;
 unsigned long lastNtpSync    = 0;
 
 // --- MESSAGE STRUCTURE (must be byte-for-byte identical on hub and all sensors) ---
@@ -2351,10 +2356,24 @@ void loadOfflineBuffer() {
   bp.end();
 }
 
+static bool waitsForClock(const BufferedReading& r, time_t now) {
+  return r.epoch == 0 && r.upSecs != UINT32_MAX && now <= 1000000000 &&
+         sntpStarted && millis() - sntpStartedAt < CLOCK_WAIT_MS;
+}
+
 // Send queued readings in order. loop() calls this whenever the cloud is up,
 // so it is also the normal path for every live reading, not just a recovery.
 void flushOfflineBuffer() {
   if (bufCount == 0) return;
+  {
+    // Checked quietly up front too: loop() calls this every pass while the
+    // head waits for the clock, and the backlog messages below would repeat.
+    BufferedReading head;
+    portENTER_CRITICAL(&bufMux);
+    head = offlineBuf[bufTail];
+    portEXIT_CRITICAL(&bufMux);
+    if (waitsForClock(head, time(nullptr))) return;
+  }
   bool backlog = bufCount > 1;
   if (backlog) Serial.printf("[Buffer] Flushing %d buffered reading(s)...\n", (int)bufCount);
 
@@ -2374,6 +2393,14 @@ void flushOfflineBuffer() {
     // arrived. One restored from before a reboot cannot be, and goes undated
     // -- the cloud then uses its own receive time.
     time_t now = time(nullptr);
+
+    // After a power cut the router returns, and MQTT connects in the same
+    // loop pass that starts SNTP -- seconds before the clock is set. Sending
+    // then would put every reading of the outage on the moment of the flush,
+    // which is what happened to the first real one. Hold a datable reading
+    // until the clock is set; give up after CLOCK_WAIT_MS, NTP may be blocked.
+    if (waitsForClock(r, now)) break;
+
     uint32_t epoch = r.epoch;
     if (epoch == 0 && now > 1000000000 && r.upSecs != UINT32_MAX) {
       epoch = (uint32_t)now - (millis() / 1000 - r.upSecs);
@@ -4177,7 +4204,8 @@ void onWiFiUp() {
   if (!sntpStarted) {
     // Non-blocking: SNTP keeps trying by itself; maintainTime() notices.
     configTime(gmtOffset_sec, daylightOffset_sec, ntpServer);
-    sntpStarted = true;
+    sntpStarted   = true;
+    sntpStartedAt = millis();
   }
 }
 

@@ -115,7 +115,7 @@
 #define FW_MINOR 1
 #endif
 #ifndef FW_PATCH
-#define FW_PATCH 13
+#define FW_PATCH 14
 #endif
 #define STR_(x) #x
 #define STR(x)  STR_(x)
@@ -196,32 +196,65 @@
 #define RETRY_DELAY_MS 100
 #define TX_TIMEOUT_MS  500
 
-// --- FAILURE HANDLING / BACKOFF ---
-// A failed wake costs far more than a good one -- retries, and sometimes a
-// channel rescan -- so a node that cannot reach its hub stops trying at the
-// normal interval. After BACKOFF_AFTER_FAILED_WAKES failures in a row it waits
-// 1 h, then 2 h, then 4 h, then every 6 h, rescanning the channel each time
-// (the hub may have come back on a different one). The first good delivery
-// returns it to its configured interval.
+// --- FAILURE HANDLING: QUICK AND FULL ATTEMPTS ---
+// A node that cannot reach its hub keeps its normal schedule: it wakes, takes
+// its reading, stores it (see STORE AND FORWARD) and tries the hub. What it
+// rations is the expensive part of trying.
 //
-// This replaced a "hibernate" that stopped the timer altogether and waited for
-// a button press. At a 15 min interval that took one hour of hub outage --
-// an unplugged hub, a long OTA, a power cut -- and then every sensor on the
-// site needed someone to walk up to it, on nodes meant to sit untouched for
-// years. Backing off keeps the cost of a long outage small (one failed wake
-// every 6 h is roughly 1 mAh a day) while the node recovers on its own.
+// For the first BACKOFF_AFTER_FAILED_WAKES failures every attempt is a full
+// one -- MAX_RETRIES sends, and a channel rescan at the second failure. After
+// that the hub counts as down, and attempts split in two:
+//   - a QUICK attempt on every wake: one send on the cached channel, no
+//     retries, no scan. It costs about what a normal wake does, so an outage
+//     costs about what normal running does, and when the hub comes back on
+//     its old channel -- the usual case -- readings resume within one interval.
+//   - a FULL attempt once per FULL_ATTEMPT_INTERVAL_S: rescan the channel (the
+//     hub may have come back on a different one) and the full retries.
 //
-// A button press still resets everything and tries straight away.
-#define BACKOFF_AFTER_FAILED_WAKES 4      // 4 x 15 min = 1 h at the normal interval first
-#define BACKOFF_FIRST_S            3600   // then 1 h, doubling...
-#define BACKOFF_MAX_S              21600  // ...up to 6 h
-#define RESCAN_ON_FAILURE_AT_COUNT 2      // rescan once early, before backing off
+// This replaced a backoff to 1, 2, 4 and then 6 h between attempts, which kept
+// a long outage cheap but left a node silent for up to 6 h after its hub had
+// returned. Before that, a "hibernate" waited for a button press outright.
+//
+// A button press still resets everything and does a full attempt at once.
+#define BACKOFF_AFTER_FAILED_WAKES 4      // 4 x 15 min = 1 h of full attempts first
+#define FULL_ATTEMPT_INTERVAL_S    3600   // then a full attempt hourly, quick ones between
+#define RESCAN_ON_FAILURE_AT_COUNT 2      // rescan once early, before the hub counts as down
                                           // (hub may have moved to a different channel)
 
 // RTC_DATA_ATTR variables persist across deep sleep. Reset on power-on and
 // (usually) on brownout — both events look like a fresh start where TX
 // should be attempted again, so that's the correct behavior.
 RTC_DATA_ATTR uint32_t consecutive_failed_wakes = 0;
+RTC_DATA_ATTR uint32_t lastFullAttemptS = 0;   // nowS() of the last full attempt in an outage
+
+// --- STORE AND FORWARD ---
+// A reading the hub did not get is kept here and sent on the next contact,
+// oldest first, before the current reading. Without it, everything taken while
+// the hub was unreachable -- unplugged, rebooting, a power cut -- was lost.
+//
+// RTC memory, not flash: it survives deep sleep, costs no flash wear, and needs
+// no write per wake. A power cycle loses it, as it loses the node's clock that
+// the stored times are measured on, so nothing is kept across one (storeInit).
+//
+// 300 readings is 75 h at a 15 min interval; past that the oldest go first.
+// Each is sent with its age, not a time -- the node has no real clock, only one
+// that counts from power-on and keeps running through deep sleep. The hub turns
+// the age into a time.
+#define STORE_MAX     300
+#define STORE_MAGIC   0x46445331u   // "1SDF"; anything else means the store is not ours
+#define BACKLOG_ACK_MS 100          // the hub answers from its receive callback
+
+typedef struct {
+  uint32_t takenS;      // nowS() when taken
+  int16_t  temp_c100;   // hundredths of a degree; INT16_MIN = probe error
+  uint8_t  battery;
+  uint8_t  pad;
+} stored_reading;
+
+RTC_DATA_ATTR uint32_t       storeMagic = 0;
+RTC_DATA_ATTR uint16_t       storeHead  = 0;   // next write slot
+RTC_DATA_ATTR uint16_t       storeCount = 0;
+RTC_DATA_ATTR stored_reading store[STORE_MAX];
 
 // --- PAIRING ATTEMPTS ---
 // An unpaired node is awake almost the whole time it is asking (a 70 s
@@ -381,6 +414,51 @@ typedef struct __attribute__((packed)) {
 static volatile bool     g_liveRequested = false;
 static volatile uint16_t g_liveDuration  = 0;
 static volatile uint16_t g_liveInterval  = 0;
+
+// --- STORE AND FORWARD (sensor -> hub, then an acknowledgement back) ---
+// Byte-for-byte identical on hub and sensor; see the hub for the full notes.
+// Acknowledged explicitly because the radio's own ACK only says a frame
+// arrived: a hub that does not know this message type would ACK it and drop
+// it, and the node would delete readings nobody kept.
+#define MSG_BACKLOG       11   // sensor -> hub: readings the hub missed
+#define MSG_BACKLOG_ACK   12   // hub -> sensor: those readings are queued
+#define BACKLOG_PER_FRAME 24
+
+typedef struct __attribute__((packed)) {
+  uint32_t age_s;
+  int16_t  temp_c100;
+  uint8_t  battery;
+  uint8_t  pad;
+} backlog_entry;
+
+typedef struct __attribute__((packed)) {
+  uint8_t       msgType;
+  uint8_t       count;
+  uint16_t      cfg_ver;
+  uint8_t       fw_major;
+  uint8_t       fw_minor;
+  uint8_t       fw_patch;
+  uint8_t       pad;
+  backlog_entry e[BACKLOG_PER_FRAME];   // oldest first
+  uint32_t      auth_ctr;
+  uint8_t       auth[AUTH_TAG_LEN];
+} backlog_message;
+
+#define BACKLOG_BODY_LEN offsetof(backlog_message, auth_ctr)
+static_assert(sizeof(backlog_message) <= 250, "must fit an ESP-NOW v1 frame");
+
+typedef struct __attribute__((packed)) {
+  uint8_t  msgType;
+  uint8_t  count;
+  uint16_t pad;
+  uint32_t ref_ctr;
+  uint32_t auth_ctr;
+  uint8_t  auth[AUTH_TAG_LEN];
+} backlog_ack_message;
+
+#define BACKLOG_ACK_BODY_LEN offsetof(backlog_ack_message, auth_ctr)
+
+static volatile uint32_t g_backlogAckCtr = 0;   // ref_ctr of the last acknowledgement
 
 
 #define OTA_MAX_CHUNK      1024   // largest payload the sensor will accept
@@ -564,6 +642,10 @@ uint8_t broadcastAddress[] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF};
 
 volatile bool tx_success  = false;
 volatile bool tx_complete = false;
+
+// Set when this wake reached the hub. A wake that did not skips the log burst
+// and the config window before sleeping: both talk to a hub that is not there.
+static bool g_hubReached = false;
 
 static float g_bat_v = 3.3f; // Set by getBatteryInfo(); used in readNTC() for VCC estimation
 
@@ -1028,7 +1110,7 @@ void otaMaybeUpdate(int batteryPct) {
 
 bool        readSensor();
 BatteryInfo getBatteryInfo();
-bool        sendDataWithRetry();
+bool        sendDataWithRetry(int tries = MAX_RETRIES);
 
 // Schedule a live session. The node does not stay awake for it: it sleeps
 // between readings exactly as it always does, just for less time. Five minutes
@@ -1122,8 +1204,13 @@ void goToSleep(int seconds) {
   Serial.printf("Sleeping for %d seconds...\n\n", seconds);
   Serial.flush();         // Ensure serial output completes
 
-  sendLogToHub();         // Ship the wake-cycle log to the hub via ESP-NOW
-  waitForConfig();        // Brief window for a config or live request
+  // Both talk to the hub. A paired node that could not reach it this wake --
+  // every quick attempt during an outage -- skips them rather than sending a
+  // log nobody receives and listening for a config nobody sends.
+  if (!isPaired || g_hubReached) {
+    sendLogToHub();       // Ship the wake-cycle log to the hub via ESP-NOW
+    waitForConfig();      // Brief window for a config or live request
+  }
 
   // Handled here, with the radio still up, so live mode costs no extra
   // listening on a wake where nobody asked for it.
@@ -1162,14 +1249,108 @@ void goToButtonOnlySleep() {
   esp_deep_sleep_start();
 }
 
-// How long to sleep after the n-th consecutive failed wake. Never shorter than
-// the configured interval: backing off must not mean reporting faster.
-static uint32_t backoffSeconds(uint32_t failures) {
-  if (failures < BACKOFF_AFTER_FAILED_WAKES) return g_sleepSecs;
-  uint32_t steps = failures - BACKOFF_AFTER_FAILED_WAKES;     // 0 -> 1 h, 1 -> 2 h, ...
-  uint32_t s = (steps >= 3) ? BACKOFF_MAX_S : (BACKOFF_FIRST_S << steps);
-  if (s > BACKOFF_MAX_S) s = BACKOFF_MAX_S;
-  return s < g_sleepSecs ? g_sleepSecs : s;
+// --- STORE AND FORWARD ---
+// Seconds since power-on. The system clock keeps running through deep sleep and
+// is never set on a sensor, so this is a monotonic count the stored readings'
+// ages are measured against.
+static uint32_t nowS() {
+  struct timeval tv;
+  gettimeofday(&tv, nullptr);
+  return (uint32_t)tv.tv_sec;
+}
+
+// Keep the store only across a deep-sleep wake. After any other reset -- power
+// on, brownout, a restart, booting a new image -- the clock it was measured on
+// may have restarted, and RTC memory may not be what this image laid out.
+static void storeInit() {
+  bool keep = esp_reset_reason() == ESP_RST_DEEPSLEEP && storeMagic == STORE_MAGIC &&
+              storeCount <= STORE_MAX && storeHead < STORE_MAX;
+  if (!keep) {
+    storeMagic       = STORE_MAGIC;
+    storeHead        = 0;
+    storeCount       = 0;
+    lastFullAttemptS = 0;
+  }
+}
+
+static void storePush(float temp, uint8_t battery) {
+  stored_reading &r = store[storeHead];
+  r.takenS    = nowS();
+  r.temp_c100 = (temp == -999) ? INT16_MIN : (int16_t)lroundf(temp * 100.0f);
+  r.battery   = battery;
+  r.pad       = 0;
+  storeHead = (storeHead + 1) % STORE_MAX;
+  if (storeCount < STORE_MAX) storeCount++;   // full: the oldest is overwritten
+}
+
+static const stored_reading &storeOldest(uint16_t i) {   // i-th oldest
+  return store[(storeHead + STORE_MAX - storeCount + i) % STORE_MAX];
+}
+
+enum BacklogResult { BL_DONE, BL_NO_HUB, BL_NO_ACK };
+
+// Send the stored readings, oldest first, BACKLOG_PER_FRAME at a time. Each
+// frame is deleted only once the hub has acknowledged it.
+//
+//   BL_DONE    everything delivered (or nothing was stored)
+//   BL_NO_HUB  the radio could not reach the hub at all
+//   BL_NO_ACK  the hub is there but did not acknowledge -- firmware that does
+//              not know store-and-forward, or a hub that does not know this
+//              node. The readings stay; the current one is still sent, so a
+//              node ahead of its hub keeps reporting live.
+static BacklogResult deliverBacklog(int tries) {
+  while (storeCount > 0) {
+    backlog_message m = {};
+    m.msgType  = MSG_BACKLOG;
+    m.cfg_ver  = g_cfg_ver;
+    m.fw_major = FW_MAJOR;
+    m.fw_minor = FW_MINOR;
+    m.fw_patch = FW_PATCH;
+    uint16_t n = storeCount > BACKLOG_PER_FRAME ? BACKLOG_PER_FRAME : storeCount;
+    m.count = (uint8_t)n;
+    uint32_t now = nowS();
+    for (uint16_t i = 0; i < n; i++) {
+      const stored_reading &r = storeOldest(i);
+      m.e[i].age_s     = now >= r.takenS ? now - r.takenS : 0;
+      m.e[i].temp_c100 = r.temp_c100;
+      m.e[i].battery   = r.battery;
+    }
+    // One counter for the frame and all its resends, as for readings: the hub
+    // recognises a resend by it and acknowledges again without queueing twice.
+    m.auth_ctr = authNextCtr();
+    {
+      uint8_t self[6];
+      WiFi.macAddress(self);
+      authTag(self, m.auth_ctr, (const uint8_t *)&m, BACKLOG_BODY_LEN, m.auth);
+    }
+
+    bool reached = false, acked = false;
+    for (int t = 0; t < tries && !acked; t++) {
+      tx_complete = false;
+      tx_success  = false;
+      if (esp_now_send(hubMac, (const uint8_t *)&m, sizeof(m)) != ESP_OK) {
+        delay(RETRY_DELAY_MS);
+        continue;
+      }
+      unsigned long start = millis();
+      while (!tx_complete && millis() - start < TX_TIMEOUT_MS) delay(2);
+      if (!tx_success) { delay(RETRY_DELAY_MS); continue; }
+
+      reached = true;
+      start = millis();
+      while (g_backlogAckCtr != m.auth_ctr && millis() - start < BACKLOG_ACK_MS) delay(2);
+      acked = (g_backlogAckCtr == m.auth_ctr);
+      if (!acked) break;   // it heard us and said nothing; resending will not change that
+    }
+    if (!acked) {
+      ulog("[STORE] %s - keeping %u reading(s)\n",
+           reached ? "Hub did not acknowledge" : "Hub not reached", storeCount);
+      return reached ? BL_NO_ACK : BL_NO_HUB;
+    }
+    storeCount -= n;
+    ulog("[STORE] Delivered %u stored reading(s), %u left\n", n, storeCount);
+  }
+  return BL_DONE;
 }
 
 // --- CALLBACKS ---
@@ -1248,6 +1429,16 @@ void OnDataRecv(const esp_now_recv_info_t *esp_now_info, const uint8_t *incoming
     g_liveDuration  = lm->duration_s;
     g_liveInterval  = lm->interval_s;
     g_liveRequested = true;
+    return;
+  }
+
+  if (incomingData[0] == MSG_BACKLOG_ACK && len >= (int)sizeof(backlog_ack_message)) {
+    const backlog_ack_message *a = (const backlog_ack_message *)incomingData;
+    // Authenticated like any hub frame: a forged acknowledgement would make
+    // the node delete readings the hub never kept.
+    if (!authCheckFromHub(esp_now_info->src_addr, a->auth_ctr,
+                          incomingData, BACKLOG_ACK_BODY_LEN, a->auth)) return;
+    g_backlogAckCtr = a->ref_ctr;
     return;
   }
 
@@ -1522,7 +1713,7 @@ BatteryInfo getBatteryInfo() {
 }
 
 // --- SEND WITH RETRIES ---
-bool sendDataWithRetry() {
+bool sendDataWithRetry(int tries) {
 #ifdef OTA_ROLLBACK_TEST
   // Built deliberately broken, to prove the rollback path works. The node boots
   // and behaves normally in every other way -- it simply never delivers a
@@ -1541,14 +1732,14 @@ bool sendDataWithRetry() {
     authTag(self, myData.auth_ctr, (const uint8_t *)&myData, AUTH_BODY_LEN, myData.auth);
   }
 
-  for (int retry = 0; retry < MAX_RETRIES; retry++) {
+  for (int retry = 0; retry < tries; retry++) {
     tx_complete = false;
     tx_success  = false;
 
     esp_err_t result = esp_now_send(hubMac, (uint8_t *)&myData, sizeof(myData));
 
     if (result != ESP_OK) {
-      Serial.printf("✗ Send error: 0x%X  Retry %d/%d\n", result, retry+1, MAX_RETRIES);
+      Serial.printf("✗ Send error: 0x%X  Retry %d/%d\n", result, retry+1, tries);
       delay(RETRY_DELAY_MS);
       continue;
     }
@@ -1566,7 +1757,7 @@ bool sendDataWithRetry() {
 
     Serial.printf("✗ %s  Retry %d/%d\n",
       tx_complete ? "No ACK" : "Timeout",
-      retry+1, MAX_RETRIES);
+      retry+1, tries);
     delay(RETRY_DELAY_MS);
   }
 
@@ -1677,6 +1868,7 @@ void setup() {
   // battery rest / warm up before trying again.
   esp_reset_reason_t reset_reason = esp_reset_reason();
   ulog("Reset reason: %d\n", (int)reset_reason);
+  storeInit();   // first: a brownout below returns early, and must clear it
   if (reset_reason == ESP_RST_BROWNOUT) {
     ulog("⚠ Brownout on previous boot — skipping wake cycle\n");
     esp_sleep_enable_timer_wakeup((uint64_t)g_sleepSecs * 1000000ULL);
@@ -1762,6 +1954,17 @@ void setup() {
     WIFI_PROTOCOL_11B | WIFI_PROTOCOL_11G |
     WIFI_PROTOCOL_11N | WIFI_PROTOCOL_LR);
 
+  // Quick or full attempt (see FAILURE HANDLING). Until the hub counts as down
+  // every attempt is full; after that, one per FULL_ATTEMPT_INTERVAL_S is.
+  uint32_t nowSec      = nowS();
+  bool     outage      = isPaired && consecutive_failed_wakes >= BACKOFF_AFTER_FAILED_WAKES;
+  bool     fullAttempt = !outage || force_rescan_this_cycle ||
+                         nowSec - lastFullAttemptS >= FULL_ATTEMPT_INTERVAL_S;
+  if (outage && fullAttempt) lastFullAttemptS = nowSec;
+  int      tries       = fullAttempt ? MAX_RETRIES : 1;
+  if (outage) ulog("[TX] Hub down - %s attempt, %u stored\n",
+                   fullAttempt ? "full" : "quick", storeCount);
+
   bool scanned_this_wake = false;
   {
     preferences.begin("network", true);
@@ -1773,14 +1976,14 @@ void setup() {
     //   2. We woke via a D0 button press (user wants a fresh attempt; the
     //      cached channel may be stale — hub may have moved to a different
     //      channel since the last successful TX), OR
-    //   3. This is a backoff attempt: the hub has been unreachable for an hour
-    //      or more, and coming back on a different channel is a likely reason.
-    //      At one attempt per hour or more the scan costs next to nothing.
-    // Otherwise use the cached value to save the ~1.5 s scan energy cost.
-    bool backing_off = isPaired && consecutive_failed_wakes >= BACKOFF_AFTER_FAILED_WAKES;
-    if (ch == 0 || force_rescan_this_cycle || backing_off) {
+    //   3. This is the hourly full attempt during an outage: the hub has been
+    //      unreachable for an hour or more, and coming back on a different
+    //      channel is a likely reason. Once an hour, the scan costs little.
+    // Otherwise use the cached value to save the ~1.5 s scan energy cost --
+    // including on every quick attempt.
+    if (ch == 0 || force_rescan_this_cycle || (outage && fullAttempt)) {
       const char *why = (ch == 0) ? "no cached channel"
-                      : force_rescan_this_cycle ? "button-press wake" : "backoff attempt";
+                      : force_rescan_this_cycle ? "button-press wake" : "hourly full attempt";
       scanned_this_wake = true;
       ulog("[CH] Rescanning (%s)...\n", why);
       ch = detectWiFiChannel();
@@ -1834,7 +2037,18 @@ void setup() {
     // never scan.
     if (scanned_this_wake) delay(500);
 
-    bool tx_ok = sendDataWithRetry();
+    // Stored readings first, oldest first, then the current one: the cloud
+    // evaluates alarms in the order readings arrive. If the stored ones cannot
+    // reach the hub at all, neither will this one -- do not spend the retries.
+    auto attempt = [&](int n) -> bool {
+      BacklogResult bl = storeCount ? deliverBacklog(n) : BL_DONE;
+      if (bl == BL_NO_HUB) return false;
+      g_hubReached = true;   // the backlog got through, or at least was heard
+      return sendDataWithRetry(n);
+    };
+
+    bool tx_ok = attempt(tries);
+    if (tx_ok) g_hubReached = true;
 
     if (tx_ok) {
       // Success — clear failure state.
@@ -1857,8 +2071,8 @@ void setup() {
       ulog("✗ TX failed. Consecutive failures: %u\n", consecutive_failed_wakes);
 
       // One early rescan, in case the hub moved to a different WiFi channel
-      // (router reboot etc.). Once backing off, every attempt rescans before
-      // it transmits instead (see the channel block above).
+      // (router reboot etc.). Once the hub counts as down, the hourly full
+      // attempt rescans before it transmits instead (see the channel block).
       if (consecutive_failed_wakes == RESCAN_ON_FAILURE_AT_COUNT) {
         ulog("Trying channel rescan (hub may have moved channels)...\n");
         uint8_t new_ch = detectWiFiChannel();
@@ -1866,21 +2080,26 @@ void setup() {
         preferences.putUChar("channel", new_ch);
         preferences.end();
         esp_wifi_set_channel(new_ch, WIFI_SECOND_CHAN_NONE);
-        if (sendDataWithRetry()) {
+        if (attempt(MAX_RETRIES)) {
           ulog("✓ TX succeeded after rescan — clearing failure counter\n");
+          tx_ok = true;
+          g_hubReached = true;
           consecutive_failed_wakes = 0;
           otaConfirmImage();
         }
       }
 
-      if (consecutive_failed_wakes >= BACKOFF_AFTER_FAILED_WAKES) {
-        // A live session would override the sleep below with its short
-        // interval. Nobody is getting live readings from a node that cannot
-        // reach its hub, so end it.
-        liveCyclesLeft = 0;
-        uint32_t s = backoffSeconds(consecutive_failed_wakes);
-        ulog("→ Hub unreachable - backing off, next attempt in %u min\n", (unsigned)(s / 60));
-        goToSleep(s);   // Does not return.
+      if (!tx_ok) {
+        // Kept for the next contact rather than lost.
+        storePush(myData.temp, myData.battery);
+        ulog("[STORE] Kept this reading - %u stored\n", storeCount);
+
+        if (consecutive_failed_wakes >= BACKOFF_AFTER_FAILED_WAKES) {
+          // A live session would override the sleep below with its short
+          // interval. Nobody is getting live readings from a node that cannot
+          // reach its hub, so end it.
+          liveCyclesLeft = 0;
+        }
       }
     }
 

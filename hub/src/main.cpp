@@ -50,6 +50,8 @@ float jsonGetFloat(const String& json, const String& key);
 void saveOfflineBuffer();
 void loadOfflineBuffer();
 void performOtaUpdate();
+void onWiFiUp();
+void maintainTime();
 void checkOtaPendingVerify();
 void confirmFirmwareValid();
 
@@ -445,6 +447,7 @@ static const uint8_t LMK_KEY[16] = {
 
 // --- TIMEOUTS ---
 #define WIFI_CONNECT_TIMEOUT_MS 30000  // ms to wait for WiFi after credentials received
+#define WIFI_BOOT_TRY_MS        10000  // ms of the one boot attempt before loop() retries
 
 // --- NTP CONFIGURATION ---
 const char*         ntpServer          = "pool.ntp.org";
@@ -453,6 +456,7 @@ const int           daylightOffset_sec = 3600;
 const unsigned long NTP_SYNC_INTERVAL  = 86400000;  // 24 h
 
 bool          timeConfigured = false;
+static bool   sntpStarted    = false;   // configTime() has been called once
 unsigned long lastNtpSync    = 0;
 
 // --- MESSAGE STRUCTURE (must be byte-for-byte identical on hub and all sensors) ---
@@ -1233,9 +1237,12 @@ void startBleProvisioning() {
 // EXISTING FUNCTIONS (unchanged)
 // ─────────────────────────────────────────────────────────────────────────────
 
+// Called from the ESP-NOW callback. The 0 matters: getLocalTime() otherwise
+// polls for up to 5 s while the clock is unset, which -- now that the hub
+// runs before NTP has synced -- would stall the WiFi task on every reading.
 void printCurrentTime() {
   struct tm timeinfo;
-  if (!getLocalTime(&timeinfo)) { Serial.println("Failed to obtain time"); return; }
+  if (!getLocalTime(&timeinfo, 0)) { Serial.println("time not set"); return; }
   Serial.println(&timeinfo, "%d/%m/%y - %H:%M:%S");
 }
 
@@ -4063,7 +4070,6 @@ void setup() {
   strncpy(wifiSsid, storedSsid.c_str(), sizeof(wifiSsid) - 1);
   strncpy(wifiPass, storedPass.c_str(), sizeof(wifiPass) - 1);
 
-  Serial.printf("Connecting to WiFi: %s\n", wifiSsid);
   WiFi.mode(WIFI_AP_STA);
   WiFi.setTxPower(WIFI_POWER_19_5dBm);
   esp_wifi_set_protocol(WIFI_IF_STA, WIFI_PROTOCOL_11B | WIFI_PROTOCOL_11G |
@@ -4072,65 +4078,45 @@ void setup() {
   // maintainWiFi() in loop() issues one targeted reconnect attempt every 30 s.
   WiFi.setAutoReconnect(false);
   WiFi.onEvent(onWiFiEvent);
-  WiFi.begin(wifiSsid, wifiPass);
-
-  unsigned long wifiStart = millis();
-  while (WiFi.status() != WL_CONNECTED) {
-    // Escape hatch for an unreachable saved network. Without this, a bad/gone
-    // WiFi makes the 30 s timeout → ESP.restart() cycle repeat forever and
-    // loop() (where the BOOT-button reset lives) is never reached, so the
-    // button appears dead. A 3 s hold here erases creds and re-provisions.
-    checkReprovisionButton();
-    if (millis() - wifiStart > WIFI_CONNECT_TIMEOUT_MS) {
-      // Network outage / router down — keep credentials and restart so the
-      // boot logic tries again. Wiping NVS here would force the user to
-      // re-provision after any transient disconnect (router reboot, ISP outage).
-      // The BOOT button is the only sanctioned way to clear WiFi creds.
-      Serial.println("WiFi connection timed out — restarting (credentials preserved).");
-      ESP.restart();
-    }
-    delay(200);
-  }
-  Serial.printf("✓ WiFi connected! IP: %s\n", WiFi.localIP().toString().c_str());
   esp_wifi_set_ps(WIFI_PS_NONE);  // disable power save — radio must always be listening
 
-  // ── MQTT cloud uplink ────────────────────────────────────────────────────
+  // ── Listen for sensors before waiting for the router ────────────────────
+  // The hub used to wait for WiFi, restart every 30 s until it got it, and
+  // only then start ESP-NOW. After a power cut the router is often the last
+  // thing back, so the hub acknowledged nothing, the sensors gave up on it,
+  // and the offline buffer -- which exists for exactly this -- was never
+  // reached. Now the hub listens first, on channel 1 (the channel sensors
+  // fall back to when they cannot see the hub's AP), and readings queue
+  // until the cloud is reachable.
+  //
+  // The hidden AP is required internally for ESP-NOW; it should not be visible
+  // to end users. It starts on channel 1 and follows the STA to the router's
+  // channel when WiFi connects -- AP and STA always share a channel on ESP32.
+  WiFi.softAP("TempHub-AP", "", 1, /*hidden=*/1);
+
   loadCloudConfig();
-  if (cloudConfigured) {
-    buildTopics();
-    connectCloud();  // non-fatal if it fails; maintainCloud() retries in loop()
-  }
+  if (cloudConfigured) buildTopics();
 
-  // Hide the AP — it is required internally for ESP-NOW but should not be
-  // visible to end users.  Must be called after STA connects so the channel
-  // is known; AP and STA must share the same channel on ESP32.
-  WiFi.softAP("TempHub-AP", "", WiFi.channel(), /*hidden=*/1);
-
-  // ── mDNS — device is reachable at http://temp-master.local/ ─────────────
-  if (MDNS.begin("temp-hub")) {
-    Serial.println("✓ mDNS started: http://temp-hub.local/");
-    MDNS.addService("http", "tcp", 80);
+  if (esp_now_init() != ESP_OK) {
+    Serial.println("✗ ESP-NOW init failed! Sensor receiving disabled.");
   } else {
-    Serial.println("mDNS start failed (non-fatal)");
-  }
+    esp_now_set_pmk(PMK_KEY);
 
-  // ── NTP ─────────────────────────────────────────────────────────────────
-  Serial.print("Syncing time");
-  configTime(gmtOffset_sec, daylightOffset_sec, ntpServer);
-  struct tm timeinfo;
-  int attempts = 0;
-  while (!getLocalTime(&timeinfo) && attempts < 20) {
-    Serial.print("."); delay(500); attempts++;
-  }
-  if (attempts < 20) {
-    Serial.println("\n✓ Time synced!"); printCurrentTime();
-    timeConfigured = true; lastNtpSync = millis();
-  } else {
-    Serial.println("\n✗ Time sync failed, continuing anyway...");
+    // Cached once: every message this hub signs is tagged with its own address,
+    // which is what a sensor checks the tag against.
+    WiFi.macAddress(authSelfMac);
+    Serial.println("✓ ESP-NOW initialized (authenticated messages)");
+
+    loadPairedSensors();
+    esp_now_register_recv_cb(OnDataRecv);
+
+    esp_now_peer_num_t pn = {};
+    esp_now_get_peer_num(&pn);
+    Serial.printf("ESP-NOW peers: %d of 20 used (max %d sensors)\n",
+                  pn.total_num, MAX_SENSORS);
   }
 
   // ── Web server ───────────────────────────────────────────────────────────
-  // Start before ESP-NOW so the dashboard is available even if ESP-NOW fails.
   server.on("/", handleRoot);
   server.on("/logs", handleLogs);
   server.on("/api/sensors", HTTP_GET,    handleJSON);
@@ -4139,37 +4125,71 @@ void setup() {
   server.begin();
   Serial.println("✓ Web server started");
 
-  // ── ESP-NOW ─────────────────────────────────────────────────────────────
-  Serial.printf("WiFi channel: %d\n", WiFi.channel());
-
-  if (esp_now_init() != ESP_OK) {
-    Serial.println("✗ ESP-NOW init failed! Sensor receiving disabled.");
-    return;
+  // ── WiFi: one bounded attempt, then loop() takes over ───────────────────
+  // Short, because the radio scans away from the sensors' channel while it
+  // tries. A router that is up answers in a few seconds; one that is not
+  // gets maintainWiFi()'s attempt every 30 s instead of a restart loop.
+  Serial.printf("Connecting to WiFi: %s\n", wifiSsid);
+  WiFi.begin(wifiSsid, wifiPass);
+  unsigned long wifiStart = millis();
+  while (WiFi.status() != WL_CONNECTED && millis() - wifiStart < WIFI_BOOT_TRY_MS) {
+    checkReprovisionButton();   // escape hatch for a saved network that is gone
+    delay(100);
   }
-  esp_now_set_pmk(PMK_KEY);
 
-  // Cached once: every message this hub signs is tagged with its own address,
-  // which is what a sensor checks the tag against.
-  WiFi.macAddress(authSelfMac);
-  Serial.println("✓ ESP-NOW initialized (authenticated messages)");
-
-  loadPairedSensors();
-  esp_now_register_recv_cb(OnDataRecv);
-
-  // Now that the sensor list is loaded from NVS, tell the cloud what we have.
-  // The cloud responds with its authoritative list (retained); applySyncFromCloud
-  // in loop() will add/remove sensors to match the cloud truth.
-  publishSyncRequest();
-
-  {
-    esp_now_peer_num_t pn = {};
-    esp_now_get_peer_num(&pn);
-    Serial.printf("ESP-NOW peers: %d of 20 used (max %d sensors)\n",
-                  pn.total_num, MAX_SENSORS);
+  if (WiFi.status() == WL_CONNECTED) {
+    Serial.printf("✓ WiFi connected! IP: %s\n", WiFi.localIP().toString().c_str());
+    onWiFiUp();
+    if (cloudConfigured && connectCloud()) {
+      // Now that the sensor list is loaded from NVS, tell the cloud what we
+      // have. The cloud responds with its authoritative list (retained);
+      // applySyncFromCloud in loop() will add/remove sensors to match.
+      publishSyncRequest();
+    }
+    // Otherwise maintainCloud() retries, and syncs, from loop().
+  } else {
+    // Stop the IDF's own retries so they do not keep the radio off ch 1.
+    WiFi.disconnect(false);
+    delay(100);
+    esp_wifi_set_channel(1, WIFI_SECOND_CHAN_NONE);
+    lastWifiReconnect = millis();
+    Serial.println("WiFi not available — listening on ch 1, readings will queue");
   }
 
   Serial.println("\n=== Hub Ready ===");
   Serial.println("Waiting for sensor data...\n");
+}
+
+// Things that need the network once, whenever WiFi first comes up -- at boot
+// or, after a power cut that the router outlasted, from maintainWiFi().
+void onWiFiUp() {
+  static bool mdnsStarted = false;
+  if (!mdnsStarted) {
+    // ── mDNS — device is reachable at http://temp-hub.local/ ──
+    if (MDNS.begin("temp-hub")) {
+      mdnsStarted = true;
+      Serial.println("✓ mDNS started: http://temp-hub.local/");
+      MDNS.addService("http", "tcp", 80);
+    } else {
+      Serial.println("mDNS start failed (non-fatal)");
+    }
+  }
+  if (!sntpStarted) {
+    // Non-blocking: SNTP keeps trying by itself; maintainTime() notices.
+    configTime(gmtOffset_sec, daylightOffset_sec, ntpServer);
+    sntpStarted = true;
+  }
+}
+
+// Called from loop(). Readings queued before the clock was set are dated
+// from their uptime when sent, so nothing here has to wait.
+void maintainTime() {
+  if (timeConfigured) { resyncNTP(); return; }
+  if (!sntpStarted || time(nullptr) < 1000000000) return;
+  timeConfigured = true;
+  lastNtpSync = millis();
+  Serial.print("✓ Time synced: ");
+  printCurrentTime();
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -4206,7 +4226,9 @@ void maintainWiFi() {
     delay(100);
     esp_wifi_set_channel(1, WIFI_SECOND_CHAN_NONE);
     Serial.println("[WiFi] Reconnect failed — restored ch 1");
+    return;
   }
+  onWiFiUp();   // first connection may be this one, if the router was down at boot
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -4250,7 +4272,7 @@ void loop() {
   }
   if (!sOtaRunning && !otaInProgress) flushOfflineBuffer();
 
-  if (timeConfigured) resyncNTP();
+  maintainTime();
 
   // Flash write kept out of the ESP-NOW callback: an NVS commit there would
   // stall the WiFi task while sensors are mid-transmission.

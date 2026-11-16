@@ -39,24 +39,17 @@
 #define MSG_PAIRING 1
 #define MSG_DATA    2
 
-// --- ESP-NOW ENCRYPTION ---
-// IMPORTANT: These keys must be identical on all devices (hub + all sensors)
-// Change both bytes below to your own secret values before deploying
-static const uint8_t PMK_KEY[16] = {
-  0x4A, 0x2F, 0x8C, 0x1E, 0x7B, 0x3D, 0x9A, 0x5F,
-  0x6E, 0x2C, 0x4B, 0x8D, 0x1A, 0x7F, 0x3E, 0x9C
-};
 // --- MESSAGE AUTHENTICATION ---
 // Must match the hub and every other sensor. The link is no longer encrypted:
 // ESP-NOW spends a hardware key slot per encrypted peer, which capped a hub at
 // seven sensors, so authenticity lives in the message instead. See the hub's
 // AUTH_KEY for the full reasoning.
-static const uint8_t AUTH_KEY[32] = {
-  0x5B, 0x2E, 0xC4, 0x91, 0x7A, 0x03, 0xD8, 0x66,
-  0x1F, 0xB5, 0x40, 0xE7, 0x2C, 0x98, 0x71, 0x0A,
-  0xD3, 0x64, 0x8F, 0x25, 0xB1, 0x7C, 0x06, 0xEA,
-  0x49, 0x93, 0x2B, 0xF5, 0x18, 0xA7, 0x60, 0xCD,
-};
+//
+// The key lives in secrets/espnow_auth_key.h, which is not in git (template:
+// secrets/espnow_auth_key.example.h). It used to be committed, to a public
+// repository.
+#include "espnow_auth_key.h"
+static const uint8_t AUTH_KEY[32] = ESPNOW_AUTH_KEY_BYTES;
 
 #define AUTH_TAG_LEN 8
 
@@ -64,12 +57,8 @@ static const uint8_t AUTH_KEY[32] = {
 // flashed. It is reported so the dashboard can say which nodes are which.
 #define FW_MAJOR 1
 #define FW_MINOR 0
-#define FW_PATCH 0
+#define FW_PATCH 1
 
-static const uint8_t LMK_KEY[16] = {
-  0xE3, 0x4A, 0x7C, 0x91, 0xB5, 0x2D, 0xF8, 0x6E,
-  0x1A, 0x9F, 0x3C, 0x72, 0xD4, 0x5B, 0x8E, 0x20
-};
 
 // --- BATTERY LOOKUP TABLE ---
 // {voltage, percentage} for 3.7V Li-ion / 18650 measured at rest
@@ -564,11 +553,9 @@ void setup() {
     goToSleep(10);
     return;
   }
-  esp_now_set_pmk(PMK_KEY);
-
   esp_now_register_send_cb(OnDataSent);
   esp_now_register_recv_cb(OnDataRecv);
-  Serial.println("✓ ESP-NOW ready (encrypted)");
+  Serial.println("✓ ESP-NOW ready (authenticated messages)");
 
   if (isPaired) {
     Serial.println("\n--- Data Mode ---");
@@ -578,7 +565,6 @@ void setup() {
     // Unencrypted by design: authenticity is carried in the message, so a hub is
   // not limited to seven sensors by the radio's key slots.
   peerInfo.encrypt = false;
-    memcpy(peerInfo.lmk, LMK_KEY, 16);
 
     if (esp_now_add_peer(&peerInfo) != ESP_OK) {
       Serial.println("✗ Peer add failed, restarting...");

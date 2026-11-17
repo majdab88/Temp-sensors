@@ -175,11 +175,20 @@ bounces: after a few button presses one pack read 33–49 % within minutes, and
 an update went through on a recovered "40 %".
 
 The sensor samples the divider while the radio is on and keeps the lowest of
-the last four wakes in RTC memory. The cloud computes the % it shows from
-`bat_load_mv` (`backend/src/battery.js`), so **the table is corrected there,
-with a backend deploy**, not by updating every sensor. Both the table and
-`OTA_MIN_LOAD_MV` are provisional until there is data from real packs going
-flat in the cold.
+the last four wakes in RTC memory. The cloud computes the % it shows
+(`backend/src/battery.js`), so **the tables are corrected there, with a backend
+deploy**, not by updating every sensor.
+
+**Which voltage depends on the chemistry**, set per sensor on its dashboard
+card (`sensors.battery_type`, migration 20): lithium is judged by
+`bat_load_mv`, alkaline by `bat_mv`. Alkaline sags far more on a transmit even
+when full; read through the lithium table, a fresh alkaline pack showed 6 %.
+Changing the type recomputes the stored % of that sensor's readings.
+
+The tables and `OTA_MIN_LOAD_MV` are provisional until there is data from real
+packs going flat in the cold. `OTA_MIN_LOAD_MV` is in the firmware and does not
+know the chemistry: an alkaline pack can sag below it while still mostly full,
+and the sensor then declines updates.
 
 | ID | Name | Direction | Purpose |
 |----|------|-----------|---------|

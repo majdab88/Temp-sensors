@@ -48,6 +48,15 @@ export default function Dashboard() {
     setSensors((prev) => prev.map((s) => (s.id === id ? { ...s, name: newName } : s)))
   }, [])
 
+  // The backend recomputes the stored percentages for the new chemistry and
+  // returns the latest one, so the card changes without waiting for a reading.
+  const handleBatteryType = useCallback((id, mac, type, battery) => {
+    setSensors((prev) => prev.map((s) => (s.id === id ? { ...s, battery_type: type } : s)))
+    setReadings((prev) => (prev[mac] && battery != null
+      ? { ...prev, [mac]: { ...prev[mac], battery } }
+      : prev))
+  }, [])
+
   const handleDelete = useCallback((id) => {
     setSensors((prev) => prev.filter((s) => s.id !== id))
   }, [])
@@ -359,6 +368,7 @@ export default function Dashboard() {
                   spark={sparks[sensor.mac] || null}
                   liveSeenAt={liveSeen[sensor.mac] || 0}
                   onRename={handleRename}
+                  onBatteryType={handleBatteryType}
                   onDelete={handleDelete}
                   canEdit={canEdit}
                 />

@@ -65,7 +65,10 @@ function Sparkline({ points, alarm }) {
   )
 }
 
-export default function SensorCard({ sensor, reading, alert, rule, spark, liveSeenAt = 0, onRename, onDelete, canEdit = true }) {
+const BATTERY_TYPE_LABEL = { lithium: 'Lithium', alkaline: 'Alkaline' }
+const BATTERY_TYPE_SHORT = { lithium: 'Li', alkaline: 'Alk' }
+
+export default function SensorCard({ sensor, reading, alert, rule, spark, liveSeenAt = 0, onRename, onBatteryType, onDelete, canEdit = true }) {
   const navigate = useNavigate()
   const toast = useToast()
   const [editing, setEditing] = useState(false)
@@ -135,6 +138,26 @@ export default function SensorCard({ sensor, reading, alert, rule, spark, liveSe
   function handleKeyDown(e) {
     if (e.key === 'Enter') saveEdit(e)
     if (e.key === 'Escape') cancelEdit(e)
+  }
+
+  // Which cells are in the holder decides which pack voltage the percentage is
+  // read from (backend/src/battery.js). Two types, so a click switches.
+  const batteryType = sensor.battery_type || 'lithium'
+  const [savingBattery, setSavingBattery] = useState(false)
+
+  async function toggleBatteryType(e) {
+    e.stopPropagation()
+    const type = batteryType === 'lithium' ? 'alkaline' : 'lithium'
+    setSavingBattery(true)
+    try {
+      const res = await api.put(`/sensors/${sensor.id}/battery-type`, { type })
+      onBatteryType?.(sensor.id, sensor.mac, type, res.data.battery)
+      toast.success(`Battery type: ${BATTERY_TYPE_LABEL[type]}`)
+    } catch {
+      toast.error('Failed to change battery type')
+    } finally {
+      setSavingBattery(false)
+    }
   }
 
   async function handleDelete(e) {
@@ -375,6 +398,19 @@ export default function SensorCard({ sensor, reading, alert, rule, spark, liveSe
           </span>
         )}
         <BatteryIcon level={reading?.battery} loadMv={reading?.bat_load_mv} restMv={reading?.bat_mv} />
+        {canEdit ? (
+          <button
+            className="sensor-battery-type"
+            onClick={toggleBatteryType}
+            disabled={savingBattery}
+            title={`${BATTERY_TYPE_LABEL[batteryType]} batteries — click to switch to ${
+              BATTERY_TYPE_LABEL[batteryType === 'lithium' ? 'alkaline' : 'lithium']}`}
+          >{BATTERY_TYPE_SHORT[batteryType]}</button>
+        ) : (
+          <span className="sensor-meta-item" title={`${BATTERY_TYPE_LABEL[batteryType]} batteries`}>
+            {BATTERY_TYPE_SHORT[batteryType]}
+          </span>
+        )}
       </div>
 
       {liveNote && <div className="device-meta">{liveNote}</div>}

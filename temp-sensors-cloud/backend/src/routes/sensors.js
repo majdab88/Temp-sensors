@@ -7,6 +7,7 @@ const { requirePermission } = require('../middleware/permissions');
 const { publishSensorRemove, pushSyncToHub, publishLiveRequest } = require('../mqtt');
 const { closeExcursion, resetSensor } = require('../alerts');
 const { audit } = require('../audit');
+const { batteryPct, BATTERY_TYPES } = require('../battery');
 
 const router = express.Router();
 router.use(requireAuth);
@@ -35,7 +36,7 @@ router.get('/', async (req, res) => {
         `SELECT s.id, s.device_id, s.mac, s.name, s.paired_at, s.active,
                 s.fw_version, s.fw_reported_at, s.cfg_ver, s.probe_error, s.probe_error_at,
                 s.ota_state, s.ota_version, s.ota_pct, s.ota_error, s.ota_updated_at,
-                s.live_until, s.live_interval_s, s.live_requested_at, s.cfg_sleep_secs,
+                s.live_until, s.live_interval_s, s.live_requested_at, s.cfg_sleep_secs, s.battery_type,
                 d.mac AS hub_mac, d.name AS hub_name, d.org_id,
                 lr.temp, lr.hum, lr.rssi, lr.battery,
                 EXTRACT(EPOCH FROM lr.recorded_at)::bigint AS "lastUpdate"
@@ -50,7 +51,7 @@ router.get('/', async (req, res) => {
         `SELECT s.id, s.device_id, s.mac, s.name, s.paired_at, s.active,
                 s.fw_version, s.fw_reported_at, s.cfg_ver, s.probe_error, s.probe_error_at,
                 s.ota_state, s.ota_version, s.ota_pct, s.ota_error, s.ota_updated_at,
-                s.live_until, s.live_interval_s, s.live_requested_at, s.cfg_sleep_secs,
+                s.live_until, s.live_interval_s, s.live_requested_at, s.cfg_sleep_secs, s.battery_type,
                 d.mac AS hub_mac, d.name AS hub_name,
                 lr.temp, lr.hum, lr.rssi, lr.battery,
                 EXTRACT(EPOCH FROM lr.recorded_at)::bigint AS "lastUpdate"
@@ -99,6 +100,67 @@ router.put('/:id', requirePermission('editor'), async (req, res) => {
     if (result.rows.length === 0) return res.status(404).json({ error: 'Sensor not found' });
     await audit({ req, action: 'sensor.rename', targetType: 'sensor', targetId: id, details: { name: name.trim() } });
     res.json(result.rows[0]);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Database error' });
+  }
+});
+
+// PUT /api/sensors/:id/battery-type — which cells are in the holder. Picks the
+// table the percentage is computed from (see battery.js), and recomputes the
+// stored percentage of every reading that carries voltages, so the card and
+// the history agree with the new type straight away rather than from the next
+// reading on.
+router.put('/:id/battery-type', requirePermission('editor'), async (req, res) => {
+  const id = parseInt(req.params.id, 10);
+  if (!Number.isInteger(id) || id <= 0) {
+    return res.status(400).json({ error: 'Invalid sensor id' });
+  }
+  const { type } = req.body || {};
+  if (!BATTERY_TYPES.includes(type)) {
+    return res.status(400).json({ error: `type must be one of: ${BATTERY_TYPES.join(', ')}` });
+  }
+
+  if (!isSuperadminUnscoped(req) && req.orgId) {
+    const check = await query(
+      'SELECT 1 FROM sensors s JOIN devices d ON d.id = s.device_id WHERE s.id = $1 AND d.org_id = $2',
+      [id, req.orgId]
+    );
+    if (check.rows.length === 0) return res.status(404).json({ error: 'Sensor not found' });
+  }
+
+  try {
+    const result = await query(
+      'UPDATE sensors SET battery_type = $1 WHERE id = $2 RETURNING id',
+      [type, id]
+    );
+    if (result.rows.length === 0) return res.status(404).json({ error: 'Sensor not found' });
+
+    const rows = (await query(
+      `SELECT id, bat_mv, bat_load_mv FROM readings
+       WHERE sensor_id = $1 AND (bat_mv IS NOT NULL OR bat_load_mv IS NOT NULL)`,
+      [id]
+    )).rows;
+    const ids = [], pcts = [];
+    for (const r of rows) {
+      const pct = batteryPct(type, { restMv: r.bat_mv, loadMv: r.bat_load_mv });
+      if (pct != null) { ids.push(r.id); pcts.push(pct); }
+    }
+    if (ids.length) {
+      await query(
+        `UPDATE readings r SET battery = v.pct
+         FROM unnest($1::bigint[], $2::smallint[]) AS v(id, pct)
+         WHERE r.id = v.id`,
+        [ids, pcts]
+      );
+    }
+
+    const latest = (await query(
+      'SELECT battery FROM readings WHERE sensor_id = $1 ORDER BY recorded_at DESC LIMIT 1',
+      [id]
+    )).rows[0];
+    await audit({ req, action: 'sensor.battery_type', targetType: 'sensor', targetId: id, details: { type } });
+    res.json({ id, battery_type: type, battery: latest ? latest.battery : null, recomputed: ids.length });
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'Database error' });

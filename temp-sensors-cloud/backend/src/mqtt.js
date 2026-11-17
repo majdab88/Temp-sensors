@@ -4,7 +4,7 @@ const mqtt = require('mqtt');
 const { query } = require('./db');
 const { evaluateReading, closeExcursion, resetSensor } = require('./alerts');
 const health = require('./health');
-const { batteryPctFromLoadMv } = require('./battery');
+const { batteryPct } = require('./battery');
 const { hubMqttUser } = require('./mqtt-accounts');
 
 let client;
@@ -104,13 +104,10 @@ async function handleSensorData(hubMac, data) {
   const { sensor_mac, temp, hum, rssi, ts, age_s, fw, cfg_ver } = data;
   if (!sensor_mac) return;
 
-  // Pack voltages, from NTC sensors 1.1.16 on. When the one under load is
-  // there the percentage is computed here (see battery.js), so the table can be
-  // corrected without touching the sensors; otherwise the sensor's own stands.
+  // Pack voltages, from NTC sensors 1.1.16 on.
   const mv = (v) => (Number.isInteger(v) && v > 0 && v < 10000) ? v : null;
   const batMv     = mv(data.bat_mv);
   const batLoadMv = mv(data.bat_load_mv);
-  const battery   = batteryPctFromLoadMv(batLoadMv) ?? data.battery;
 
   // Hub must be registered
   const devRes = await query('SELECT id FROM devices WHERE mac = $1', [hubMac.toUpperCase()]);
@@ -129,12 +126,18 @@ async function handleSensorData(hubMac, data) {
      ON CONFLICT (device_id, mac) DO UPDATE
        SET active = TRUE
        WHERE sensors.active = TRUE
-     RETURNING id, name`,
+     RETURNING id, name, battery_type`,
     [deviceId, normMac, defaultName]
   );
   if (sensorRes.rows.length === 0) return; // sensor was soft-deleted — ignore data
   const sensorId = sensorRes.rows[0].id;
   const sensorName = sensorRes.rows[0].name;
+
+  // With voltages, the percentage is computed here for the chemistry set on
+  // the sensor (see battery.js), so the tables can be corrected without
+  // touching the sensors; without them the sensor's own stands.
+  const battery = batteryPct(sensorRes.rows[0].battery_type,
+                             { restMv: batMv, loadMv: batLoadMv }) ?? data.battery;
 
   // -999 on temp means the probe read failed (open, shorted, out of range), not
   // that the value is merely missing. Stored as NULL either way, but the

@@ -2,8 +2,8 @@ import React from 'react'
 
 /**
  * Coarse battery indicator — full / half / low — from the pack %. For sensors
- * that report voltages (NTC 1.1.16 on) the % is computed by the backend from
- * the voltage under load (backend/src/battery.js), and the hover text gives the
+ * that report voltages (NTC 1.1.16 on) the % is computed by the backend for the
+ * sensor's battery type (backend/src/battery.js), and the hover text gives the
  * voltages themselves. 255 / null = unknown → nothing rendered.
  *
  *   Full  >= 40 %

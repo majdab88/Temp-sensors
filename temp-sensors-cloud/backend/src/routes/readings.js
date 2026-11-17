@@ -116,7 +116,7 @@ router.get('/latest', requirePermission('viewer'), async (req, res) => {
 
   try {
     const result = await query(
-      `SELECT id, temp, hum, battery, rssi, recorded_at
+      `SELECT id, temp, hum, battery, rssi, recorded_at, bat_mv, bat_load_mv
        FROM readings
        WHERE sensor_id = $1
        ORDER BY recorded_at DESC

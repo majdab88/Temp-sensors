@@ -72,7 +72,9 @@ CREATE TABLE readings (
   hum         FLOAT,        -- %; NULL if read error
   battery     SMALLINT,     -- 0–100; 255 = read error
   rssi        SMALLINT,     -- dBm
-  recorded_at TIMESTAMPTZ DEFAULT NOW()
+  recorded_at TIMESTAMPTZ DEFAULT NOW(),
+  bat_mv      SMALLINT,     -- pack voltage at rest; NULL = not reported (19-battery-voltage.sql)
+  bat_load_mv SMALLINT      -- lowest with the radio on; battery % is computed from this
 );
 
 CREATE INDEX ON readings (sensor_id, recorded_at DESC);

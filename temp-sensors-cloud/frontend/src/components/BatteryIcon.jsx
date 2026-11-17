@@ -1,21 +1,26 @@
 import React from 'react'
 
 /**
- * Coarse battery indicator — full / half / low — derived from the L91 pack %
- * (which the sensor computes from true pack voltage). No number shown; the exact
- * % lives in the hub /logs page. 255 / null = unknown → nothing rendered.
+ * Coarse battery indicator — full / half / low — from the pack %. For sensors
+ * that report voltages (NTC 1.1.16 on) the % is computed by the backend from
+ * the voltage under load (backend/src/battery.js), and the hover text gives the
+ * voltages themselves. 255 / null = unknown → nothing rendered.
  *
- *   Full  >= 40 %  (>= ~2.8 V)
- *   Half  22-40 %  (~2.5-2.8 V)
- *   Low   <  22 %  (< ~2.5 V)
+ *   Full  >= 40 %
+ *   Half  22-40 %
+ *   Low   <  22 %   (the backend's low-battery alert fires below 22 % too)
  */
-export default function BatteryIcon({ level }) {
+export default function BatteryIcon({ level, loadMv, restMv }) {
   if (level == null || level === 255) return null
 
   const lvl   = level < 22 ? 'low' : level < 40 ? 'half' : 'full'
   const color = lvl === 'low' ? 'var(--red)' : lvl === 'half' ? 'var(--yellow)' : 'var(--green)'
   const fillW = lvl === 'low' ? 4 : lvl === 'half' ? 8.5 : 15
-  const title = lvl === 'low' ? 'Battery low' : lvl === 'half' ? 'Battery ~half' : 'Battery full'
+  const label = lvl === 'low' ? 'Battery low' : lvl === 'half' ? 'Battery ~half' : 'Battery full'
+
+  const v = (mv) => `${(mv / 1000).toFixed(2)} V`
+  const volts = loadMv ? ` · ${v(loadMv)} under load${restMv ? `, ${v(restMv)} at rest` : ''}` : ''
+  const title = `${label} (${level}%)${volts}`
 
   return (
     <span className="sensor-meta-item" title={title} style={{ display: 'inline-flex', alignItems: 'center' }}>

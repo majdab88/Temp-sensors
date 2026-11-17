@@ -17,7 +17,9 @@ const SENSOR_DECLINED = {
     next: null,
   },
   'battery too low': {
-    text: 'The sensor declined: its battery is below 40%, the minimum for an update.',
+    // From sensor 1.1.16 the check is the pack voltage under radio load over
+    // the last few wakes (2.6 V minimum); before that, a 40 % resting reading.
+    text: 'The sensor declined: its battery sags too far under load to be trusted through an update.',
     next: 'Replace the batteries, then Retry and press the sensor’s button.',
   },
   'previous image not confirmed': {

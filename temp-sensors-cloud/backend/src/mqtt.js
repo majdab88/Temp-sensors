@@ -4,6 +4,7 @@ const mqtt = require('mqtt');
 const { query } = require('./db');
 const { evaluateReading, closeExcursion, resetSensor } = require('./alerts');
 const health = require('./health');
+const { batteryPctFromLoadMv } = require('./battery');
 const { hubMqttUser } = require('./mqtt-accounts');
 
 let client;
@@ -100,8 +101,16 @@ async function handleMessage(topic, payload) {
 async function handleSensorData(hubMac, data) {
   // Taken before any await: age_s below is counted back from this moment.
   const receivedAt = Date.now();
-  const { sensor_mac, temp, hum, battery, rssi, ts, age_s, fw, cfg_ver } = data;
+  const { sensor_mac, temp, hum, rssi, ts, age_s, fw, cfg_ver } = data;
   if (!sensor_mac) return;
+
+  // Pack voltages, from NTC sensors 1.1.16 on. When the one under load is
+  // there the percentage is computed here (see battery.js), so the table can be
+  // corrected without touching the sensors; otherwise the sensor's own stands.
+  const mv = (v) => (Number.isInteger(v) && v > 0 && v < 10000) ? v : null;
+  const batMv     = mv(data.bat_mv);
+  const batLoadMv = mv(data.bat_load_mv);
+  const battery   = batteryPctFromLoadMv(batLoadMv) ?? data.battery;
 
   // Hub must be registered
   const devRes = await query('SELECT id FROM devices WHERE mac = $1', [hubMac.toUpperCase()]);
@@ -145,8 +154,9 @@ async function handleSensorData(hubMac, data) {
   const recordedAt = hubTime ?? ageTime ?? new Date(receivedAt);
 
   await query(
-    'INSERT INTO readings (sensor_id, temp, hum, battery, rssi, recorded_at) VALUES ($1, $2, $3, $4, $5, $6)',
-    [sensorId, tempVal, humVal, battery ?? null, rssi ?? null, recordedAt]
+    `INSERT INTO readings (sensor_id, temp, hum, battery, rssi, recorded_at, bat_mv, bat_load_mv)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+    [sensorId, tempVal, humVal, battery ?? null, rssi ?? null, recordedAt, batMv, batLoadMv]
   );
 
   // Firmware / config version. A pre-1.0 sensor does not send these, and the
@@ -248,6 +258,8 @@ async function handleSensorData(hubMac, data) {
     temp: tempVal,
     hum: humVal,
     battery: battery ?? null,
+    bat_mv: batMv,
+    bat_load_mv: batLoadMv,
     rssi: rssi ?? null,
     probe_error: probeError,
     ts: recordedAt.getTime(),

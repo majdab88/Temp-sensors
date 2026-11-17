@@ -374,7 +374,7 @@ export default function SensorCard({ sensor, reading, alert, rule, spark, liveSe
             v{sensor.fw_version}
           </span>
         )}
-        <BatteryIcon level={reading?.battery} />
+        <BatteryIcon level={reading?.battery} loadMv={reading?.bat_load_mv} restMv={reading?.bat_mv} />
       </div>
 
       {liveNote && <div className="device-meta">{liveNote}</div>}

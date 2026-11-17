@@ -178,6 +178,8 @@ export default function Dashboard() {
           temp: data.temp,
           hum: data.hum,
           battery: data.battery,
+          bat_mv: data.bat_mv,
+          bat_load_mv: data.bat_load_mv,
           rssi: data.rssi,
           recorded_at: new Date(data.ts).toISOString(),
         },

@@ -67,7 +67,7 @@ void confirmFirmwareValid();
 #define FW_MINOR 1
 #endif
 #ifndef FW_PATCH
-#define FW_PATCH 27
+#define FW_PATCH 28
 #endif
 #define STR_(x) #x
 #define STR(x)  STR_(x)
@@ -532,9 +532,21 @@ typedef struct struct_message {
   // Everything above is what the tag covers.
   uint32_t auth_ctr;             // strictly increasing; replays do not rise
   uint8_t  auth[AUTH_TAG_LEN];   // HMAC over sender MAC + auth_ctr + the above
+
+  // Appended after the tag (NTC sensor 1.1.16), so a hub from before reads the
+  // frame exactly as it always has and ignores the rest -- a sensor can be
+  // updated before its hub. The pack voltage, resting and under radio load: a
+  // lithium pack's resting voltage stays high until it is nearly empty, and it
+  // is the sag under load that stops a node. auth2 covers everything before it,
+  // auth included; a hub that knows these fields checks auth2 instead of auth.
+  uint16_t bat_mv;               // before the radio starts; 0 = not sent
+  uint16_t bat_load_mv;          // lowest seen with the radio on; 0 = none
+  uint8_t  auth2[AUTH_TAG_LEN];
 } struct_message;
 
-#define AUTH_BODY_LEN (sizeof(struct_message) - sizeof(uint32_t) - AUTH_TAG_LEN)
+#define AUTH_BODY_LEN  offsetof(struct_message, auth_ctr)
+#define AUTH_FRAME_LEN offsetof(struct_message, bat_mv)   // a tagged frame without the voltages
+#define AUTH2_BODY_LEN offsetof(struct_message, auth2)
 
 // Wire layout of the pre-1.0 message, kept only to compute the minimum
 // acceptable packet length. Do not use for anything else.
@@ -552,6 +564,10 @@ static_assert(offsetof(struct_message, temp)    == offsetof(legacy_message, temp
 static_assert(offsetof(struct_message, hum)     == offsetof(legacy_message, hum),     "wire format changed");
 static_assert(offsetof(struct_message, battery) == offsetof(legacy_message, battery), "wire format changed");
 static_assert(sizeof(struct_message) > sizeof(legacy_message), "new fields must change the length");
+// The tagged frame every hub before 1.1.28 knows. The voltages must start
+// after it, or those hubs would read them as the counter and tag.
+static_assert(AUTH_FRAME_LEN == 32 && AUTH_BODY_LEN == 20, "wire format changed");
+static_assert(sizeof(struct_message) == 44, "wire format changed");
 
 // --- CONFIG MESSAGE (hub → sensor; must match sensor byte for byte) ---
 // Fixed size with explicit spare bytes so a parameter can be added later
@@ -614,6 +630,8 @@ struct SensorData {
   bool          active;
   char          name[20];
   uint8_t       battery;
+  uint16_t      batMv;         // pack voltage, resting / under load; 0 = not sent
+  uint16_t      batLoadMv;
 
   // Highest authentication counter accepted from this sensor. Zero means none
   // has been seen yet, so the next frame sets the baseline rather than being
@@ -686,6 +704,8 @@ struct BufferedReading {
                      // boot; UPSECS_UNKNOWN = from a previous boot, undatable
   uint16_t cfg_ver;
   uint8_t  fw[3];
+  uint16_t batMv;     // 0 = not sent (older sensor, or a stored reading)
+  uint16_t batLoadMv;
 };
 
 #define UPSECS_UNKNOWN INT32_MIN
@@ -1452,7 +1472,8 @@ int addSensor(const uint8_t* mac) {
   return sensorCount - 1;
 }
 
-void updateSensor(int index, float temp, float hum, int rssi, uint8_t battery) {
+void updateSensor(int index, float temp, float hum, int rssi, uint8_t battery,
+                  uint16_t batMv, uint16_t batLoadMv) {
   if (index < 0 || index >= sensorCount) return;
 
   // The sensor retries the same reading up to MAX_RETRIES times when it
@@ -1469,6 +1490,8 @@ void updateSensor(int index, float temp, float hum, int rssi, uint8_t battery) {
   sensors[index].hum        = hum;
   sensors[index].rssi       = rssi;
   sensors[index].battery    = battery;
+  sensors[index].batMv      = batMv;
+  sensors[index].batLoadMv  = batLoadMv;
   sensors[index].lastUpdate = now;
   sensors[index].active     = true;
   publishSensorData(index);  // forward reading to cloud
@@ -2451,8 +2474,10 @@ bool connectCloud() {
 // Mirror the newest queued readings to NVS. Each entry already carries the
 // timestamp captured when the reading arrived, so a restored reading is stored
 // at its true time rather than the time it was eventually flushed.
-// Stored under "q2": the entry layout changed when timestamps became epoch
-// seconds, and the old "q" blob would otherwise be misread as the new one.
+// Stored under "q3": the entry layout changed when timestamps became epoch
+// seconds ("q" -> "q2") and again when the pack voltages were added ("q3"),
+// and an old blob would otherwise be misread as the new layout -- a length
+// check alone does not catch it when the old size happens to divide evenly.
 void saveOfflineBuffer() {
   static BufferedReading tmp[OFFLINE_PERSIST_MAX];
   int n;
@@ -2466,9 +2491,9 @@ void saveOfflineBuffer() {
   Preferences bp;
   bp.begin("buf", false);
   if (n == 0) {
-    if (bp.isKey("q2")) bp.remove("q2");   // remove() logs an error if absent
+    if (bp.isKey("q3")) bp.remove("q3");   // remove() logs an error if absent
   } else {
-    bp.putBytes("q2", tmp, n * sizeof(BufferedReading));
+    bp.putBytes("q3", tmp, n * sizeof(BufferedReading));
   }
   bp.end();
   bufPersisted = (n > 0);
@@ -2478,13 +2503,14 @@ void saveOfflineBuffer() {
 void loadOfflineBuffer() {
   Preferences bp;
   bp.begin("buf", false);
-  if (bp.isKey("q")) bp.remove("q");   // pre-1.1.21 layout; cannot be read
-  size_t len = bp.isKey("q2") ? bp.getBytesLength("q2") : 0;
+  if (bp.isKey("q"))  bp.remove("q");    // pre-1.1.21 layout; cannot be read
+  if (bp.isKey("q2")) bp.remove("q2");   // pre-1.1.28 layout; cannot be read
+  size_t len = bp.isKey("q3") ? bp.getBytesLength("q3") : 0;
 
   if (len >= sizeof(BufferedReading) && (len % sizeof(BufferedReading)) == 0) {
     int n = len / sizeof(BufferedReading);
     if (n > OFFLINE_BUFFER_SIZE) n = OFFLINE_BUFFER_SIZE;
-    bp.getBytes("q2", offlineBuf, n * sizeof(BufferedReading));
+    bp.getBytes("q3", offlineBuf, n * sizeof(BufferedReading));
     // Uptime from a previous boot means nothing now.
     for (int i = 0; i < n; i++) offlineBuf[i].upSecs = UPSECS_UNKNOWN;
     bufTail  = 0;
@@ -2545,13 +2571,19 @@ void flushOfflineBuffer() {
     snprintf(sensorMacStr, sizeof(sensorMacStr), "%02X:%02X:%02X:%02X:%02X:%02X",
              r.mac[0], r.mac[1], r.mac[2], r.mac[3], r.mac[4], r.mac[5]);
 
-    char payload[256];
+    // The cloud works the percentage out from the voltage under load when it
+    // has one, so the battery table can be corrected without a sensor update.
+    char volts[48] = "";
+    if (r.batMv)
+      snprintf(volts, sizeof(volts), ",\"bat_mv\":%u,\"bat_load_mv\":%u", r.batMv, r.batLoadMv);
+
+    char payload[300];
     snprintf(payload, sizeof(payload),
              "{\"sensor_mac\":\"%s\",\"temp\":%.2f,\"hum\":%.2f,"
              "\"battery\":%d,\"rssi\":%d,%s,"
-             "\"fw\":\"%u.%u.%u\",\"cfg_ver\":%u}",
+             "\"fw\":\"%u.%u.%u\",\"cfg_ver\":%u%s}",
              sensorMacStr, r.temp, r.hum, r.battery, r.rssi, when,
-             r.fw[0], r.fw[1], r.fw[2], r.cfg_ver);
+             r.fw[0], r.fw[1], r.fw[2], r.cfg_ver, volts);
 
     if (!mqttClient.publish(topicData, payload)) break;   // keep it for next time
     mqttClient.loop();   // let PubSubClient process the outgoing packet
@@ -3429,7 +3461,7 @@ void completePairing(const uint8_t* mac) {
   }
 
   struct_message reply = {.msgType = MSG_PAIRING, .temp = 0, .hum = 0, .battery = 0};
-  if (esp_now_send(mac, (uint8_t*)&reply, sizeof(reply)) != ESP_OK) {
+  if (esp_now_send(mac, (uint8_t*)&reply, AUTH_FRAME_LEN) != ESP_OK) {   // the length it has always had
     Serial.println("[Pairing] Failed to send confirmation"); return;
   }
   Serial.println("✓ Pairing confirmation sent!");
@@ -3472,6 +3504,8 @@ void publishSensorData(int idx) {
   r.upSecs  = (int32_t)(millis() / 1000);
   r.cfg_ver = s.cfg_ver;
   r.fw[0] = s.fw_major; r.fw[1] = s.fw_minor; r.fw[2] = s.fw_patch;
+  r.batMv     = s.batMv;
+  r.batLoadMv = s.batLoadMv;
 
   int n = ringAppend(r);
 
@@ -3563,6 +3597,7 @@ void handleBacklog(const esp_now_recv_info_t *info, const backlog_message *m) {
     r.upSecs  = upNow - (int32_t)e.age_s;
     r.cfg_ver = m->cfg_ver;
     r.fw[0] = m->fw_major; r.fw[1] = m->fw_minor; r.fw[2] = m->fw_patch;
+    r.batMv = r.batLoadMv = 0;   // stored readings carry the percentage only
     ringAppend(r);
     queued++;
   }
@@ -4076,11 +4111,17 @@ void OnDataRecv(const esp_now_recv_info_t* esp_now_info,
     // Frames short enough to predate authentication carry no tag. They are
     // accepted while AUTH_REQUIRED is 0, because refusing them would refuse the
     // readings an un-updated sensor must send to be offered its update.
-    bool authed = (len >= (int)sizeof(struct_message));
+    //
+    // A frame carrying the pack voltages is checked on auth2, which covers
+    // them; the shorter tagged frame of an older sensor on auth.
+    bool authed = (len >= (int)AUTH_FRAME_LEN);
+    bool volts  = (len >= (int)sizeof(struct_message));
     if (authed) {
-      const uint8_t* key = authVerifyFromSensor(esp_now_info->src_addr, incomingData.auth_ctr,
-                                                (const uint8_t*)&incomingData, AUTH_BODY_LEN,
-                                                incomingData.auth);
+      const uint8_t* key = volts
+        ? authVerifyFromSensor(esp_now_info->src_addr, incomingData.auth_ctr,
+                               (const uint8_t*)&incomingData, AUTH2_BODY_LEN, incomingData.auth2)
+        : authVerifyFromSensor(esp_now_info->src_addr, incomingData.auth_ctr,
+                               (const uint8_t*)&incomingData, AUTH_BODY_LEN, incomingData.auth);
       if (!key) {
         Serial.printf("[AUTH] Dropped a frame from %02X:%02X:%02X:%02X:%02X:%02X - bad tag\n",
                       esp_now_info->src_addr[0], esp_now_info->src_addr[1],
@@ -4131,9 +4172,10 @@ void OnDataRecv(const esp_now_recv_info_t* esp_now_info,
       Serial.print(" | PROBE ERROR — forwarding to cloud");
     }
 
-    Serial.printf(" | Temp: %.2f°C | Hum: %.2f%% | RSSI: %d dBm | Bat: %d%% | ",
+    Serial.printf(" | Temp: %.2f°C | Hum: %.2f%% | RSSI: %d dBm | Bat: %d%% (%u/%u mV) | ",
                   incomingData.temp, incomingData.hum,
-                  incomingRSSI, incomingData.battery);
+                  incomingRSSI, incomingData.battery,
+                  incomingData.bat_mv, incomingData.bat_load_mv);
     printCurrentTime();
 
     int index = findSensor(esp_now_info->src_addr);
@@ -4146,8 +4188,8 @@ void OnDataRecv(const esp_now_recv_info_t* esp_now_info,
     // flight owns both. Skipping it costs one cycle: config, live and firmware
     // offers are all retried on the sensor's next contact.
     if (sOtaRunning) {
-      updateSensor(index, incomingData.temp, incomingData.hum,
-                   incomingRSSI, incomingData.battery);
+      updateSensor(index, incomingData.temp, incomingData.hum, incomingRSSI,
+                   incomingData.battery, incomingData.bat_mv, incomingData.bat_load_mv);
       return;
     }
 
@@ -4210,8 +4252,8 @@ void OnDataRecv(const esp_now_recv_info_t* esp_now_info,
       memcpy(otaOfferMac, esp_now_info->src_addr, 6);
     }
 
-    updateSensor(index, incomingData.temp, incomingData.hum,
-                 incomingRSSI, incomingData.battery);
+    updateSensor(index, incomingData.temp, incomingData.hum, incomingRSSI,
+                 incomingData.battery, incomingData.bat_mv, incomingData.bat_load_mv);
   }
 }
 

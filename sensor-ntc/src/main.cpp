@@ -115,7 +115,7 @@
 #define FW_MINOR 1
 #endif
 #ifndef FW_PATCH
-#define FW_PATCH 15
+#define FW_PATCH 16
 #endif
 #define STR_(x) #x
 #define STR(x)  STR_(x)
@@ -359,6 +359,78 @@ RTC_DATA_ATTR uint16_t liveIntervalS  = 0;
 #define BAT_MIN_RUNNING_V 2.5f
 #endif
 
+// --- BATTERY UNDER LOAD ---
+// The pack is read twice per wake: once at rest before the radio starts
+// (getBatteryInfo), and repeatedly while the radio is on -- after it starts,
+// after a channel scan, through each transmit and at the end of the listening
+// window. The lowest of the latter is the voltage under load, the one that
+// decides whether the node keeps working (see the battery table).
+//
+// The divider stays enabled from the first reading until sleep for this; it
+// costs about 13 uA for the second or two the node is awake.
+//
+// The last few wakes' lowest are kept in RTC memory. A transmit's sag is only
+// measured once the reading has gone, so each report includes the previous
+// wake's, and the firmware-update check looks at all of them: the cells
+// recover between closely spaced button presses, and a reading taken on a
+// recovered pack must not be the one that lets an update through.
+// RTC memory is lost on a power cycle -- which is what changing the cells is.
+#define BAT_HIST       4
+#define BAT_HIST_MAGIC 0x4C544142u   // "BATL"
+RTC_DATA_ATTR uint32_t batHistMagic = 0;
+RTC_DATA_ATTR uint16_t batHist[BAT_HIST];   // newest first; 0 = empty
+static uint16_t g_batRestMv = 0;            // this wake, at rest
+static uint16_t g_batLoadMv = 0;            // this wake, lowest under load; 0 = none yet
+// Set by getBatteryInfo(). Without the divider's ground the ADC pin sees the
+// pack through the top resistor alone and reads full scale, which would be
+// taken for a very healthy battery -- so nothing is sampled before it.
+static bool     g_batDividerOn = false;
+
+static void batHistInit() {
+  if (esp_reset_reason() != ESP_RST_DEEPSLEEP || batHistMagic != BAT_HIST_MAGIC) {
+    batHistMagic = BAT_HIST_MAGIC;
+    memset(batHist, 0, sizeof(batHist));
+  }
+}
+
+// A few back-to-back conversions, no settling delay: the point is to catch the
+// sag while it lasts. The divider was enabled and settled by getBatteryInfo().
+static void batLoadSample() {
+  if (!g_batDividerOn) return;
+  uint32_t sum = 0;
+  for (int i = 0; i < 4; i++) sum += analogReadMilliVolts(BAT_ADC_PIN);
+  uint16_t mv = (uint16_t)(sum / 4 * 2);   // x2: equal-value divider
+  if (mv < (uint16_t)(BAT_MIN_RUNNING_V * 1000)) return;   // a failed read, not the pack
+  if (g_batLoadMv == 0 || mv < g_batLoadMv) g_batLoadMv = mv;
+}
+
+// Lowest under load over this wake so far and the last BAT_HIST; 0 = none.
+static uint16_t batLowestRecent() {
+  uint16_t low = g_batLoadMv;
+  for (int i = 0; i < BAT_HIST; i++)
+    if (batHist[i] && (low == 0 || batHist[i] < low)) low = batHist[i];
+  return low;
+}
+
+// What a reading reports: this wake's so far, or the last wake's -- which saw
+// its transmit -- if that was lower.
+static uint16_t batReportLoadMv() {
+  uint16_t low = g_batLoadMv;
+  if (batHist[0] && (low == 0 || batHist[0] < low)) low = batHist[0];
+  return low;
+}
+
+// Before any deep sleep: keep this wake's lowest, and take the divider off.
+static void batEndWake() {
+  batLoadSample();   // the end of the listening window, radio still on
+  if (g_batLoadMv) {
+    memmove(batHist + 1, batHist, (BAT_HIST - 1) * sizeof(batHist[0]));
+    batHist[0] = g_batLoadMv;
+  }
+  pinMode(DIVIDER_ENABLE_PIN, INPUT);   // Hi-Z: no current through it while asleep
+  g_batDividerOn = false;
+}
+
 // --- MESSAGE TYPES ---
 #define MSG_PAIRING 1
 #define MSG_DATA    2
@@ -483,7 +555,15 @@ static volatile uint32_t g_backlogAckCtr = 0;   // ref_ctr of the last acknowled
 
 // A brownout midway is survivable -- the old image still boots -- but it wastes
 // a full transfer and the operator's time, so refuse up front instead.
-#define OTA_MIN_BATTERY_PCT 40
+//
+// Judged on the pack voltage under load, the lowest of this wake and the last
+// few (batLowestRecent), not on one resting reading. A single reading let an
+// update through at "40 %" on a pack that read 33-49 % across a few minutes of
+// button presses: each press scans and transmits, and the cells sag and
+// recover in between. The transfer keeps the radio on for minutes, so what
+// matters is whether the pack holds up under exactly that load.
+// PROVISIONAL, like the battery table.
+#define OTA_MIN_LOAD_MV 2600
 
 typedef struct __attribute__((packed)) {
   uint8_t  msgType;
@@ -541,19 +621,28 @@ static const uint8_t AUTH_KEY[32] = ESPNOW_AUTH_KEY_BYTES;
 
 // --- BATTERY LOOKUP TABLE ---
 // {voltage, percentage} for 2× Energizer Ultimate Lithium (L91, Li-FeS₂, AA)
-// in SERIES. Nominal pack voltage 3.0 V; fresh ≈ 3.4 V, dead ≈ 1.8 V.
-// NOTE: The HT7333-A LDO drops out below ~3.5 V under load, so the node
-// will brown out long before the cells are physically empty. Useful pack
-// voltage range with this regulator is roughly 3.6 V → 3.4 V.
+// in series, read UNDER LOAD -- the lowest voltage seen with the radio on (see
+// BATTERY UNDER LOAD), not the resting voltage.
+//
+// A lithium pack's resting voltage says almost nothing: it stays high until the
+// cells are nearly empty, and a worn pair still rests at 1.5 V each while
+// collapsing on every transmit burst. The buck-boost makes that worse -- it
+// draws constant power, so as the input sags it pulls more current, which sags
+// it further -- and so does the cold the node sits in. What stops a node is the
+// voltage under load, so that is what the percentage is read from.
+//
+// PROVISIONAL: shaped from the L91 discharge curve, not yet from this hardware.
+// The cloud computes the percentage it shows from bat_load_mv with its own copy
+// of this table (backend battery.js), which is the one to correct once real
+// readings exist; this one only feeds the hub's local page and stored readings.
 struct BatteryPoint {
   float voltage;
   int   percentage;
 };
 const BatteryPoint batteryTable[] = {
-  { 3.40, 100 }, { 3.30,  90 }, { 3.20,  80 }, { 3.10,  70 },
-  { 3.00,  60 }, { 2.90,  50 }, { 2.80,  40 }, { 2.65,  30 },
-  { 2.45,  20 }, { 2.20,  10 }, { 2.00,   5 }, { 1.85,   2 },
-  { 1.80,   0 }
+  { 3.30, 100 }, { 3.20,  90 }, { 3.10,  75 }, { 3.00,  55 },
+  { 2.90,  35 }, { 2.80,  20 }, { 2.70,  12 }, { 2.60,   7 },
+  { 2.40,   3 }, { 2.20,   0 }
 };
 const int TABLE_SIZE = sizeof(batteryTable) / sizeof(batteryTable[0]);
 
@@ -580,9 +669,19 @@ typedef struct struct_message {
   // sends. Everything above is what the tag covers.
   uint32_t auth_ctr;             // strictly increasing; replays do not rise
   uint8_t  auth[AUTH_TAG_LEN];   // HMAC over sender MAC + auth_ctr + the above
+
+  // Appended after the tag, so a hub from before 1.1.28 reads the frame as it
+  // always has and ignores these; one from 1.1.28 checks auth2, which covers
+  // everything before it. See BATTERY UNDER LOAD for what the two are.
+  uint16_t bat_mv;               // resting, before the radio starts
+  uint16_t bat_load_mv;          // lowest with the radio on; 0 = none
+  uint8_t  auth2[AUTH_TAG_LEN];
 } struct_message;
 
-#define AUTH_BODY_LEN (sizeof(struct_message) - sizeof(uint32_t) - AUTH_TAG_LEN)
+#define AUTH_BODY_LEN  offsetof(struct_message, auth_ctr)
+#define AUTH2_BODY_LEN offsetof(struct_message, auth2)
+static_assert(AUTH_BODY_LEN == 20 && offsetof(struct_message, bat_mv) == 32 &&
+              sizeof(struct_message) == 44, "wire format changed");
 
 // --- LOG MESSAGE STRUCTURE ---
 // Sent over the same encrypted ESP-NOW peer as the data message.
@@ -940,7 +1039,7 @@ static void otaSendDone(uint8_t result) {
 
 // Receive an offered image. Blocks until it finishes, fails or times out; on
 // success it does not return, because the node reboots into the new image.
-static void otaRunTransfer(int batteryPct) {
+static void otaRunTransfer() {
   const ota_offer_message *o = &otaOffer;
 
   char ver[17] = {0};
@@ -958,8 +1057,10 @@ static void otaRunTransfer(int batteryPct) {
     otaSendReq(0, OTA_DECLINE_BUSY);
     return;
   }
-  if (batteryPct != 255 && batteryPct < OTA_MIN_BATTERY_PCT) {
-    ulog("[OTA] Battery %d%% too low to update\n", batteryPct);
+  uint16_t lowMv = batLowestRecent();
+  if (lowMv && lowMv < OTA_MIN_LOAD_MV) {
+    ulog("[OTA] Battery %u mV under load (lowest of recent wakes), below %u - declining\n",
+         lowMv, OTA_MIN_LOAD_MV);
     otaSendReq(0, OTA_DECLINE_BATTERY);
     return;
   }
@@ -1087,13 +1188,13 @@ static void otaRunTransfer(int batteryPct) {
 // Wait briefly for the hub to offer an image, then run it. Only done on a
 // button wake, which is the deliberate signal that someone wants this node
 // updated.
-void otaMaybeUpdate(int batteryPct) {
+void otaMaybeUpdate() {
   if (!isPaired) return;
   unsigned long start = millis();
   while (!otaOffered && millis() - start < 400) delay(5);
   if (!otaOffered) return;
   otaOffered = false;
-  otaRunTransfer(batteryPct);
+  otaRunTransfer();
 }
 
 
@@ -1214,6 +1315,7 @@ void goToSleep(int seconds) {
     Serial.printf("[LIVE] %u reading%s left after this one\n",
                   liveCyclesLeft, liveCyclesLeft == 1 ? "" : "s");
   }
+  batEndWake();           // radio still on: one last reading under load
   esp_now_deinit();       // Then deinit ESP-NOW
   esp_wifi_stop();        // Stop WiFi radio
   delay(100);             // Allow shutdown to settle
@@ -1231,6 +1333,7 @@ void goToSleep(int seconds) {
 // paired one, which must always come back on its own.
 void goToButtonOnlySleep() {
   Serial.flush();
+  batEndWake();
   esp_now_deinit();
   esp_wifi_stop();
   delay(100);
@@ -1639,7 +1742,8 @@ float readADCVoltage() {
     delay(5);
   }
 
-  pinMode(DIVIDER_ENABLE_PIN, INPUT);   // Hi-Z — zero current draw
+  // The divider stays on for the readings under load; batEndWake() turns it
+  // off before sleep.
 
   float adcMv      = sum / (float)ADC_SAMPLES;
   float adcVoltage = adcMv / 1000.0f;
@@ -1687,6 +1791,8 @@ BatteryInfo getBatteryInfo() {
 
   float voltage = readADCVoltage();
   g_bat_v = voltage;
+  g_batDividerOn = true;
+  g_batRestMv = (voltage >= BAT_MIN_RUNNING_V) ? (uint16_t)(voltage * 1000.0f) : 0;
   int   pct;
   if (voltage < BAT_MIN_RUNNING_V) {
     pct = 255;   // the node could not be running: the divider read failed
@@ -1719,6 +1825,7 @@ bool sendDataWithRetry(int tries) {
     uint8_t self[6];
     WiFi.macAddress(self);
     authTag(self, myData.auth_ctr, (const uint8_t *)&myData, AUTH_BODY_LEN, myData.auth);
+    authTag(self, myData.auth_ctr, (const uint8_t *)&myData, AUTH2_BODY_LEN, myData.auth2);
   }
 
   for (int retry = 0; retry < tries; retry++) {
@@ -1733,9 +1840,12 @@ bool sendDataWithRetry(int tries) {
       continue;
     }
 
+    // The transmit burst is the heaviest load of the wake: measure the pack
+    // while it lasts.
     unsigned long start = millis();
     while (!tx_complete && (millis() - start < TX_TIMEOUT_MS)) {
-      delay(5);
+      batLoadSample();
+      delay(1);
     }
 
     if (tx_success) {
@@ -1858,6 +1968,7 @@ void setup() {
   esp_reset_reason_t reset_reason = esp_reset_reason();
   ulog("Reset reason: %d\n", (int)reset_reason);
   storeInit();   // first: a brownout below returns early, and must clear it
+  batHistInit();
   if (reset_reason == ESP_RST_BROWNOUT) {
     ulog("⚠ Brownout on previous boot — skipping wake cycle\n");
     esp_sleep_enable_timer_wakeup((uint64_t)g_sleepSecs * 1000000ULL);
@@ -1942,6 +2053,7 @@ void setup() {
   esp_wifi_set_protocol(WIFI_IF_STA,
     WIFI_PROTOCOL_11B | WIFI_PROTOCOL_11G |
     WIFI_PROTOCOL_11N | WIFI_PROTOCOL_LR);
+  batLoadSample();   // radio up
 
   // Quick or full attempt (see FAILURE HANDLING). Until the hub counts as down
   // every attempt is full; after that, one per FULL_ATTEMPT_INTERVAL_S is.
@@ -1984,6 +2096,7 @@ void setup() {
       ulog("[CH] Using cached channel %d\n", ch);
     }
     esp_wifi_set_channel(ch, WIFI_SECOND_CHAN_NONE);
+    batLoadSample();   // straight after a scan, the longest load of a wake
   }
 
   if (esp_now_init() != ESP_OK) {
@@ -2010,8 +2123,16 @@ void setup() {
       ESP.restart();
     }
 
-    myData.msgType  = MSG_DATA;
-    myData.battery  = (uint8_t)bat.percentage;
+    myData.msgType     = MSG_DATA;
+    myData.bat_mv      = g_batRestMv;
+    myData.bat_load_mv = batReportLoadMv();
+    // The percentage comes from the voltage under load (see the battery
+    // table); the resting one only when nothing under load was measured.
+    myData.battery     = myData.bat_load_mv
+                         ? (uint8_t)voltageToPct(myData.bat_load_mv / 1000.0f)
+                         : (uint8_t)bat.percentage;
+    ulog("Battery under load: %u mV (%u%%), resting %u mV\n",
+         myData.bat_load_mv, myData.battery, myData.bat_mv);
     //readSensor();
 
     // Settle window before the TX burst: WiFi scan just drew ~100 mA for ~1.5 s
@@ -2050,7 +2171,7 @@ void setup() {
       // someone watching this node right now and contacting the hub every
       // half minute. Ordinary timer wakes still never listen, so the duty
       // cycle of a node nobody is looking at is unchanged.
-      if (force_rescan_this_cycle || liveCyclesLeft > 0) otaMaybeUpdate(bat.percentage);
+      if (force_rescan_this_cycle || liveCyclesLeft > 0) otaMaybeUpdate();
 
     } else {
       // Failure — bump the counter (RTC memory, persists across sleep).

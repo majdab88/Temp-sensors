@@ -152,8 +152,34 @@ typedef struct struct_message {
   uint8_t  fw_minor;
   uint8_t  fw_patch;
   uint16_t cfg_ver;  // config applied on the sensor; 0 = compiled defaults
+  uint32_t auth_ctr; // + 8-byte HMAC tag over the fields above
+  uint8_t  auth[8];
+  uint16_t bat_mv;      // NTC 1.1.16+: pack voltage at rest
+  uint16_t bat_load_mv; // lowest with the radio on -- what the battery % is read from
+  uint8_t  auth2[8];    // HMAC over everything before it; a 1.1.28+ hub checks this
 } struct_message;
 ```
+
+The voltages sit **after** the first tag on purpose: a hub before 1.1.28 copies
+the 32 bytes it knows and ignores the rest, so a sensor can be updated before
+its hub. Anything appended later has to follow the same rule.
+
+### Battery
+
+The percentage is read from the pack voltage **under load**, not at rest. On
+L91 lithium cells the resting voltage stays high until they are nearly empty;
+a worn pair rests at 1.5 V a cell and still collapses on every transmit burst
+(the buck-boost draws constant power, so a sagging input pulls more current,
+and the cold the node sits in adds to it). A single resting reading also
+bounces: after a few button presses one pack read 33–49 % within minutes, and
+an update went through on a recovered "40 %".
+
+The sensor samples the divider while the radio is on and keeps the lowest of
+the last four wakes in RTC memory. The cloud computes the % it shows from
+`bat_load_mv` (`backend/src/battery.js`), so **the table is corrected there,
+with a backend deploy**, not by updating every sensor. Both the table and
+`OTA_MIN_LOAD_MV` are provisional until there is data from real packs going
+flat in the cold.
 
 | ID | Name | Direction | Purpose |
 |----|------|-----------|---------|
@@ -510,7 +536,7 @@ Set the **ESP-PROG VDD jumper to 3.3 V** before connecting; 5 V will damage the 
 | `ESPNOW_CHANNEL` | 0 | Auto-detect |
 | `LIVE_MIN_INTERVAL_S` | 20 | Below this a wake is mostly overhead |
 | `LIVE_MAX_DURATION_S` | 300 | 5 min |
-| `OTA_MIN_BATTERY_PCT` | 40 | Below this an image is declined |
+| `OTA_MIN_LOAD_MV` | 2600 | NTC: lowest pack mV under load over recent wakes below this → image declined (SHT40 variant has no OTA) |
 | `OTA_MAX_BOOT_TRIES` | 3 | Boots without a delivered reading before reverting |
 
 ### NTC variant only (`sensor-ntc/`)

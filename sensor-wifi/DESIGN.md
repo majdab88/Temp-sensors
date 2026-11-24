@@ -90,11 +90,11 @@ reading for up to 60 s waiting for NTP, so this is rare.
    CC1/CC2 = 5k1 Rd                    │  │ │                                         buck-boost
                                        │  │ └─ /PGOOD ──► GPIO7 (LP, wakes from deep sleep)
                                        │  └─── /CHG ───► GPIO4
-                                       BAT ──── 1S Li-ion 2000 mAh, 10 k NTC on TS
+                                       BAT ──── P-FET (reverse) ── fuse ── 18650 in holder; board NTC under it → TS
                                        └─── 100k/100k divider (switched by GPIO21) ──► GPIO2 ADC
 
  3V3 ── 47k 0.1 % ──┬── GPIO3 ADC (100 nF, ESD diode)
-                    └── 3.5 mm jack ── NTC probe ── GPIO22 (low-side enable switch)
+                    └── screw terminal ── NTC probe (via cable gland) ── GPIO22 (low-side enable switch)
 
  J_PROG 2×3 (EN 3V3 TXD GND RXD IO0) ──► ESP-PROG, which drives EN and GPIO9 itself
  32.768 kHz XTAL on GPIO0/GPIO1 · LED on GPIO5 · user button on GPIO6
@@ -102,7 +102,7 @@ reading for up to 60 s waiting for NTP, so this is rare.
 
 ## 3. Hardware
 
-### 3.1 Pin map (ESP32-C6-WROOM-1-N4)
+### 3.1 Pin map (ESP32-C6-WROOM-1U-N4, as sensor-ntc v2)
 
 | GPIO | Function | Notes |
 |---|---|---|
@@ -136,11 +136,13 @@ non-linear top of the ADC range. With 47 k, −18 °C reads 2.1 V, +4 °C 1.2 V 
 | Input protection | 1206 PTC 1.1 A hold + SMF5.0A TVS | |
 | Charger / power path | **TI BQ24074RGTR** (VQFN-16) | OUT regulated to 4.4 V with input present, OUT = BAT without. 10.5 V OVP. Dynamic power-path: the load is served first, the cell charges from what is left |
 | Input current limit | R_ILIM ≈ 1.5 kΩ, EN1=0 EN2=1 | ≈ 1 A from the USB source. **Verify K_ILIM in the datasheet** |
-| Charge current | R_ISET ≈ 1.8 kΩ | ≈ 0.5 A = 0.25 C for 2000 mAh. Slow and gentle on a cell that sits full for years. **Verify K_ISET** |
-| Battery temperature | TS ← pack's 10 k NTC | No charging below 0 °C or above 45 °C — required for Li-ion. Fit a 10 k resistor instead if the pack has no thermistor |
+| Charge current | R_ISET ≈ 1.8 kΩ | ≈ 0.5 A ≈ 0.15 C for a 3000–3500 mAh cell. Slow and gentle on a cell that sits full for years. **Verify K_ISET** |
+| Battery temperature | TS ← 10 k NTC (0603, B ≈ 3435) on the PCB, under the holder, in contact with the cell | No charging below 0 °C or above 45 °C — required for Li-ion. A loose 18650 has no thermistor of its own, so the board supplies one |
+| Reverse polarity | P-MOSFET high side (e.g. DMG2305UX), gate to GND | A cell in a holder **will** be put in backwards sometimes. Conducts both ways when the cell is right (charge and discharge), blocks when it is reversed |
+| Cell fuse | 1206 fast fuse, 2–3 A, in series with the cell | An 18650 can deliver tens of amps into a fault |
 | 3.3 V rail | **TI TPS63802** buck-boost | Same part, inductor and divider as sensor-ntc v2 (L 1.5 µH, 560k/100k, MODE = GND). Accepts 1.3–5.5 V, so it covers 4.4 V (USB) and 3.0–4.2 V (cell) |
 | Bulk | 22 µF on OUT, 22 µF + 100 µF on 3V3 | WiFi TX peaks ~350 mA |
-| Battery | 1S Li-ion/LiPo 2000 mAh, 3-wire with 10 k NTC, **with protection PCB**, JST-PH 3-pin | e.g. 103450. An 18650 in a holder also fits if the enclosure grows |
+| Battery | **18650 Li-ion, 3000–3500 mAh, protected, button top**, in a PCB-mounted holder (Keystone 1042 SMT / 1043 THT or equivalent) | Protected cells are 69–70 mm, longer than bare ones. **Check the holder takes that length.** Whether to add on-board DW01A + FS8205A protection, so a bare cell is also safe, is open: it has to be reconciled with the reverse-polarity FET in the schematic |
 
 **Do not use the cell side for anything but the divider.** All loads hang off
 OUT through the TPS63802, so the charger's power path decides the source, not
@@ -165,8 +167,8 @@ and one programmer covers both products.
 - **Pin 2 (3V3) ties to this board's 3V3 rail, where the TPS63802 is always
   running** — the Li-ion cell is inside the box and stays connected. Two 3.3 V
   sources would fight. Either take the ESP-PROG's power-select jumper off
-  (no VDD on pin 2) and power the board from USB-C, or unplug the cell's
-  JST-PH *and* USB-C and let the ESP-PROG power it. Either way, if the
+  (no VDD on pin 2) and power the board from USB-C, or take the 18650
+  out of its holder, unplug USB-C, and let the ESP-PROG power it. Either way, if the
   jumper is on it must be at **3.3 V**: 5 V destroys the C6.
 - Serial monitor uses the same ESP-PROG at 115200 baud.
 
@@ -179,25 +181,28 @@ and one programmer covers both products.
 | Upload wake (WiFi assoc + TLS + publish) | ≈ 90 mA × 4 s | 0.10 mAh |
 
 At a 5-minute interval with WiFi available: 288 uploads/day ≈ **30 mAh/day →
-~2 months** on 2000 mAh. With WiFi down (router also off): 1 attempt per 30 min
-≈ 6 mAh/day → **~10 months** of logging, capped in practice by the 28-day ring.
+~3 months** on a 3000 mAh 18650. With WiFi down (router also off): 1 attempt per
+30 min ≈ 6 mAh/day → well over a year of logging. The 28-day ring is the real
+limit: past that, the oldest unsent readings are overwritten.
 
 Thresholds on battery: below **3.45 V** WiFi is not attempted (logging only);
 below **3.30 V** the device hibernates and wakes only when USB returns or the
-button is pressed. The pack's own protection PCB is the last line, around 2.5–3 V.
+button is pressed. The cell's own protection board is the last line, around 2.5–3 V.
 
 ### 3.5 BOM summary
 
 | Ref | Part | Qty |
 |---|---|---|
-| U1 | ESP32-C6-WROOM-1-N4 (PCB antenna) | 1 |
+| U1 | ESP32-C6-WROOM-1U-N4 (u.FL), the sensor-ntc v2 module | 1 |
+| ANT1 | 2.4 GHz antenna: u.FL → SMA bulkhead pigtail (~100 mm) + SMA rubber-duck dipole | 1 |
 | U2 | BQ24074RGTR | 1 |
 | U3 | TPS63802DLAR / DMQR (whichever sensor-ntc v2 used) | 1 |
 | L1 | 1.5 µH ≥ 2 A shielded (TDK MLP2520H1R5) | 1 |
 | Y1 | 32.768 kHz, 12.5 pF, 3215 | 1 |
 | J1 | USB-C 16-pin receptacle | 1 |
-| J2 | 3.5 mm mono/stereo PCB jack (probe) | 1 |
-| J3 | JST-PH 3-pin (battery) | 1 |
+| J2 | 2-pin pluggable screw terminal, 3.5 mm pitch (probe) | 1 |
+| — | Cable gland PG7 / M12 (3–6.5 mm cable), nylon, IP68 | 1 |
+| BH1 | 18650 holder, PCB-mounted on the back side | 1 |
 | J4 | 2×3 2.54 mm shrouded IDC header (`J_PROG`, as sensor-ntc v2) | 1 |
 | SW1 | Tact switch: USER (GPIO6) | 1 |
 | D1 | SMF5.0A (VBUS TVS) | 1 |
@@ -205,7 +210,10 @@ button is pressed. The pack's own protection PCB is the last line, around 2.5–
 | D3 | Status LED 0603 | 1 |
 | F1 | PTC 1.1 A 1206 | 1 |
 | R | 47 k 0.1 % (NTC series), 2 × 100 k 1 % (battery), 560 k / 100 k 1 % (FB), 2 × 5.1 k (CC), R_ISET, R_ILIM, pull-ups | — |
-| BT1 | 1S Li-ion 2000 mAh, 10 k NTC, protected | 1 |
+| BT1 | 18650 Li-ion 3000–3500 mAh, protected, button top | 1 |
+| Q1 | DMG2305UX P-MOSFET (reverse polarity) | 1 |
+| F2 | Fuse 2–3 A 1206 (cell) | 1 |
+| RT1 | 10 k NTC 0603 (battery temperature, under the holder) | 1 |
 
 ---
 
@@ -278,11 +286,17 @@ and reverts after 3 boots without that, or after 5 minutes in mains mode.
 
 ## 5. PCB (`pcb/`) — not started
 
-- 2-layer, ~70 × 45 mm, 1.6 mm. WROOM-1 antenna at one short edge over a
-  copper-free keep-out, extending past the board edge or with ≥ 15 mm clearance.
-- USB-C and the 3.5 mm probe jack on the opposite short edge, so cables leave
-  the enclosure together at the bottom when wall-mounted.
-- Battery off-board, connected via JST-PH, lying under the PCB.
+- 2-layer, ~85 × 45 mm, 1.6 mm. Sized by the 18650 holder (77 × 21 mm). The
+  WROOM-1U has no on-board antenna, so no keep-out constrains the layout, and
+  the cell can run the full length under the module.
+- u.FL at the module, near the top edge. The pigtail runs to an SMA bulkhead
+  in the enclosure's top face, so the antenna can be replaced by a remote one
+  with an extension cable if the device ends up behind a metal cabinet.
+- USB-C and the probe screw terminal on the bottom short edge, so cables leave
+  the enclosure together at the bottom when wall-mounted. Terminal entry faces
+  the cable gland.
+- 18650 holder on the **back side**, along the long axis. RT1 sits under the
+  holder's middle, where the cell touches it.
 - BQ24074 thermal pad stitched to the ground pour (it dissipates ~0.5 W
   while charging from 5 V).
 - NTC ADC trace short and guarded, away from the TPS63802 switch node and L1.
@@ -292,12 +306,17 @@ and reverts after 3 boots without that, or after 5 minutes in mains mode.
 
 - Wall-mounted outside the fridge/freezer. The probe enters through the door
   gasket on a flat-section cable. The electronics, and above all the Li-ion
-  cell, stay at room temperature: **Li-ion must not be charged below 0 °C**,
-  and the BQ24074 TS input enforces that only if the cell's own NTC is wired.
-- Two-part printed PETG box, ~85 × 55 × 28 mm: base with keyhole slots and
-  battery bay, lid with a light pipe for the LED and a pin-hole for the button.
-- Bottom face: USB-C cut-out and 3.5 mm jack hole. Top: plastic only, over the
-  antenna; no metal screws or labels there.
+  cell, stay at room temperature: **Li-ion must not be charged below 0 °C**.
+  The BQ24074 TS input enforces that through RT1 under the cell.
+- Two-part printed PETG box, ~95 × 55 × 40 mm plus gland and SMA (sized by the
+  18650 under the board): base with keyhole slots, lid with a light pipe for the LED and a
+  pin-hole for the button. The lid comes off without tools so the cell can be
+  swapped. Mark the cell polarity on the base, next to the holder.
+- Bottom face: USB-C cut-out and a PG7 (M12) cable gland for the probe cable.
+  Leave ~25 mm inside the gland for the cable to bend to the screw terminal,
+  and a strain-relief rib so a pull on the probe lands on the gland, not the
+  terminal.
+- Top face: SMA bulkhead (D-flat hole, 6.4 mm) for the antenna.
 - Vents are unnecessary at < 0.5 W, but give the charger area 2 mm clearance
   to the lid.
 - Model in SolidCraft around the KiCad STEP once the board exists.

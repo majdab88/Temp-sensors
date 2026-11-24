@@ -27,7 +27,7 @@
 // Reported in the status payload so the cloud can tell this from a hub.
 #define DEVICE_KIND "wifi"
 
-// --- PINS (ESP32-C6-WROOM-1) ---
+// --- PINS (ESP32-C6-WROOM-1U, u.FL antenna; no RF switch to drive) ---
 // GPIO0/1 carry the 32.768 kHz crystal and must not be touched.
 #define BAT_ADC_PIN         2   // ADC1_CH2, 100k/100k divider from the cell
 #define NTC_ADC_PIN         3   // ADC1_CH3, R_series/NTC midpoint

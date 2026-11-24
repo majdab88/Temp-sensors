@@ -31,7 +31,7 @@
 // GPIO0/1 carry the 32.768 kHz crystal and must not be touched.
 #define BAT_ADC_PIN         2   // ADC1_CH2, 100k/100k divider from the cell
 #define NTC_ADC_PIN         3   // ADC1_CH3, R_series/NTC midpoint
-#define CHG_PIN             4   // BQ24074 /CHG, open drain, LOW = charging
+#define CHG_PIN            18   // BQ24074 /CHG, open drain, LOW = charging (GPIO4 is a strap pin)
 #define LED_PIN             5
 #define BUTTON_PIN          6   // active low, LP GPIO (deep-sleep wake)
 #define PGOOD_PIN           7   // BQ24074 /PGOOD, LOW = USB power present; LP GPIO

@@ -1,0 +1,4 @@
+(fp_lib_table
+	(version 7)
+	(lib (name "sensor-wifi") (type "KiCad") (uri "${KIPRJMOD}/sensor-wifi.pretty") (options "") (descr "sensor-wifi project footprints"))
+)

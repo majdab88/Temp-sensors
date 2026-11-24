@@ -5,8 +5,8 @@ cloud**, with no hub. Powered from USB-C, with a rechargeable 1S Li-ion cell
 that takes over when mains power is lost. Programmed with an ESP-PROG on the
 same 2×3 header as sensor-ntc v2, not over USB-C.
 
-Status: **design written; firmware builds (`pio run -e wifi_sensor`) but is
-untested on hardware; PCB and enclosure not started; cloud changes (§7) not
+Status: **design written; schematic drawn (ERC clean); firmware builds (`pio run -e wifi_sensor`) but is
+untested on hardware; PCB layout and enclosure not started; cloud changes (§7) not
 started.**
 
 ---
@@ -89,7 +89,7 @@ reading for up to 60 s waiting for NTP, so this is rare.
  USB-C (power only) ──► PTC + TVS ──► BQ24074 ──OUT (4.4 V on USB / VBAT on battery)──► TPS63802 ──► 3V3
    CC1/CC2 = 5k1 Rd                    │  │ │                                         buck-boost
                                        │  │ └─ /PGOOD ──► GPIO7 (LP, wakes from deep sleep)
-                                       │  └─── /CHG ───► GPIO4
+                                       │  └─── /CHG ───► GPIO18
                                        BAT ──── reverse protection (open) ── fuse ── 18650 ── DW01A + FS8205A ── GND
                                                                           board NTC under the cell → TS
                                        └─── 100k/100k divider (switched by GPIO21) ──► GPIO2 ADC
@@ -110,7 +110,6 @@ reading for up to 60 s waiting for NTP, so this is rare.
 | 0, 1 | 32.768 kHz crystal (XTAL_32K_P/N) | 2 × 12 pF load caps; this is why the NTC is no longer on GPIO1 |
 | 2 | Battery ADC (ADC1_CH2) | 100k/100k from BAT; 10 nF to GND |
 | 3 | NTC ADC (ADC1_CH3) | 100 nF to GND, ESD diode — the probe cable is an antenna |
-| 4 | BQ24074 `/CHG` | Open drain, 100 k pull-up; LOW = charging. MTMS strap, inert unless the JTAG eFuse is burned |
 | 5 | Status LED | Via 1 k. MTDI strap, inert as above. Same pin as sensor-ntc v2 |
 | 6 | User button | Active low, 10 k pull-up + 100 nF. LP GPIO → deep-sleep wake |
 | 7 | BQ24074 `/PGOOD` | Open drain, 100 k pull-up; LOW = USB power present. LP GPIO → deep-sleep wake |
@@ -118,10 +117,12 @@ reading for up to 60 s waiting for NTP, so this is rare.
 | 9 | BOOT strap | 10 k pull-up; → `J_PROG` pin 6 (IO0) |
 | 12, 13 | USB D−/D+ | **Not connected.** USB-C is power-only by choice |
 | 15 | Strap | Left floating (internal pull-up, boot log on) |
+| 18 | BQ24074 `/CHG` | Open drain, 100 k pull-up; LOW = charging. Moved off GPIO4, which is a C6 strapping pin (MTMS) |
 | 16 / 17 | U0TXD / U0RXD | `J_PROG` pin 3 (ESP_TXD) / pin 5 (ESP_RXD) |
 | 21 | Battery divider enable | LOW = on, Hi-Z otherwise |
 | 22 | NTC divider enable | LOW = on, Hi-Z otherwise |
-| EN | Reset | 10 k pull-up, 1 µF to GND; → `J_PROG` pin 1 |
+| EN | Reset | 10 k pull-up, 1 µF to GND, RESET button (SW1, as v2); → `J_PROG` pin 1 |
+| 4, 10, 11, 15, 19, 20, 23 | Free | Unconnected |
 
 The NTC sits on the **high side**, as in the original v1 design:
 `3V3 → NTC → ADC → 10 kΩ → GPIO22`, so `R = r_series · (3.3 − V) / V`.
@@ -162,38 +163,59 @@ which is negligible.
 OUT through the TPS63802, so the charger's power path decides the source, not
 the firmware.
 
-#### Battery protection — requirement settled, reverse-insertion circuit open
+#### Battery protection
 
 **Requirement:** any 18650 may be fitted, protected or bare, either way round.
 Nothing on the board may be damaged, and nothing may heat up, in any of these:
 no cell, correct cell, reversed cell, each with and without USB present.
 
-**Settled:** DW01A + FS8205A on the board, so a bare cell is protected exactly
-as a protected one is (over-charge, over-discharge, short circuit). A protected
-cell just has two protectors in series.
+As drawn in the schematic (refs are the schematic's):
 
-**Open — reversed cell while USB is present.** The obvious fix, a high-side
-P-FET with its gate to GND, is not enough. With USB in, the BQ24074 drives BAT
-to ~4.2 V, so that FET turns on whichever way the cell sits. Everything then
-rests on the FS8205A staying off, and with the cell reversed its DW01A is
-reverse-biased and its gate drive is undefined. A DW01A fed straight from the
-holder is also reverse-biased through its 100 Ω, pushing current through its
-substrate diode. Candidates for the schematic:
+```
+ BT1 + ─ F2 (3 A) ─ CELL_PF ─┬─ Q1 DMG2305UX: D = CELL_PF, S = VBAT ──► BQ24074 BAT
+                             │      gate REV_G: 10 k (R10) to CELL_N, 1 M (R11) to VBAT
+                             └─ D2 RB751S40 ─ R12 330 Ω ─ DW_VCC ── U3 DW01A VCC (C6 100 nF to CELL_N)
+ BT1 − = CELL_N = DW01A GND ─ Q2 FS8205A S1 │ D12 │ S2 ─ GND
+                                DW01A OD → G1, OC → G2 (R14 1 M to GND), CS → R13 1 k → GND
+```
 
-1. A series element whose gate is driven by the **cell's own polarity**
-   (holder + versus holder −) rather than system GND, so an external source on
-   BAT cannot turn it on. Then a clamp (e.g. a zener) and a pull-down that
-   holds the FS8205A charge FET off when the DW01A is unpowered or reversed.
-2. Crowbar: a Schottky across the holder plus a resettable PTC in series. A
-   reversed cell trips the PTC and every downstream node sees only −Vf.
-   Deterministic, but a reversed cell then sits there slowly discharging into a
-   warm PTC until someone notices `battery: 255` on the dashboard.
+Two rules make it hold whichever way the cell sits:
 
-Option 1 is preferred. Whichever is chosen, **simulate all eight cases in
-KiCad's ngspice, then bench-test the reversed-cell cases** on a
-current-limited supply before trusting it. This is a safety path, so the
-CLAUDE.md rule applies: verified, not argued. This paragraph replaces a version
-of the circuit that looked right and was not.
+1. **Q1's gate is referenced to the cell's own negative terminal (CELL_N), not
+   to system ground.** That is what the first attempt got wrong. With the cell
+   correct, CELL_N ≈ GND and Vgs ≈ −Vcell: on, conducting both ways (charge
+   and discharge). With the cell reversed, CELL_N is the cell's *positive*
+   terminal, so the gate sits above the source and Q1 stays off, whatever the
+   charger does to VBAT.
+2. **The DW01A is powered from the cell through D2, and FS8205A's charge FET
+   has a 1 MΩ gate pull-down.** A reversed cell cannot back-feed the DW01A: D2
+   blocks it. With the DW01A unpowered, both FS8205A gates sit at their sources
+   and the back-to-back pair blocks both directions. D2's ~0.1 V drop at the
+   DW01A's µA supply current raises its trip points by the same amount
+   (over-discharge ~2.5 V, over-charge ~4.4 V). The charger regulates at 4.2 V
+   anyway.
+
+| Cell | USB | Expected |
+|---|---|---|
+| none | no | board off |
+| none | yes | runs from USB; `battery: 255` reported |
+| correct | no | Q1 on, DW01A + FS8205A conduct; runs from the cell |
+| correct | yes | runs from USB, charges the cell |
+| reversed | no | D2, Q1 and both FS8205A FETs block; no current |
+| reversed | yes | as above; the charger sees no battery; `battery: 255` reported |
+| correct, over-discharged | either | DW01A trips at ~2.5 V; releases when USB returns and charging starts |
+| bare cell shorted in the holder | either | DW01A short-circuit trip (~3 A); F2 if that fails |
+
+The two reversed rows are reasoned, not measured. **Bench-test them before
+trusting the board:** reverse a cell on a current-limited supply, with and
+without USB, and confirm zero current and no heating. This is a safety path,
+and the CLAUDE.md rule applies: verified, not argued. A first version of this
+circuit (gate to GND) looked right and failed exactly the reversed + USB case.
+
+A brand-new DW01A circuit can power up in its protected state and stay off
+until a charger is connected once. Since installation always involves USB
+power, that is acceptable. It also means a fresh cell does not start the board
+on its own.
 
 ### 3.3 Programming — `J_PROG`, same header as sensor-ntc v2
 
@@ -210,7 +232,8 @@ and one programmer covers both products.
 
 - The ESP-PROG's auto-reset circuit drives EN and IO0, so
   `pio run -t upload` needs no buttons. Nothing on this board does it: no
-  transistors, and no RESET or BOOT buttons, same as v2.
+  transistors, and no BOOT button. A RESET button (SW1, EN to GND) is kept,
+  as on v2.
 - **Pin 2 (3V3) ties to this board's 3V3 rail, where the TPS63802 is always
   running** — the Li-ion cell is inside the box and stays connected. Two 3.3 V
   sources would fight. Either take the ESP-PROG's power-select jumper off
@@ -238,35 +261,30 @@ button is pressed. The on-board DW01A is the last line, at about 2.4 V. After
 hibernating, the board draws ~25 µA, so a cell at 3.3 V takes months to fall
 that far.
 
-### 3.5 BOM summary
+### 3.5 Schematic and BOM
 
-| Ref | Part | Qty |
+KiCad 10 project in `pcb/` (`sensor-wifi.kicad_pro`), one A3 sheet, 68 parts.
+**The schematic is the BOM of record.** Values and footprints are set on every
+part. Project libraries live beside it, so the design opens on any machine:
+
+- `sensor-wifi.kicad_sym`: ESP32-C6-WROOM-1U and TPS63802DLAR, taken from
+  the NTC_SENSOR (v2) schematic, plus a custom FS8205A.
+- `sensor-wifi.pretty`: the v2 footprints for the WROOM-1U, the TPS63802 and
+  the VLS3015 inductor. Their 3D models still point at absolute paths on the
+  dev machine, as in v2.
+
+ERC is clean, and an exported netlist matched the intended 44 nets exactly.
+Values marked for checking against datasheets before layout:
+
+| Ref | Value | Check |
 |---|---|---|
-| U1 | ESP32-C6-WROOM-1U-N4 (u.FL), the sensor-ntc v2 module | 1 |
-| ANT1 | 2.4 GHz antenna: u.FL → SMA bulkhead pigtail (~100 mm) + SMA rubber-duck dipole | 1 |
-| U2 | BQ24074RGTR | 1 |
-| U3 | TPS63802DLAR / DMQR (whichever sensor-ntc v2 used) | 1 |
-| L1 | 1.5 µH ≥ 2 A shielded (TDK MLP2520H1R5) | 1 |
-| Y1 | 32.768 kHz, 12.5 pF, 3215 | 1 |
-| J1 | USB-C 16-pin receptacle | 1 |
-| J2 | 2-pin pluggable screw terminal, 3.5 mm pitch (probe) | 1 |
-| — | Cable gland PG7 / M12 (3–6.5 mm cable), nylon, IP68 | 1 |
-| BH1 | 18650 holder, PCB-mounted on the back side | 1 |
-| J4 | 2×3 2.54 mm shrouded IDC header (`J_PROG`, as sensor-ntc v2) | 1 |
-| SW1 | Tact switch: USER (GPIO6) | 1 |
-| D1 | SMF5.0A (VBUS TVS) | 1 |
-| D2 | PESD5V0S1BL (probe ESD) | 1 |
-| D3 | Status LED 0603 | 1 |
-| F1 | PTC 1.1 A 1206 | 1 |
-| R | 10 k 0.1 % 25 ppm (NTC series), 2 × 100 k 1 % (battery), 560 k / 100 k 1 % (FB), 2 × 5.1 k (CC), R_ISET, R_ILIM, pull-ups | — |
-| BT1 | 18650 Li-ion, any (not supplied with the board, or supplied as a protected cell) | 1 |
-| Q1 | Reverse-polarity element: open, see §3.2 | — |
-| U4 | DW01A, SOT-23-6 (cell protection) | 1 |
-| Q2 | FS8205A dual N-MOSFET, TSSOP-8 / SOT-23-6 | 1 |
-| — | DW01A support: 100 Ω + 100 nF on VCC, 1–2 kΩ on CS | — |
-| F2 | Fuse 2–3 A 1206 (cell) | 1 |
-| F3 | PTC 0805, ~50 mA hold (probe feed) | 1 |
-| RT1 | 10 k NTC 0603 (battery temperature, under the holder) | 1 |
+| R4 | 1.5 k (ILIM ≈ 1 A) | K_ILIM in the BQ24074 datasheet |
+| R5 | 1.8 k (ISET ≈ 0.5 A) | K_ISET |
+| R6 | 68 k (TMR) | Safety timer must exceed the ~7 h a 3.5 Ah cell takes at 0.5 A; check K_TMR and the allowed range |
+| R7 | DNP | ITERM left open for the default termination current; confirm that is what open means on the BQ24074 |
+| Q2 | FS8205A, TSSOP-8 | Pinout (1,8 D; 2,3 S1; 4 G1; 5 G2; 6,7 S2) against the purchased part |
+| BT1 | Keystone 1042 footprint | Must take 65 mm flat-top **and** 70 mm button-top cells; swap for a holder that does |
+| L1 | TDK VLS3015CX-1R5M-H | Same inductor as v2 (the earlier MLP2520 note was wrong) |
 
 ---
 
@@ -337,7 +355,7 @@ and reverts after 3 boots without that, or after 5 minutes in mains mode.
 
 ---
 
-## 5. PCB (`pcb/`) — not started
+## 5. PCB layout (`pcb/`) — schematic done, layout not started
 
 - 2-layer, ~85 × 45 mm, 1.6 mm. Sized by the 18650 holder (77 × 21 mm). The
   WROOM-1U has no on-board antenna, so no keep-out constrains the layout, and

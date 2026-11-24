@@ -90,7 +90,8 @@ reading for up to 60 s waiting for NTP, so this is rare.
    CC1/CC2 = 5k1 Rd                    │  │ │                                         buck-boost
                                        │  │ └─ /PGOOD ──► GPIO7 (LP, wakes from deep sleep)
                                        │  └─── /CHG ───► GPIO4
-                                       BAT ──── P-FET (reverse) ── fuse ── 18650 in holder; board NTC under it → TS
+                                       BAT ──── reverse protection (open) ── fuse ── 18650 ── DW01A + FS8205A ── GND
+                                                                          board NTC under the cell → TS
                                        └─── 100k/100k divider (switched by GPIO21) ──► GPIO2 ADC
 
  3V3 ── PTC ── screw terminal ── NTC probe (via cable gland) ──┬── GPIO3 ADC (100 nF, ESD diode)
@@ -150,15 +151,49 @@ which is negligible.
 | Input current limit | R_ILIM ≈ 1.5 kΩ, EN1=0 EN2=1 | ≈ 1 A from the USB source. **Verify K_ILIM in the datasheet** |
 | Charge current | R_ISET ≈ 1.8 kΩ | ≈ 0.5 A ≈ 0.15 C for a 3000–3500 mAh cell. Slow and gentle on a cell that sits full for years. **Verify K_ISET** |
 | Battery temperature | TS ← 10 k NTC (0603, B ≈ 3435) on the PCB, under the holder, in contact with the cell | No charging below 0 °C or above 45 °C — required for Li-ion. A loose 18650 has no thermistor of its own, so the board supplies one |
-| Reverse polarity | P-MOSFET high side (e.g. DMG2305UX), gate to GND | A cell in a holder **will** be put in backwards sometimes. Conducts both ways when the cell is right (charge and discharge), blocks when it is reversed |
-| Cell fuse | 1206 fast fuse, 2–3 A, in series with the cell | An 18650 can deliver tens of amps into a fault |
+| Reverse polarity | **Open — see below.** | A cell in a holder **will** be put in backwards sometimes, with or without USB present |
+| Cell protection | **DW01A + FS8205A** (dual N-FET) in the cell's negative leg | The board cannot know whether a protected cell was fitted, so it protects every cell itself. Over-charge ~4.3 V, over-discharge ~2.4 V, over-current/short ~3 A. A protected cell just ends up with two protectors in series |
+| Cell fuse | 1206 fast fuse, 2–3 A, in series with the cell | Last resort if both protectors fail short. An 18650 can deliver tens of amps |
 | 3.3 V rail | **TI TPS63802** buck-boost | Same part, inductor and divider as sensor-ntc v2 (L 1.5 µH, 560k/100k, MODE = GND). Accepts 1.3–5.5 V, so it covers 4.4 V (USB) and 3.0–4.2 V (cell) |
 | Bulk | 22 µF on OUT, 22 µF + 100 µF on 3V3 | WiFi TX peaks ~350 mA |
-| Battery | **18650 Li-ion, 3000–3500 mAh, protected, button top**, in a PCB-mounted holder (Keystone 1042 SMT / 1043 THT or equivalent) | Protected cells are 69–70 mm, longer than bare ones. **Check the holder takes that length.** Whether to add on-board DW01A + FS8205A protection, so a bare cell is also safe, is open: it has to be reconciled with the reverse-polarity FET in the schematic |
+| Battery | **Any 18650 Li-ion**, protected or not, 2500–3500 mAh, in a PCB-mounted holder | The holder must take **65 mm flat-top bare cells and 70 mm button-top protected cells alike**: a spring contact at one end, a contact that reaches a recessed flat top at the other. Choose and check it on real cells of both kinds |
 
 **Do not use the cell side for anything but the divider.** All loads hang off
 OUT through the TPS63802, so the charger's power path decides the source, not
 the firmware.
+
+#### Battery protection — requirement settled, reverse-insertion circuit open
+
+**Requirement:** any 18650 may be fitted, protected or bare, either way round.
+Nothing on the board may be damaged, and nothing may heat up, in any of these:
+no cell, correct cell, reversed cell, each with and without USB present.
+
+**Settled:** DW01A + FS8205A on the board, so a bare cell is protected exactly
+as a protected one is (over-charge, over-discharge, short circuit). A protected
+cell just has two protectors in series.
+
+**Open — reversed cell while USB is present.** The obvious fix, a high-side
+P-FET with its gate to GND, is not enough. With USB in, the BQ24074 drives BAT
+to ~4.2 V, so that FET turns on whichever way the cell sits. Everything then
+rests on the FS8205A staying off, and with the cell reversed its DW01A is
+reverse-biased and its gate drive is undefined. A DW01A fed straight from the
+holder is also reverse-biased through its 100 Ω, pushing current through its
+substrate diode. Candidates for the schematic:
+
+1. A series element whose gate is driven by the **cell's own polarity**
+   (holder + versus holder −) rather than system GND, so an external source on
+   BAT cannot turn it on. Then a clamp (e.g. a zener) and a pull-down that
+   holds the FS8205A charge FET off when the DW01A is unpowered or reversed.
+2. Crowbar: a Schottky across the holder plus a resettable PTC in series. A
+   reversed cell trips the PTC and every downstream node sees only −Vf.
+   Deterministic, but a reversed cell then sits there slowly discharging into a
+   warm PTC until someone notices `battery: 255` on the dashboard.
+
+Option 1 is preferred. Whichever is chosen, **simulate all eight cases in
+KiCad's ngspice, then bench-test the reversed-cell cases** on a
+current-limited supply before trusting it. This is a safety path, so the
+CLAUDE.md rule applies: verified, not argued. This paragraph replaces a version
+of the circuit that looked right and was not.
 
 ### 3.3 Programming — `J_PROG`, same header as sensor-ntc v2
 
@@ -199,7 +234,9 @@ limit: past that, the oldest unsent readings are overwritten.
 
 Thresholds on battery: below **3.45 V** WiFi is not attempted (logging only);
 below **3.30 V** the device hibernates and wakes only when USB returns or the
-button is pressed. The cell's own protection board is the last line, around 2.5–3 V.
+button is pressed. The on-board DW01A is the last line, at about 2.4 V. After
+hibernating, the board draws ~25 µA, so a cell at 3.3 V takes months to fall
+that far.
 
 ### 3.5 BOM summary
 
@@ -222,8 +259,11 @@ button is pressed. The cell's own protection board is the last line, around 2.5�
 | D3 | Status LED 0603 | 1 |
 | F1 | PTC 1.1 A 1206 | 1 |
 | R | 10 k 0.1 % 25 ppm (NTC series), 2 × 100 k 1 % (battery), 560 k / 100 k 1 % (FB), 2 × 5.1 k (CC), R_ISET, R_ILIM, pull-ups | — |
-| BT1 | 18650 Li-ion 3000–3500 mAh, protected, button top | 1 |
-| Q1 | DMG2305UX P-MOSFET (reverse polarity) | 1 |
+| BT1 | 18650 Li-ion, any (not supplied with the board, or supplied as a protected cell) | 1 |
+| Q1 | Reverse-polarity element: open, see §3.2 | — |
+| U4 | DW01A, SOT-23-6 (cell protection) | 1 |
+| Q2 | FS8205A dual N-MOSFET, TSSOP-8 / SOT-23-6 | 1 |
+| — | DW01A support: 100 Ω + 100 nF on VCC, 1–2 kΩ on CS | — |
 | F2 | Fuse 2–3 A 1206 (cell) | 1 |
 | F3 | PTC 0805, ~50 mA hold (probe feed) | 1 |
 | RT1 | 10 k NTC 0603 (battery temperature, under the holder) | 1 |

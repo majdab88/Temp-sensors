@@ -55,7 +55,9 @@ static void scanNetworks() {
 class ServerCb : public NimBLEServerCallbacks {
   void onConnect(NimBLEServer*, NimBLEConnInfo&) override {
     digitalWrite(LED_PIN, HIGH);
-    s_wifiReq = s_cloudReq = s_scanReq = false;
+    s_wifiReq = false;
+    s_cloudReq = false;
+    s_scanReq = false;
     s_wifiOk = false;
     notifyStatus("idle");
   }
@@ -171,7 +173,6 @@ void bleProvision() {
   // A String, not a fixed buffer: NimBLE would send the trailing garbage too.
   String info = String("{\"mac\":\"") + g_macStr + "\",\"kind\":\"" DEVICE_KIND "\"}";
   svc->createCharacteristic(PROV_CHAR_INFO, NIMBLE_PROPERTY::READ)->setValue(info.c_str());
-  svc->start();
 
   NimBLEAdvertising* adv = NimBLEDevice::getAdvertising();
   adv->addServiceUUID(PROV_SERVICE_UUID);

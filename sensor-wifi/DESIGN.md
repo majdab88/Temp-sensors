@@ -2,8 +2,8 @@
 
 A standalone NTC temperature sensor that connects **directly to WiFi and the
 cloud**, with no hub. Powered from USB-C, with a rechargeable 1S Li-ion cell
-that takes over when mains power is lost. Programmed over a USB-to-TTL adapter,
-not over USB-C.
+that takes over when mains power is lost. Programmed with an ESP-PROG on the
+same 2×3 header as sensor-ntc v2, not over USB-C.
 
 Status: **design written; firmware builds (`pio run -e wifi_sensor`) but is
 untested on hardware; PCB and enclosure not started; cloud changes (§7) not
@@ -96,7 +96,7 @@ reading for up to 60 s waiting for NTP, so this is rare.
  3V3 ── 47k 0.1 % ──┬── GPIO3 ADC (100 nF, ESD diode)
                     └── 3.5 mm jack ── NTC probe ── GPIO22 (low-side enable switch)
 
- USB-TTL header (GND TXD RXD DTR RTS) ──► U0TXD/U0RXD + 2-transistor auto-reset on EN / GPIO9
+ J_PROG 2×3 (EN 3V3 TXD GND RXD IO0) ──► ESP-PROG, which drives EN and GPIO9 itself
  32.768 kHz XTAL on GPIO0/GPIO1 · LED on GPIO5 · user button on GPIO6
 ```
 
@@ -114,13 +114,13 @@ reading for up to 60 s waiting for NTP, so this is rare.
 | 6 | User button | Active low, 10 k pull-up + 100 nF. LP GPIO → deep-sleep wake |
 | 7 | BQ24074 `/PGOOD` | Open drain, 100 k pull-up; LOW = USB power present. LP GPIO → deep-sleep wake |
 | 8 | Strap | 10 k pull-up (must be high at boot) |
-| 9 | BOOT | 10 k pull-up, BOOT button, auto-reset transistor |
+| 9 | BOOT strap | 10 k pull-up; → `J_PROG` pin 6 (IO0) |
 | 12, 13 | USB D−/D+ | **Not connected.** USB-C is power-only by choice |
 | 15 | Strap | Left floating (internal pull-up, boot log on) |
-| 16 / 17 | U0TXD / U0RXD | To the programming header |
+| 16 / 17 | U0TXD / U0RXD | `J_PROG` pin 3 (ESP_TXD) / pin 5 (ESP_RXD) |
 | 21 | Battery divider enable | LOW = on, Hi-Z otherwise |
 | 22 | NTC divider enable | LOW = on, Hi-Z otherwise |
-| EN | Reset | 10 k pull-up, 1 µF to GND, RESET button, auto-reset transistor |
+| EN | Reset | 10 k pull-up, 1 µF to GND; → `J_PROG` pin 1 |
 
 The NTC sits on the **low side**, like sensor-ntc v2:
 `R = r_series · V / (3.3 − V)`. The series resistor is **47 kΩ**, not 10 k:
@@ -146,17 +146,29 @@ non-linear top of the ADC range. With 47 k, −18 °C reads 2.1 V, +4 °C 1.2 V 
 OUT through the TPS63802, so the charger's power path decides the source, not
 the firmware.
 
-### 3.3 Programming (USB-to-TTL)
+### 3.3 Programming — `J_PROG`, same header as sensor-ntc v2
 
-`J_UART`, 1×5 2.54 mm: **GND · TXD (from C6) · RXD (to C6) · DTR · RTS**.
+2×3 IDC, 2.54 mm, ESP-PROG UART pinout. The ESP-PROG ribbon plugs straight in,
+and one programmer covers both products.
 
-- With DTR/RTS wired (CP2102, CH340 with DTR+RTS broken out), the standard
-  two-transistor circuit (2 × MMBT3904, 10 k base resistors) drives EN and
-  GPIO9, so `pio run -t upload` needs no buttons.
-- With a 3-wire adapter, hold BOOT, tap RESET, release BOOT.
-- **No 3V3 pin on the header.** Power the board from USB-C while flashing.
-  Adapter 3.3 V regulators cannot supply WiFi calibration at boot, and a 3V3
-  pin would back-feed the rail from two sources.
+```
+       ┌──────────────────┐
+   1 ──│  EN       3V3    │── 2
+   3 ──│  ESP_TXD  GND    │── 4
+   5 ──│  ESP_RXD  IO0    │── 6   (IO0 = GPIO9 BOOT on the C6)
+       └──────────────────┘
+```
+
+- The ESP-PROG's auto-reset circuit drives EN and IO0, so
+  `pio run -t upload` needs no buttons. Nothing on this board does it: no
+  transistors, and no RESET or BOOT buttons, same as v2.
+- **Pin 2 (3V3) ties to this board's 3V3 rail, where the TPS63802 is always
+  running** — the Li-ion cell is inside the box and stays connected. Two 3.3 V
+  sources would fight. Either take the ESP-PROG's power-select jumper off
+  (no VDD on pin 2) and power the board from USB-C, or unplug the cell's
+  JST-PH *and* USB-C and let the ESP-PROG power it. Either way, if the
+  jumper is on it must be at **3.3 V**: 5 V destroys the C6.
+- Serial monitor uses the same ESP-PROG at 115200 baud.
 
 ### 3.4 Power budget (battery)
 
@@ -186,9 +198,8 @@ button is pressed. The pack's own protection PCB is the last line, around 2.5–
 | J1 | USB-C 16-pin receptacle | 1 |
 | J2 | 3.5 mm mono/stereo PCB jack (probe) | 1 |
 | J3 | JST-PH 3-pin (battery) | 1 |
-| J4 | 1×5 2.54 mm header (UART) | 1 |
-| Q1, Q2 | MMBT3904 | 2 |
-| SW1–SW3 | Tact switches: RESET, BOOT, USER | 3 |
+| J4 | 2×3 2.54 mm shrouded IDC header (`J_PROG`, as sensor-ntc v2) | 1 |
+| SW1 | Tact switch: USER (GPIO6) | 1 |
 | D1 | SMF5.0A (VBUS TVS) | 1 |
 | D2 | PESD5V0S1BL (probe ESD) | 1 |
 | D3 | Status LED 0603 | 1 |

@@ -1,0 +1,306 @@
+# sensor-wifi — mains-powered WiFi NTC sensor with battery backup
+
+A standalone NTC temperature sensor that connects **directly to WiFi and the
+cloud**, with no hub. Powered from USB-C, with a rechargeable 1S Li-ion cell
+that takes over when mains power is lost. Programmed over a USB-to-TTL adapter,
+not over USB-C.
+
+Status: **design written; firmware builds (`pio run -e wifi_sensor`) but is
+untested on hardware; PCB and enclosure not started; cloud changes (§7) not
+started.**
+
+---
+
+## 1. Why it is built this way
+
+### It presents itself to the cloud as a hub with one sensor
+
+The cloud, the broker ACL and the mobile app already understand hubs. A hub
+publishes `sensors/<HUB_MAC>/data` with a `sensor_mac`, and the backend
+auto-creates the sensor row on the first reading. This device publishes the same
+messages with **`sensor_mac` = its own MAC**, so on day one it gets:
+
+| Feature | Comes from |
+|---|---|
+| Registration | The existing app flow: BLE provisioning, then `POST /api/devices/register` |
+| Dashboard, history, alarms, excursions, push | `sensors/<mac>/data`, unchanged |
+| Online/offline | Retained `sensors/<mac>/status` + LWT, as a hub does |
+| Remote calibration + interval | `sensors/<mac>/config/set` (the hub's per-sensor config, addressed to itself) |
+| Live mode | `sensors/<mac>/live/request` |
+| Signed firmware OTA | `sensors/<mac>/ota/command`, the hub OTA path, with the same rollback scheme |
+
+The BLE GATT service is the hub's, byte for byte, and the device advertises as
+`TempHub-XXXXXX-W`. The app filters on the `TempHub-` prefix, so it finds it
+without a rebuild.
+
+What this does **not** give for free is listed in [§7 Cloud changes](#7-cloud-changes).
+
+### The outage is the reason the battery exists — so expect WiFi to be down too
+
+When mains power fails, the WiFi router usually fails with it. A backup battery
+that only keeps the sensor trying to reach an absent network protects nothing.
+So the device is a **data logger first**:
+
+- Every reading is written to a flash ring log **before** any upload is tried.
+- Uploading drains the log oldest-first. A record is marked uploaded only after
+  an MQTT round-trip proves the broker has everything before it (see §4.4).
+- On battery, a failed upload backs off to one attempt per 30 minutes while
+  readings keep being logged every interval. Logging costs ~0.1 s awake; a WiFi
+  attempt costs 3–8 s. Separating the two is what makes the backup last weeks.
+- The ring holds 8 192 readings: **28 days at a 5-minute interval**.
+
+When power and WiFi return, the whole outage — including any excursion during
+it — reaches the dashboard with its original timestamps.
+
+### Timestamps have to survive the outage without NTP
+
+On battery the clock runs from the RTC through deep sleep. The ESP32-C6's
+internal 136 kHz RC drifts by up to several percent with temperature, which over
+a multi-day outage is hours. The board therefore carries a **32.768 kHz crystal**
+on GPIO0/1, to be selected as the RTC slow clock. NTP re-syncs on every
+successful connection.
+
+**Not yet enabled in firmware.** It is `CONFIG_RTC_CLK_SRC_EXT_CRYS=y` through
+pioarduino's `custom_sdkconfig`, which rebuilds the framework. On the dev machine
+that rebuild fails, because the `tool-cmake` and `tool-ninja` packages are empty.
+Until it is fixed, the build runs on the internal RC. Do it at bring-up, on a
+board where the crystal can be seen to start.
+
+A reading taken before the clock was ever set (cold boot with no WiFi) is sent
+without `ts`, and the backend stamps it on arrival. Mains mode holds its first
+reading for up to 60 s waiting for NTP, so this is rare.
+
+### Mains mode and battery mode are different programs
+
+| | Mains (USB-C present) | Battery |
+|---|---|---|
+| Radio | WiFi + MQTT held connected (modem sleep) | Off; deep sleep between readings |
+| Readings | Every interval, uploaded immediately | Every interval, logged; uploaded with back-off |
+| Remote commands | Applied immediately | Applied on the next successful upload |
+| Firmware OTA | Accepted | **Deferred** until mains returns |
+| Live mode | Immediate | Applied when next connected |
+| Transition | PGOOD rises → reading flagged `power:battery`, upload attempt, then battery mode | PGOOD falls → wakes the chip at once → mains mode |
+
+---
+
+## 2. Block diagram
+
+```
+ USB-C (power only) ──► PTC + TVS ──► BQ24074 ──OUT (4.4 V on USB / VBAT on battery)──► TPS63802 ──► 3V3
+   CC1/CC2 = 5k1 Rd                    │  │ │                                         buck-boost
+                                       │  │ └─ /PGOOD ──► GPIO7 (LP, wakes from deep sleep)
+                                       │  └─── /CHG ───► GPIO4
+                                       BAT ──── 1S Li-ion 2000 mAh, 10 k NTC on TS
+                                       └─── 100k/100k divider (switched by GPIO21) ──► GPIO2 ADC
+
+ 3V3 ── 47k 0.1 % ──┬── GPIO3 ADC (100 nF, ESD diode)
+                    └── 3.5 mm jack ── NTC probe ── GPIO22 (low-side enable switch)
+
+ USB-TTL header (GND TXD RXD DTR RTS) ──► U0TXD/U0RXD + 2-transistor auto-reset on EN / GPIO9
+ 32.768 kHz XTAL on GPIO0/GPIO1 · LED on GPIO5 · user button on GPIO6
+```
+
+## 3. Hardware
+
+### 3.1 Pin map (ESP32-C6-WROOM-1-N4)
+
+| GPIO | Function | Notes |
+|---|---|---|
+| 0, 1 | 32.768 kHz crystal (XTAL_32K_P/N) | 2 × 12 pF load caps; this is why the NTC is no longer on GPIO1 |
+| 2 | Battery ADC (ADC1_CH2) | 100k/100k from BAT; 10 nF to GND |
+| 3 | NTC ADC (ADC1_CH3) | 100 nF to GND, ESD diode — the probe cable is an antenna |
+| 4 | BQ24074 `/CHG` | Open drain, 100 k pull-up; LOW = charging. MTMS strap, inert unless the JTAG eFuse is burned |
+| 5 | Status LED | Via 1 k. MTDI strap, inert as above. Same pin as sensor-ntc v2 |
+| 6 | User button | Active low, 10 k pull-up + 100 nF. LP GPIO → deep-sleep wake |
+| 7 | BQ24074 `/PGOOD` | Open drain, 100 k pull-up; LOW = USB power present. LP GPIO → deep-sleep wake |
+| 8 | Strap | 10 k pull-up (must be high at boot) |
+| 9 | BOOT | 10 k pull-up, BOOT button, auto-reset transistor |
+| 12, 13 | USB D−/D+ | **Not connected.** USB-C is power-only by choice |
+| 15 | Strap | Left floating (internal pull-up, boot log on) |
+| 16 / 17 | U0TXD / U0RXD | To the programming header |
+| 21 | Battery divider enable | LOW = on, Hi-Z otherwise |
+| 22 | NTC divider enable | LOW = on, Hi-Z otherwise |
+| EN | Reset | 10 k pull-up, 1 µF to GND, RESET button, auto-reset transistor |
+
+The NTC sits on the **low side**, like sensor-ntc v2:
+`R = r_series · V / (3.3 − V)`. The series resistor is **47 kΩ**, not 10 k:
+with 10 k a freezer probe (≈ 82 kΩ at −18 °C) drives the ADC to 2.9 V, into the
+non-linear top of the ADC range. With 47 k, −18 °C reads 2.1 V, +4 °C 1.2 V and
++25 °C 0.6 V — the whole cold-chain range in the linear region.
+
+### 3.2 Power
+
+| Block | Part | Detail |
+|---|---|---|
+| USB-C receptacle | 16-pin SMD (e.g. HRO TYPE-C-31-M-12) | CC1, CC2 → 5.1 kΩ to GND each; D+/D− unconnected; shield via 1 MΩ ‖ 4.7 nF |
+| Input protection | 1206 PTC 1.1 A hold + SMF5.0A TVS | |
+| Charger / power path | **TI BQ24074RGTR** (VQFN-16) | OUT regulated to 4.4 V with input present, OUT = BAT without. 10.5 V OVP. Dynamic power-path: the load is served first, the cell charges from what is left |
+| Input current limit | R_ILIM ≈ 1.5 kΩ, EN1=0 EN2=1 | ≈ 1 A from the USB source. **Verify K_ILIM in the datasheet** |
+| Charge current | R_ISET ≈ 1.8 kΩ | ≈ 0.5 A = 0.25 C for 2000 mAh. Slow and gentle on a cell that sits full for years. **Verify K_ISET** |
+| Battery temperature | TS ← pack's 10 k NTC | No charging below 0 °C or above 45 °C — required for Li-ion. Fit a 10 k resistor instead if the pack has no thermistor |
+| 3.3 V rail | **TI TPS63802** buck-boost | Same part, inductor and divider as sensor-ntc v2 (L 1.5 µH, 560k/100k, MODE = GND). Accepts 1.3–5.5 V, so it covers 4.4 V (USB) and 3.0–4.2 V (cell) |
+| Bulk | 22 µF on OUT, 22 µF + 100 µF on 3V3 | WiFi TX peaks ~350 mA |
+| Battery | 1S Li-ion/LiPo 2000 mAh, 3-wire with 10 k NTC, **with protection PCB**, JST-PH 3-pin | e.g. 103450. An 18650 in a holder also fits if the enclosure grows |
+
+**Do not use the cell side for anything but the divider.** All loads hang off
+OUT through the TPS63802, so the charger's power path decides the source, not
+the firmware.
+
+### 3.3 Programming (USB-to-TTL)
+
+`J_UART`, 1×5 2.54 mm: **GND · TXD (from C6) · RXD (to C6) · DTR · RTS**.
+
+- With DTR/RTS wired (CP2102, CH340 with DTR+RTS broken out), the standard
+  two-transistor circuit (2 × MMBT3904, 10 k base resistors) drives EN and
+  GPIO9, so `pio run -t upload` needs no buttons.
+- With a 3-wire adapter, hold BOOT, tap RESET, release BOOT.
+- **No 3V3 pin on the header.** Power the board from USB-C while flashing.
+  Adapter 3.3 V regulators cannot supply WiFi calibration at boot, and a 3V3
+  pin would back-feed the rail from two sources.
+
+### 3.4 Power budget (battery)
+
+| State | Current | Per event |
+|---|---|---|
+| Deep sleep (C6 + TPS63802 Iq + BQ24074 battery leakage) | ≈ 25 µA | 0.6 mAh/day |
+| Log-only wake | ≈ 25 mA × 0.15 s | 0.001 mAh |
+| Upload wake (WiFi assoc + TLS + publish) | ≈ 90 mA × 4 s | 0.10 mAh |
+
+At a 5-minute interval with WiFi available: 288 uploads/day ≈ **30 mAh/day →
+~2 months** on 2000 mAh. With WiFi down (router also off): 1 attempt per 30 min
+≈ 6 mAh/day → **~10 months** of logging, capped in practice by the 28-day ring.
+
+Thresholds on battery: below **3.45 V** WiFi is not attempted (logging only);
+below **3.30 V** the device hibernates and wakes only when USB returns or the
+button is pressed. The pack's own protection PCB is the last line, around 2.5–3 V.
+
+### 3.5 BOM summary
+
+| Ref | Part | Qty |
+|---|---|---|
+| U1 | ESP32-C6-WROOM-1-N4 (PCB antenna) | 1 |
+| U2 | BQ24074RGTR | 1 |
+| U3 | TPS63802DLAR / DMQR (whichever sensor-ntc v2 used) | 1 |
+| L1 | 1.5 µH ≥ 2 A shielded (TDK MLP2520H1R5) | 1 |
+| Y1 | 32.768 kHz, 12.5 pF, 3215 | 1 |
+| J1 | USB-C 16-pin receptacle | 1 |
+| J2 | 3.5 mm mono/stereo PCB jack (probe) | 1 |
+| J3 | JST-PH 3-pin (battery) | 1 |
+| J4 | 1×5 2.54 mm header (UART) | 1 |
+| Q1, Q2 | MMBT3904 | 2 |
+| SW1–SW3 | Tact switches: RESET, BOOT, USER | 3 |
+| D1 | SMF5.0A (VBUS TVS) | 1 |
+| D2 | PESD5V0S1BL (probe ESD) | 1 |
+| D3 | Status LED 0603 | 1 |
+| F1 | PTC 1.1 A 1206 | 1 |
+| R | 47 k 0.1 % (NTC series), 2 × 100 k 1 % (battery), 560 k / 100 k 1 % (FB), 2 × 5.1 k (CC), R_ISET, R_ILIM, pull-ups | — |
+| BT1 | 1S Li-ion 2000 mAh, 10 k NTC, protected | 1 |
+
+---
+
+## 4. Firmware (`firmware/`)
+
+PlatformIO, Arduino on pioarduino. Envs: `wifi_sensor`, and
+`wifi_sensor_rollbacktest` (`1.0.99`, never reaches the cloud, must revert by
+itself). Image is 1.54 MB of the 1.92 MB OTA slot. Files:
+
+| File | Role |
+|---|---|
+| `config.h` | Pins, constants, version, defaults |
+| `main.cpp` | Boot, mode selection, mains loop, battery cycle |
+| `measure.*` | NTC (Steinhart-Hart, low-side), battery, power source |
+| `datalog.*` | Flash ring log in the `datalog` partition |
+| `settings.*` | Calibration + interval in NVS, validated |
+| `cloud.*` | WiFi, NTP, MQTT topics, commands, upload with round-trip barrier |
+| `ota.*` | Signed OTA + app-level rollback (the hub's scheme) |
+| `ble_prov.*` | BLE provisioning (the hub's GATT service) |
+
+### 4.1 Boot
+
+1. Pins, LED. Button held 3 s → erase WiFi + cloud credentials → reboot into provisioning.
+2. OTA boot-state check (rollback counter).
+3. Not provisioned → BLE provisioning (same flow and app as a hub).
+4. `/PGOOD` LOW → mains mode, else battery mode.
+
+### 4.2 Mains mode
+
+`loop()` keeps WiFi and MQTT up, takes a reading every interval (or every 30 s
+during live mode), logs it, drains the log, handles commands and OTA, re-syncs
+NTP every 6 h, and watches `/PGOOD`. Losing it for 500 ms switches to battery
+mode after one immediate reading.
+
+### 4.3 Battery mode
+
+Each wake: read → log → if WiFi is due (not backing off, cell ≥ 3.45 V) connect,
+sync NTP, publish status, drain log, apply retained commands, disconnect → deep
+sleep. Wake sources: timer, button (GPIO6), USB return (GPIO7).
+
+Back-off after failed uploads: 1, 2, 4, then every 6 wakes (≤ 30 min at 5 min).
+
+### 4.4 Upload barrier
+
+PubSubClient publishes at QoS 0, so "publish returned true" only means the bytes
+reached the socket. After a batch the device publishes a nonce to
+`sensors/<mac>/wifi/echo`, to which it is subscribed, and waits for it to come
+back. MQTT preserves order on one connection, so the echo proves every earlier
+publish reached the broker. Only then are those records marked uploaded (one
+flash byte each, 0xFF → 0x00, no erase).
+
+Duplicates are possible if the device dies between the echo and the mark; the
+backend should ignore a reading with the same sensor and timestamp (§7).
+
+### 4.5 OTA
+
+Same command, signing key, verification and rollback as the hub. Two additions:
+
+- The image must contain the marker `TEMPWIFI_FW=`. A hub or ESP-NOW sensor
+  image is rejected **before** the slot is made bootable. Hub and wifi-sensor
+  images are signed with the same key, and today the cloud would offer hub
+  images to this device (§7), so this check is the actual guard.
+- Refused on battery. The retained command is delivered again on the next
+  mains connection.
+
+A new image confirms itself when a reading is **delivered** (barrier passed),
+and reverts after 3 boots without that, or after 5 minutes in mains mode.
+
+---
+
+## 5. PCB (`pcb/`) — not started
+
+- 2-layer, ~70 × 45 mm, 1.6 mm. WROOM-1 antenna at one short edge over a
+  copper-free keep-out, extending past the board edge or with ≥ 15 mm clearance.
+- USB-C and the 3.5 mm probe jack on the opposite short edge, so cables leave
+  the enclosure together at the bottom when wall-mounted.
+- Battery off-board, connected via JST-PH, lying under the PCB.
+- BQ24074 thermal pad stitched to the ground pour (it dissipates ~0.5 W
+  while charging from 5 V).
+- NTC ADC trace short and guarded, away from the TPS63802 switch node and L1.
+- Draw in KiCad 10 (Copperpour MCP), not PCBCraft.
+
+## 6. Enclosure (`enclosure/`) — not started
+
+- Wall-mounted outside the fridge/freezer. The probe enters through the door
+  gasket on a flat-section cable. The electronics, and above all the Li-ion
+  cell, stay at room temperature: **Li-ion must not be charged below 0 °C**,
+  and the BQ24074 TS input enforces that only if the cell's own NTC is wired.
+- Two-part printed PETG box, ~85 × 55 × 28 mm: base with keyhole slots and
+  battery bay, lid with a light pipe for the LED and a pin-hole for the button.
+- Bottom face: USB-C cut-out and 3.5 mm jack hole. Top: plastic only, over the
+  antenna; no metal screws or labels there.
+- Vents are unnecessary at < 0.5 W, but give the charger area 2 mm clearance
+  to the lid.
+- Model in SolidCraft around the KiCad STEP once the board exists.
+
+## 7. Cloud changes
+
+Needed before this device is first-class. None block bring-up: it reports,
+alarms and takes config on the existing backend.
+
+| # | Change | Why |
+|---|---|---|
+| C1 | `firmware_images.device_kind` accepts `'wifi'`; upload checks the `TEMPWIFI_FW=` tag; `publish.sh --wifi` | Without it, the only image kind that can be pushed to this device is `hub` — which it will refuse |
+| C2 | `devices.kind` (`'hub'` / `'wifi'`), set from `kind` in the status payload | Offer the right image kind; hide the hub-only pairing UI for this device |
+| C3 | Unique `(sensor_id, recorded_at)` on readings, `ON CONFLICT DO NOTHING` | A backlog may be re-sent after a power cut mid-upload |
+| C4 | Store `power` (`mains`/`battery`) and `charging` from status/data; show a badge | "On battery" is the actual signal of a power failure at the site |
+| C5 | Alert rule "mains power lost" on the mains→battery transition | The most useful alarm this device can raise that no other one can |
+| C6 | Don't evaluate temperature alerts for readings older than e.g. 1 h as *new* events; record them as backfilled excursions | Otherwise a backlog upload fires a burst of stale push notifications |

@@ -1,0 +1,9 @@
+# Name,   Type, SubType,  Offset,   Size
+# min_spiffs layout, with the SPIFFS area given a custom subtype and used as a
+# raw ring log (datalog.cpp). nvs at the same offset as the hub's table.
+nvs,      data, nvs,      0x9000,   0x5000
+otadata,  data, ota,      0xe000,   0x2000
+app0,     app,  ota_0,    0x10000,  0x1E0000
+app1,     app,  ota_1,    0x1F0000, 0x1E0000
+datalog,  data, 0x40,     0x3D0000, 0x20000
+coredump, data, coredump, 0x3F0000, 0x10000

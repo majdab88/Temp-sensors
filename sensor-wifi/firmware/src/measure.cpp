@@ -48,7 +48,7 @@ bool shCoefficientsSane(float a, float b, float c) {
 float readNtc() {
   pinMode(NTC_EN_PIN, OUTPUT);
   digitalWrite(NTC_EN_PIN, LOW);
-  // 100 nF against up to ~47k source: RC ~ 5 ms. 60 ms is >10 time constants.
+  // 100 nF against at most ~10k (R_series || R_ntc): RC <= 1 ms. 60 ms is ample.
   delay(60);
 
   analogRead(NTC_ADC_PIN);
@@ -65,7 +65,7 @@ float readNtc() {
   }
 
   const Settings& s = settings();
-  float r   = s.rSeries * v / (NTC_VCC - v);
+  float r   = s.rSeries * (NTC_VCC - v) / v;   // NTC on the high side
   float lnR = logf(r);
   float t   = 1.0f / (s.shA + s.shB * lnR + s.shC * lnR * lnR * lnR) - 273.15f;
   Serial.printf("[NTC] adc=%.0f mV  R=%.0f ohm  T=%.2f C\n", mv, r, t);

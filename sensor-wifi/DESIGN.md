@@ -93,8 +93,8 @@ reading for up to 60 s waiting for NTP, so this is rare.
                                        BAT ──── P-FET (reverse) ── fuse ── 18650 in holder; board NTC under it → TS
                                        └─── 100k/100k divider (switched by GPIO21) ──► GPIO2 ADC
 
- 3V3 ── 47k 0.1 % ──┬── GPIO3 ADC (100 nF, ESD diode)
-                    └── screw terminal ── NTC probe (via cable gland) ── GPIO22 (low-side enable switch)
+ 3V3 ── PTC ── screw terminal ── NTC probe (via cable gland) ──┬── GPIO3 ADC (100 nF, ESD diode)
+                                                               └── 10k 0.1 % ── GPIO22 (enable switch)
 
  J_PROG 2×3 (EN 3V3 TXD GND RXD IO0) ──► ESP-PROG, which drives EN and GPIO9 itself
  32.768 kHz XTAL on GPIO0/GPIO1 · LED on GPIO5 · user button on GPIO6
@@ -122,11 +122,23 @@ reading for up to 60 s waiting for NTP, so this is rare.
 | 22 | NTC divider enable | LOW = on, Hi-Z otherwise |
 | EN | Reset | 10 k pull-up, 1 µF to GND; → `J_PROG` pin 1 |
 
-The NTC sits on the **low side**, like sensor-ntc v2:
-`R = r_series · V / (3.3 − V)`. The series resistor is **47 kΩ**, not 10 k:
-with 10 k a freezer probe (≈ 82 kΩ at −18 °C) drives the ADC to 2.9 V, into the
-non-linear top of the ADC range. With 47 k, −18 °C reads 2.1 V, +4 °C 1.2 V and
-+25 °C 0.6 V — the whole cold-chain range in the linear region.
+The NTC sits on the **high side**, as in the original v1 design:
+`3V3 → NTC → ADC → 10 kΩ → GPIO22`, so `R = r_series · (3.3 − V) / V`.
+(sensor-ntc v2 is the other way round. The formula must match the board: the
+wrong one read a +4 °C probe as +41 °C.)
+
+A cold probe has a high resistance, which keeps the ADC low, where it is
+accurate. Using the deployed probe's calibration points: −18 °C (81.9 kΩ)
+reads 0.36 V, −7 °C (47.2 kΩ) 0.58 V, +4 °C (26.8 kΩ) 0.90 V and +25 °C
+1.65 V. The ADC runs at 11 dB. On the C6, 6 dB saturates near 1.3 V, below
+room temperature.
+
+**A side effect of the high side: one probe wire carries 3V3 continuously.**
+A probe cable crushed in a door gasket against an earthed fridge body would
+short the 3.3 V rail, if board ground is earthed through the USB supply. A
+50 mA-hold 0805 PTC between 3V3 and the terminal limits that to a fault
+reading instead of a browned-out device. Its few ohms are 0.05 % of 10 kΩ,
+which is negligible.
 
 ### 3.2 Power
 
@@ -209,10 +221,11 @@ button is pressed. The cell's own protection board is the last line, around 2.5�
 | D2 | PESD5V0S1BL (probe ESD) | 1 |
 | D3 | Status LED 0603 | 1 |
 | F1 | PTC 1.1 A 1206 | 1 |
-| R | 47 k 0.1 % (NTC series), 2 × 100 k 1 % (battery), 560 k / 100 k 1 % (FB), 2 × 5.1 k (CC), R_ISET, R_ILIM, pull-ups | — |
+| R | 10 k 0.1 % 25 ppm (NTC series), 2 × 100 k 1 % (battery), 560 k / 100 k 1 % (FB), 2 × 5.1 k (CC), R_ISET, R_ILIM, pull-ups | — |
 | BT1 | 18650 Li-ion 3000–3500 mAh, protected, button top | 1 |
 | Q1 | DMG2305UX P-MOSFET (reverse polarity) | 1 |
 | F2 | Fuse 2–3 A 1206 (cell) | 1 |
+| F3 | PTC 0805, ~50 mA hold (probe feed) | 1 |
 | RT1 | 10 k NTC 0603 (battery temperature, under the holder) | 1 |
 
 ---
@@ -227,7 +240,7 @@ itself). Image is 1.54 MB of the 1.92 MB OTA slot. Files:
 |---|---|
 | `config.h` | Pins, constants, version, defaults |
 | `main.cpp` | Boot, mode selection, mains loop, battery cycle |
-| `measure.*` | NTC (Steinhart-Hart, low-side), battery, power source |
+| `measure.*` | NTC (Steinhart-Hart, high side), battery, power source |
 | `datalog.*` | Flash ring log in the `datalog` partition |
 | `settings.*` | Calibration + interval in NVS, validated |
 | `cloud.*` | WiFi, NTP, MQTT topics, commands, upload with round-trip barrier |

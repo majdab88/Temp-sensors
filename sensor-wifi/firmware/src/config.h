@@ -39,13 +39,15 @@
 #define NTC_EN_PIN         22   // LOW enables the NTC divider, Hi-Z otherwise
 
 // --- NTC ---
-// Low side: 3V3 -> R_series -> ADC -> NTC -> enable switch.
-//   R_ntc = r_series * V / (VCC - V)
-// 47k rather than 10k keeps a freezer probe (~82k at -18 C) at ~2.1 V instead
-// of ~2.9 V, out of the non-linear top of the ADC's range.
+// High side, as the original v1 design: 3V3 -> NTC -> ADC -> R_series -> enable.
+//   R_ntc = r_series * (VCC - V) / V
+// sensor-ntc v2 is the other way round. Using the wrong formula is invisible in
+// review and obvious in the field: it read a +4 C probe as +41 C.
+// A cold probe's high resistance keeps the ADC low, in its accurate region:
+// -18 C ~0.36 V, +4 C ~0.90 V, +25 C ~1.65 V with 10k.
 #define NTC_VCC            3.3f     // TPS63802 output, independent of the cell
 #define NTC_SAMPLES        20
-#define DEFAULT_R_SERIES   47000.0f
+#define DEFAULT_R_SERIES   10000.0f
 // Steinhart-Hart defaults: the deployed sensor-ntc cold-range fit. Expected to
 // be replaced per device from the dashboard.
 #define DEFAULT_SH_A       2.535e-3f

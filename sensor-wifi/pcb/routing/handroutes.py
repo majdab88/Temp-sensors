@@ -106,9 +106,9 @@ t('+3V3', F, 0.3, (119.625, 102.9), (119.4, 103.6), (119.4, 105.1))
 t('GND', F, 0.25, (121.175, 102.9), (121.0, 103.6), (121.0, 105.1))
 t('GND', F, 0.3, (102.975, 112.3), (103.0, 113.3), (102.975, 114.3))
 v('GND', 103.0, 113.3)                   # C14/C15
-for x in (104.75, 111.25):                # USB-C GND pins
-    t('GND', F, 0.3, (x, 181.4), (x, 180.4))
-    v('GND', x, 180.4)
+for x in (104.75, 111.25):                # USB-C GND pins (J1 sits 1.05 mm out so its face meets the enclosure wall)
+    t('GND', F, 0.3, (x, 182.45), (x, 181.45))
+    v('GND', x, 181.45)
 v('GND', 104.1, 106.6)                   # D4's ground (C11 used to share it)
 
 # ── VBUS trunk: USB-C area -> charger. Crosses the VSYS trunk, so the long

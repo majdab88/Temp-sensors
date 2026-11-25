@@ -388,6 +388,16 @@ and reverts after 3 boots without that, or after 5 minutes in mains mode.
   LED, button RC) around it at the top; SW1 RESET / SW2 button below it; J_PROG at the left
   edge; the TPS63802 cluster in the middle with the BQ24074 to its right; USB-C,
   its fuse and TVS, and the probe terminal J3 on the bottom edge.
+- **J1 (USB-C) overhangs the board edge by 0.5 mm.** That puts its face on the
+  enclosure's inner wall face, so a cable overmold through the wall opening
+  reaches the receptacle. Its 3D model (`3d/USB_C_Receptacle_HRO_TYPE-C-31-M-12.step`,
+  the GrabCAD HRO model; KiCad 10 ships none) is set rotate 180° about X,
+  offset (0, 3.65, 1.605).
+- **J3 (probe terminal) sits 10 mm in from the edge and 4.9 mm toward the
+  cell.** That leaves 12 mm between the gland and the terminal to strip and
+  land the wires, and 17 mm from J1, so the M12 gland boss clears a USB-C
+  overmold. It can't go further toward the cell, because its pins would land
+  under the holder on the back.
 - Cell protection sits next to the holder pads, so the 3 A paths stay short.
   The DW01A/FS8205A pair is at the top, by the cell − pad. The fuse and the
   reverse-polarity FET Q1 are at the bottom, by the + pad. Both pads join the
@@ -434,25 +444,38 @@ and reverts after 3 boots without that, or after 5 minutes in mains mode.
 - Still to do before fab: tidy the silkscreen and mark pin 1 on J_PROG.
   Run a final DRC.
 
-## 6. Enclosure (`enclosure/`) — not started
+## 6. Enclosure (`enclosure/`) — base, lid, gasket and ports modelled
 
 - Wall-mounted outside the fridge/freezer. The probe enters through the door
   gasket on a flat-section cable. The electronics, and above all the Li-ion
   cell, stay at room temperature: **Li-ion must not be charged below 0 °C**.
   The BQ24074 TS input enforces that through RT1, which reads board
   temperature next to the charger (see §5), not the cell's.
-- Two-part printed PETG box, ~100 × 72 × 40 mm plus gland and SMA (sized by
-  the 64 × 90 mm board and the 18650 under it; four standoffs on the M3 holes): base with keyhole slots, lid with a light pipe for the LED and a
-  pin-hole for the button. The lid comes off without tools so the cell can be
-  swapped. Mark the cell polarity on the base, next to the holder.
-- Bottom face: USB-C cut-out and a PG7 (M12) cable gland for the probe cable.
-  Leave ~25 mm inside the gland for the cable to bend to the screw terminal,
-  and a strain-relief rib so a pull on the probe lands on the gland, not the
-  terminal.
-- Top face: SMA bulkhead (D-flat hole, 6.4 mm) for the antenna.
-- Vents are unnecessary at < 0.5 W, but give the charger area 2 mm clearance
-  to the lid.
-- Model in SolidCraft around the KiCad STEP once the board exists.
+- `sensor-wifi-enclosure.sc` (SolidCraft 0.49), **the same construction as the
+  hub and sensor-ntc v2 boxes**, with their parameter names. It is a base with
+  a top lid, wall and floor 3 mm, corner radius 7, four corner screw pillars
+  (M3 x 12 from below into blind lid bosses, so no screw heads on top), a seal
+  tongue on the rim, a lid groove and lip, a printed gasket, and 0.4 mm reveals.
+  Every size is a parameter.
+- 97 x 86.6 x 41.1 mm. The pillars sit beside the board in Y, as on the hub.
+  The height is set by the cell under the board: `stand_h` = cell axis drop
+  (9.185) + 18.9/2 (largest protected cell) + 1 mm floor clearance = 19.6 mm
+  standoffs (7 mm diameter rather than the house 6, because they are tall) on
+  the PCB's M3 holes.
+- -X end: the USB-C opening (12.6 x 7 stadium through the wall, for the
+  overmold) and the probe gland, an **M12x1.5 thread modelled into a 16 mm
+  boss**. The gland screws straight in, with no inner locknut (one would land
+  on the PCB), and lines up with J3's wire entries.
+- +X end: SMA bulkhead hole, 6.5 mm, as on the hub, 10 mm off-centre so the
+  SMA body clears the module, with the nut under the lid lip.
+- The board comes in as the linked STEP `enclosure/sensor-wifi-board.step`
+  (`kicad-cli pcb export step --subst-models`, without tracks). After a board
+  change, re-export it and run `component.update_links`. The STEP is generated
+  and not committed. A reference 18650 body is in the design for clash checks.
+  The interference check is clean apart from the standoff tops touching the PCB.
+- Not done yet: wall-mount tabs (sensor-ntc's keyhole tab?), and a light pipe
+  for the LED and a pin-hole for the button. The USB opening and the printed
+  thread need a test print with a real cable and gland.
 
 ## 7. Cloud changes
 

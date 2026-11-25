@@ -94,15 +94,22 @@ t('GND', F, 0.15, (140.2, 141.2), (140.2, 140.7))
 v('GND', 139.5, 140.0)
 
 # ── GND stitching that the pour cannot reach on its own ────────────────
-for x, y in [(115.245, 109.26), (116.495, 109.26), (117.745, 109.26)]:
-    v('GND', x, y)                       # WROOM thermal pad, on the squares
+# ESP32-C6-MINI-1U (U1 at 117,111, rot 270): the 3x3 GND array is walled in by
+# the signal pads, so the pour cannot reach it on F.Cu. Vias on the squares.
+for x, y in [(115.025, 111.0), (117.0, 111.0), (118.975, 111.0), (117.0, 109.025), (117.0, 112.975)]:
+    v('GND', x, y)
+# Pin 14 (GND) sits between two signal pins, so the pour reaches it with one
+# spoke at most: tie it inward to the GND array instead.
+t('GND', F, 0.25, (112.1, 107.8), (113.4, 107.8), (114.6, 108.6))
+# C12 (100 nF) straight onto the 3V3 pin and the GND pin beside it.
+t('+3V3', F, 0.3, (119.625, 102.9), (119.4, 103.6), (119.4, 105.1))
+t('GND', F, 0.25, (121.175, 102.9), (121.0, 103.6), (121.0, 105.1))
 t('GND', F, 0.3, (102.975, 112.3), (103.0, 113.3), (102.975, 114.3))
 v('GND', 103.0, 113.3)                   # C14/C15
 for x in (104.75, 111.25):                # USB-C GND pins
     t('GND', F, 0.3, (x, 181.4), (x, 180.4))
     v('GND', x, 180.4)
-t('GND', F, 0.3, (103.15, 106.2), (104.1, 106.6))
-v('GND', 104.1, 106.6)                   # C11
+v('GND', 104.1, 106.6)                   # D4's ground (C11 used to share it)
 
 # ── VBUS trunk: USB-C area -> charger. Crosses the VSYS trunk, so the long
 # vertical run is on the back.
@@ -114,7 +121,7 @@ t('/VBUS', F, 0.6, (127.2, 167.8), (104.05, 167.8), (104.05, 169.6))
 
 # ── GND pads the signal routing would otherwise wall in ─────────────────
 t('GND', F, 0.3, (102.975, 110.2), (103.95, 110.2)); v('GND', 103.95, 110.2)      # C16
-t('GND', F, 0.25, (101.412, 108.2), (101.412, 107.35), (102.4, 107.35), (103.15, 106.6))  # D4 -> C11 via
+t('GND', F, 0.25, (101.412, 108.2), (101.412, 107.35), (102.4, 107.35), (103.15, 106.6), (104.1, 106.6))  # D4 -> via
 t('GND', F, 0.3, (106.775, 105.3), (107.9, 105.4)); v('GND', 107.9, 105.4)        # C13
 t('GND', F, 0.3, (133.5, 102.825), (134.6, 103.0)); v('GND', 134.6, 103.0)        # C7
 
@@ -131,3 +138,22 @@ v('/VBAT', 124.974, 109.738)
 t('/VBAT', B, 0.5, (124.974, 109.738), (125.151, 109.738), (131.651, 103.238), (131.651, 101.217))
 v('/VBAT', 131.651, 101.217)
 t('/VBAT', F, 0.5, (131.651, 101.217), (130.558, 101.217), (129.175, 102.6))
+
+# ── UART to J_PROG. The module's bottom row has RXD left of TXD; J_PROG wants
+# TXD above RXD. They swap under the module (F.Cu, between the bottom pad row
+# and the GND array), drop to B.Cu there, and run two lanes down between SW2
+# and SW1 into the header's row gaps. Freerouting shorted RXD to +3V3 here.
+t('/ESP_TXD', F, 0.25, (117.8, 116.9), (117.8, 115.0), (117.0, 114.2), (113.8, 114.2), (113.4, 114.6))
+v('/ESP_TXD', 113.4, 114.6)
+t('/ESP_TXD', B, 0.25, (113.4, 114.6), (113.4, 117.0), (110.55, 119.85), (110.55, 140.0), (109.8, 140.77),
+  (104.9, 140.77), (104.0, 141.67), (104.0, 142.04))
+t('/ESP_RXD', F, 0.25, (117.0, 116.9), (117.0, 116.4), (116.2, 115.65))
+v('/ESP_RXD', 116.2, 115.65)
+t('/ESP_RXD', B, 0.25, (116.2, 115.65), (116.2, 118.0), (111.45, 122.75), (111.45, 142.6), (110.74, 143.31),
+  (104.9, 143.31), (104.0, 144.21), (104.0, 144.58))
+
+# GND pads the UART lanes and the module's escape routing wall in.
+t('GND', B, 0.3, (106.54, 142.04), (108.6, 142.04)); v('GND', 108.6, 142.04)      # J2 pin 4
+t('GND', F, 0.25, (112.05, 116.95), (111.2, 117.8)); v('GND', 111.2, 117.8)       # U1 corner pad 51
+t('GND', F, 0.25, (121.95, 116.95), (122.8, 117.8)); v('GND', 122.8, 117.8)       # U1 corner pad 50
+t('GND', F, 0.3, (127.15, 104.5), (127.15, 105.9)); v('GND', 127.15, 106.0)       # C11

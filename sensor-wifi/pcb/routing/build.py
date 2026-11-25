@@ -75,7 +75,7 @@ def fresh_copy():
     power = dict(default, name='Power', track_width=0.5, priority=0)
     ns['classes'] = [default, power]
     ns['netclass_patterns'] = [{'netclass': 'Power', 'pattern': n} for n in POWER]
-    # Freerouting necks tracks down to ~0.19 mm at the WROOM pins; JLCPCB's
+    # Freerouting necks tracks down to ~0.19 mm at the module pins; JLCPCB's
     # standard process allows 0.127 mm.
     d['board']['design_settings']['rules']['min_track_width'] = 0.15
     json.dump(d, open(pro, 'w'), indent=2)

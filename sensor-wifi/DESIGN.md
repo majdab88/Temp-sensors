@@ -478,9 +478,18 @@ and reverts after 3 boots without that, or after 5 minutes in mains mode.
   change, re-export it and run `component.update_links`. The STEP is generated
   and not committed. A reference 18650 body is in the design for clash checks.
   The interference check is clean apart from the standoff tops touching the PCB.
-- Not done yet: a light pipe for the LED and a pin-hole for the button. The
-  USB opening and the printed thread need a test print with a real cable and
-  gland.
+- Lid:
+  - **Light pipe over D4:** a 3 mm clear acrylic rod, glued into a 3.2 mm bore
+    through the lid top, held by a 6 mm guide tube that hangs down to 4 mm
+    above the PCB bottom. The rod ends 0.5 mm above the LED and is flush with
+    the lid top.
+  - **Pin-hole over SW2 (`BTN`):** a 2 mm hole with a 5 mm guide tube that
+    ends 0.8 mm above the plunger, so a paperclip lands on it. SW1 (RESET) is
+    not exposed.
+  - Both holes break the gasket seal slightly; a drop of silicone on the rod
+    and a sticker over the pin-hole close them if needed.
+- Not done yet: a test print of the USB opening and the printed thread with a
+  real cable and gland.
 
 ## 7. Cloud changes
 

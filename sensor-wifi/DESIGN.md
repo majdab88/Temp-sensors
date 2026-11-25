@@ -462,20 +462,25 @@ and reverts after 3 boots without that, or after 5 minutes in mains mode.
   (9.185) + 18.9/2 (largest protected cell) + 1 mm floor clearance = 19.6 mm
   standoffs (7 mm diameter rather than the house 6, because they are tall) on
   the PCB's M3 holes.
-- -X end: the USB-C opening (12.6 x 7 stadium through the wall, for the
-  overmold) and the probe gland, an **M12x1.5 thread modelled into a 16 mm
+- -X end: the USB-C opening and the probe gland. The USB-C opening is a
+  12.6 x 7 overmold recess 2 mm deep, with a 9.4 x 3.7 slot through the last
+  1 mm (`usb_skin`). The receptacle face is on the inner wall face, so the
+  overmold stops 1 mm from it. The gland is an **M12x1.5 thread modelled into a 16 mm
   boss**. The gland screws straight in, with no inner locknut (one would land
   on the PCB), and lines up with J3's wire entries.
 - +X end: SMA bulkhead hole, 6.5 mm, as on the hub, 10 mm off-centre so the
-  SMA body clears the module, with the nut under the lid lip.
+  SMA body clears the module, with the nut under the lid lip. Below it is the
+  sensor-ntc keyhole wall-mount tab, with the same parameters: 18 x 18 x 3 mm,
+  underside flush with the bottom, r4 tip and root blends, an 8 mm entry and a
+  4.2 x 7 mm slot running outboard, and a 1 mm root fillet.
 - The board comes in as the linked STEP `enclosure/sensor-wifi-board.step`
   (`kicad-cli pcb export step --subst-models`, without tracks). After a board
   change, re-export it and run `component.update_links`. The STEP is generated
   and not committed. A reference 18650 body is in the design for clash checks.
   The interference check is clean apart from the standoff tops touching the PCB.
-- Not done yet: wall-mount tabs (sensor-ntc's keyhole tab?), and a light pipe
-  for the LED and a pin-hole for the button. The USB opening and the printed
-  thread need a test print with a real cable and gland.
+- Not done yet: a light pipe for the LED and a pin-hole for the button. The
+  USB opening and the printed thread need a test print with a real cable and
+  gland.
 
 ## 7. Cloud changes
 

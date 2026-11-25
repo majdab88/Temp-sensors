@@ -1261,6 +1261,17 @@
 			(uuid "1f94b3aa-bc6d-4878-8839-3d17575ec81e")
 		)
 		(embedded_fonts no)
+		(model "${KIPRJMOD}/3d/ESP32-C6-MINI-1U.wrl"
+			(offset
+				(xyz 0 0 0)
+			)
+			(scale
+				(xyz 1 1 1)
+			)
+			(rotate
+				(xyz 0 0 0)
+			)
+		)
 	)
 	(footprint "Resistor_SMD:R_0603_1608Metric"
 		(layer "F.Cu")

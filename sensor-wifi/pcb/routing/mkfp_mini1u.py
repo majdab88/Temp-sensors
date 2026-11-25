@@ -67,6 +67,10 @@ g.append(f'(fp_text user "u.FL" (at -2.9 -5.35 0) (layer "F.Fab") (uuid "{U()}")
          f'(effects (font (size 0.6 0.6) (thickness 0.1))))')
 hdr = [b for b in keep if b.startswith(('(version', '(generator', '(layer'))]
 rest = [b for b in keep if b not in hdr]
+# LCSC/EasyEDA model, checked: 0.1-inch units, origin at the pad-pattern centre,
+# body y -6.9..5.6, 2.42 mm tall, pin 1 top-left, so no offset or rotation.
+rest.append('(model "${KIPRJMOD}/3d/ESP32-C6-MINI-1U.wrl" (offset (xyz 0 0 0)) '
+            '(scale (xyz 1 1 1)) (rotate (xyz 0 0 0)))')
 out = head + '\n\t'.join(hdr + g + rest) + '\n)\n'
 out = out.replace('"ESP32-C6-MINI-1"', '"ESP32-C6-MINI-1U"')
 open(DST, 'w', encoding='utf-8').write(out)

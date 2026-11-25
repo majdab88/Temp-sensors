@@ -484,10 +484,13 @@ and reverts after 3 boots without that, or after 5 minutes in mains mode.
     above the PCB bottom. The rod ends 0.5 mm above the LED and is flush with
     the lid top.
   - **Membrane button over SW2 (`BTN`), built into the lid with no hole.** An
-    annular groove (8 to 16 mm diameter) cut from the underside thins the lid
-    to 0.8 mm (`btn_web`), and that ring flexes. The 8 mm centre disc stays
-    full thickness and carries a 3 mm post that ends 0.3 mm above the SW2
-    plunger. A press travels about 0.55 mm (gap plus switch travel). A
+    annular groove (8 to 24 mm diameter) cut from the underside thins the lid
+    to 0.6 mm (`btn_web`), and that ring flexes like a spring and returns the
+    button. The 8 mm centre disc stays full thickness and carries a 3 mm post
+    that ends 0.2 mm above the SW2 plunger. A press travels about 0.45 mm
+    (gap plus switch travel), with the switch's click felt through it. The
+    8 mm radial span keeps the PETG bending strain about 1.3% at full travel
+    (a 16 mm / 0.8 mm first version was about 8%, past yield). A
     0.4 mm ring on the lid top marks where to press. Tune the force with
     `btn_web` after the test print. SW1 (RESET) is not exposed.
   - Only the light-pipe rod passes through the lid; a drop of silicone round

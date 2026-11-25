@@ -1,0 +1,7 @@
+(version 1)
+# J_PROG's GND pin is boxed in on B.Cu by +3V3 (pin 2) and BOOT (pin 6) and gets one
+# back-side spoke; the front pour reaches it fully, and it carries only programming
+# current. Accept one spoke there instead of lowering the board-wide minimum.
+(rule "J2 GND: one back spoke"
+	(constraint min_resolved_spokes 1)
+	(condition "A.memberOfFootprint('J2') || B.memberOfFootprint('J2')"))

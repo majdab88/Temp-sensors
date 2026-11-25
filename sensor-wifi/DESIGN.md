@@ -357,9 +357,14 @@ and reverts after 3 boots without that, or after 5 minutes in mains mode.
 
 ## 5. PCB layout (`pcb/`) — placed and routed, DRC clean
 
-- 2-layer, **50 × 90 mm**, 1.6 mm. Sized by the 18650 holder (77 × 21 mm),
-  which runs the full length of the **back side** at the left edge. The
-  WROOM-1U has no on-board antenna, so no keep-out constrains the layout.
+- 2-layer, **64 × 90 mm**, 1.6 mm. The length is set by the 18650 holder
+  (77 × 21 mm), which runs the full length of the **back side**. The WROOM-1U
+  has no on-board antenna, so no keep-out constrains the layout.
+- **Mounting: 4× M3 (3.2 mm NPTH, H1–H4), one per corner,** 3.0 mm in from the
+  sides and 3.5 mm from top and bottom. The parts occupy a 50 mm wide strip, and
+  the board has a 7 mm margin either side of it to hold the holes. The board
+  sits on standoffs on the holder side. A 7 mm standoff at the right-hand holes
+  clears the holder's courtyard by about 0.6 mm.
 - Front, top to bottom: WROOM-1U with its support parts (crystal, straps, LED,
   button RC) at the top; SW1 RESET / SW2 button below it; J_PROG at the left
   edge; the TPS63802 cluster in the middle with the BQ24074 to its right; USB-C,
@@ -392,9 +397,15 @@ and reverts after 3 boots without that, or after 5 minutes in mains mode.
   `routing/work/sensor-wifi.kicad_pcb` and `.kicad_pro` over the project with KiCad
   closed. It runs under KiCad's bundled Python. Freerouting needs
   `--gui.enabled=false`, otherwise an exception dialog leaves an empty SES.
-- **DRC:** 0 errors, 0 unconnected, parity clean. The 91 warnings are
+- **VBAT is hand-routed end to end.** Freerouting dropped one branch or
+  another on different runs. A broken battery divider reads as a flat cell, not
+  a fault.
+- **DRC:** 0 errors, 0 unconnected, parity clean. The 86 warnings are
   silkscreen overlaps (reference text, a GUI tidy job) plus 6
-  `lib_footprint_mismatch`, all cosmetic.
+  `lib_footprint_mismatch`, all cosmetic. `sensor-wifi.kicad_dru` has one
+  exception: J2's GND pin gets one back-side thermal spoke. +3V3 and BOOT box
+  it in, the front pour reaches it fully, and it carries only programming
+  current.
 - Still to do before fab: tidy the silkscreen and mark pin 1 on J_PROG.
   Run a final DRC.
 
@@ -405,8 +416,8 @@ and reverts after 3 boots without that, or after 5 minutes in mains mode.
   cell, stay at room temperature: **Li-ion must not be charged below 0 °C**.
   The BQ24074 TS input enforces that through RT1, which reads board
   temperature next to the charger (see §5), not the cell's.
-- Two-part printed PETG box, ~95 × 55 × 40 mm plus gland and SMA (sized by the
-  18650 under the board): base with keyhole slots, lid with a light pipe for the LED and a
+- Two-part printed PETG box, ~100 × 72 × 40 mm plus gland and SMA (sized by
+  the 64 × 90 mm board and the 18650 under it; four standoffs on the M3 holes): base with keyhole slots, lid with a light pipe for the LED and a
   pin-hole for the button. The lid comes off without tools so the cell can be
   swapped. Mark the cell polarity on the base, next to the holder.
 - Bottom face: USB-C cut-out and a PG7 (M12) cable gland for the probe cable.

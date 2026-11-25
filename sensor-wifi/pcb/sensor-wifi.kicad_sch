@@ -6167,6 +6167,105 @@
 			)
 			(embedded_fonts no)
 		)
+		(symbol "Mechanical:MountingHole"
+			(pin_names
+				(offset 1.016)
+			)
+			(exclude_from_sim no)
+			(in_bom no)
+			(on_board yes)
+			(in_pos_files yes)
+			(duplicate_pin_numbers_are_jumpers no)
+			(property "Reference" "H"
+				(at 0 5.08 0)
+				(show_name no)
+				(do_not_autoplace no)
+				(effects
+					(font
+						(size 1.27 1.27)
+					)
+				)
+			)
+			(property "Value" "MountingHole"
+				(at 0 3.175 0)
+				(show_name no)
+				(do_not_autoplace no)
+				(effects
+					(font
+						(size 1.27 1.27)
+					)
+				)
+			)
+			(property "Footprint" ""
+				(at 0 0 0)
+				(show_name no)
+				(do_not_autoplace no)
+				(hide yes)
+				(effects
+					(font
+						(size 1.27 1.27)
+					)
+				)
+			)
+			(property "Datasheet" ""
+				(at 0 0 0)
+				(show_name no)
+				(do_not_autoplace no)
+				(hide yes)
+				(effects
+					(font
+						(size 1.27 1.27)
+					)
+				)
+			)
+			(property "Description" "Mounting Hole without connection"
+				(at 0 0 0)
+				(show_name no)
+				(do_not_autoplace no)
+				(hide yes)
+				(effects
+					(font
+						(size 1.27 1.27)
+					)
+				)
+			)
+			(property "ki_keywords" "mounting hole"
+				(at 0 0 0)
+				(show_name no)
+				(do_not_autoplace no)
+				(hide yes)
+				(effects
+					(font
+						(size 1.27 1.27)
+					)
+				)
+			)
+			(property "ki_fp_filters" "MountingHole*"
+				(at 0 0 0)
+				(show_name no)
+				(do_not_autoplace no)
+				(hide yes)
+				(effects
+					(font
+						(size 1.27 1.27)
+					)
+				)
+			)
+			(symbol "MountingHole_0_1"
+				(circle
+					(center 0 0)
+					(radius 1.27)
+					(stroke
+						(width 1.27)
+						(type default)
+					)
+					(fill
+						(type none)
+					)
+				)
+			)
+			(embedded_fonts no)
+		)
 	)
 	(junction
 		(at 137.16 110.49)
@@ -6710,6 +6809,49 @@
 			(justify left bottom)
 		)
 		(uuid "eff3295a-ef4b-47f0-8e46-63d3d5e3c856")
+	)
+	(text "R4 ILIM ~1 A in · R5 ISET ~0.5 A charge · R6 TMR safety timer\nR7 ITERM: open = default termination (verify) · RT1 by U2: board temp\nEN2=1 EN1=0: input limit set by R4 · CE low: charge enabled"
+		(at 114.3 119.38 0)
+		(effects
+			(font
+				(size 1.27 1.27)
+			)
+			(justify left top)
+		)
+		(uuid "9c845f4f-1e80-44b4-8ad2-224b1f4ac2b6")
+	)
+	(text "Q1's gate is referenced to CELL_N, not GND: a reversed cell holds it off\neven with USB driving VBAT. DW01A fed via D2, so a reversed cell cannot\npower it; R14 holds the FS8205A charge FET off when it is unpowered.\nBT1: Keystone 1042 holder, must take 65 mm bare and 70 mm protected cells."
+		(at 17.78 210.82 0)
+		(effects
+			(font
+				(size 1.27 1.27)
+			)
+			(justify left top)
+		)
+		(uuid "84637b30-e262-4ecd-9a00-8620b12b2626")
+	)
+	(text "L1: TDK VLS3015CX-1R5M-H (as v2)\nVout = 0.5 x (1 + R17/R18) = 3.3 V\nMODE = GND: power-save (PFM)"
+		(at 210.82 111.76 0)
+		(effects
+			(font
+				(size 1.27 1.27)
+			)
+			(justify left top)
+		)
+		(uuid "4caea4f5-54fa-420c-8f8e-27391c74c5e8")
+	)
+	(text "NOTES — BATTERY PROTECTION (bench-test the reversed-cell cases)"
+		(exclude_from_sim no)
+		(at 16.51 207.01 0)
+		(effects
+			(font
+				(size 2.032 2.032)
+				(thickness 0.4064)
+				(bold yes)
+			)
+			(justify left bottom)
+		)
+		(uuid "7fc8c170-3afa-4dba-8616-33c74b8ea9a6")
 	)
 	(label "VBUS_IN"
 		(at 50.8 55.88 0)
@@ -8008,21 +8150,6 @@
 		)
 		(uuid "42613ae1-366e-4b74-bbf0-d3519524ca1e")
 	)
-  (text "R4 ILIM ~1 A in · R5 ISET ~0.5 A charge · R6 TMR safety timer\nR7 ITERM: open = default termination (verify) · RT1 by U2: board temp\nEN2=1 EN1=0: input limit set by R4 · CE low: charge enabled"
-    (at 114.3 119.38 0)
-    (effects (font (size 1.27 1.27)) (justify left top))
-    (uuid "9c845f4f-1e80-44b4-8ad2-224b1f4ac2b6")
-  )
-  (text "Q1's gate is referenced to CELL_N, not GND: a reversed cell holds it off\neven with USB driving VBAT. DW01A fed via D2, so a reversed cell cannot\npower it; R14 holds the FS8205A charge FET off when it is unpowered.\nBT1: Keystone 1042 holder, must take 65 mm bare and 70 mm protected cells."
-    (at 17.78 210.82 0)
-    (effects (font (size 1.27 1.27)) (justify left top))
-    (uuid "84637b30-e262-4ecd-9a00-8620b12b2626")
-  )
-  (text "L1: TDK VLS3015CX-1R5M-H (as v2)\nVout = 0.5 x (1 + R17/R18) = 3.3 V\nMODE = GND: power-save (PFM)"
-    (at 210.82 111.76 0)
-    (effects (font (size 1.27 1.27)) (justify left top))
-    (uuid "4caea4f5-54fa-420c-8f8e-27391c74c5e8")
-  )
 	(symbol
 		(lib_id "Connector:USB_C_Receptacle_USB2.0_16P")
 		(at 35.56 71.12 0)
@@ -14791,6 +14918,246 @@
 			)
 		)
 	)
+	(symbol
+		(lib_id "Mechanical:MountingHole")
+		(at 335.28 226.06 0)
+		(unit 1)
+		(in_bom no)
+		(on_board yes)
+		(dnp no)
+		(uuid "0b4e3553-18ac-4743-bbca-9ea635e0c570")
+		(property "Reference" "H1"
+			(at 335.28 220.98 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Value" "M3"
+			(at 335.28 222.885 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Footprint" "MountingHole:MountingHole_3.2mm_M3"
+			(at 335.28 226.06 0)
+			(hide yes)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Datasheet" ""
+			(at 335.28 226.06 0)
+			(hide yes)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Description" "Mounting Hole without connection"
+			(at 335.28 226.06 0)
+			(hide yes)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(instances
+			(project "sensor-wifi"
+				(path "/29bf5914-3033-42e4-bb5a-568b65f837f4"
+					(reference "H1")
+					(unit 1)
+				)
+			)
+		)
+	)
+	(symbol
+		(lib_id "Mechanical:MountingHole")
+		(at 353.06 226.06 0)
+		(unit 1)
+		(in_bom no)
+		(on_board yes)
+		(dnp no)
+		(uuid "69c6f45d-4300-462c-9683-1983ac2a40ad")
+		(property "Reference" "H2"
+			(at 353.06 220.98 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Value" "M3"
+			(at 353.06 222.885 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Footprint" "MountingHole:MountingHole_3.2mm_M3"
+			(at 353.06 226.06 0)
+			(hide yes)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Datasheet" ""
+			(at 353.06 226.06 0)
+			(hide yes)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Description" "Mounting Hole without connection"
+			(at 353.06 226.06 0)
+			(hide yes)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(instances
+			(project "sensor-wifi"
+				(path "/29bf5914-3033-42e4-bb5a-568b65f837f4"
+					(reference "H2")
+					(unit 1)
+				)
+			)
+		)
+	)
+	(symbol
+		(lib_id "Mechanical:MountingHole")
+		(at 370.84 226.06 0)
+		(unit 1)
+		(in_bom no)
+		(on_board yes)
+		(dnp no)
+		(uuid "2bb8aafb-bb0c-40c8-8714-3eb9b334668c")
+		(property "Reference" "H3"
+			(at 370.84 220.98 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Value" "M3"
+			(at 370.84 222.885 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Footprint" "MountingHole:MountingHole_3.2mm_M3"
+			(at 370.84 226.06 0)
+			(hide yes)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Datasheet" ""
+			(at 370.84 226.06 0)
+			(hide yes)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Description" "Mounting Hole without connection"
+			(at 370.84 226.06 0)
+			(hide yes)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(instances
+			(project "sensor-wifi"
+				(path "/29bf5914-3033-42e4-bb5a-568b65f837f4"
+					(reference "H3")
+					(unit 1)
+				)
+			)
+		)
+	)
+	(symbol
+		(lib_id "Mechanical:MountingHole")
+		(at 388.62 226.06 0)
+		(unit 1)
+		(in_bom no)
+		(on_board yes)
+		(dnp no)
+		(uuid "86ebe38a-8970-4bec-b41f-2e6b8e05f2d8")
+		(property "Reference" "H4"
+			(at 388.62 220.98 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Value" "M3"
+			(at 388.62 222.885 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Footprint" "MountingHole:MountingHole_3.2mm_M3"
+			(at 388.62 226.06 0)
+			(hide yes)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Datasheet" ""
+			(at 388.62 226.06 0)
+			(hide yes)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Description" "Mounting Hole without connection"
+			(at 388.62 226.06 0)
+			(hide yes)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(instances
+			(project "sensor-wifi"
+				(path "/29bf5914-3033-42e4-bb5a-568b65f837f4"
+					(reference "H4")
+					(unit 1)
+				)
+			)
+		)
+	)
 	(rectangle
 		(start 15.24 24.13)
 		(end 109.22 129.54)
@@ -14911,14 +15278,52 @@
 	(rectangle
 		(start 15.24 203.2)
 		(end 135.89 252.73)
-		(stroke (width 0.3) (type dash) (color 72 72 72 1))
-		(fill (type none))
+		(stroke
+			(width 0.3)
+			(type dash)
+			(color 72 72 72 1)
+		)
+		(fill
+			(type none)
+		)
 		(uuid "72bc2c75-b8aa-44ad-a500-81aef8faf3ff")
 	)
-	(text "NOTES — BATTERY PROTECTION (bench-test the reversed-cell cases)"
+	(rectangle
+		(start 323.85 201.93)
+		(end 410.21 250.19)
+		(stroke
+			(width 0.3)
+			(type dash)
+			(color 72 72 72 1)
+		)
+		(fill
+			(type none)
+		)
+		(uuid "620e219b-a86b-4aa9-8b47-c0c910137498")
+	)
+	(text "MECHANICAL — mounting holes"
 		(exclude_from_sim no)
-		(at 16.51 207.01 0)
-		(effects (font (size 2.032 2.032) (thickness 0.4064) (bold yes)) (justify left bottom))
-		(uuid "7fc8c170-3afa-4dba-8616-33c74b8ea9a6")
+		(at 325.12 205.74 0)
+		(effects
+			(font
+				(size 2.032 2.032)
+				(thickness 0.4064)
+				(bold yes)
+			)
+			(justify left bottom)
+		)
+		(uuid "96c89d2c-de46-47ed-b29a-f0fbd590e511")
+	)
+	(text "4× M3 (3.2 mm NPTH), one in each corner of the board,\nin the 7 mm margins either side of the parts. No net."
+		(exclude_from_sim no)
+		(at 325.12 240.03 0)
+		(effects
+			(font
+				(size 1.27 1.27)
+				(thickness 0.254)
+			)
+			(justify left bottom)
+		)
+		(uuid "37a54a06-4a20-419c-a8d2-9c29971d0463")
 	)
 )

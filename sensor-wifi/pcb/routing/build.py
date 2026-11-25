@@ -13,7 +13,8 @@ import json, os, shutil, subprocess, sys
 import pcbnew
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-SRC = os.path.dirname(HERE)           # the real project; only read, never written
+# The real project; only read, never written. ROUTE_SRC routes a staged copy instead.
+SRC = os.environ.get('ROUTE_SRC', os.path.dirname(HERE))
 WORK = os.path.join(HERE, 'work')
 PCB = os.path.join(WORK, 'sensor-wifi.kicad_pcb')
 JAVA = r'C:\Program Files\Eclipse Adoptium\jre-25.0.4.101-hotspot\bin\java.exe'
@@ -61,7 +62,7 @@ def fresh_copy():
     shutil.rmtree(WORK, ignore_errors=True)
     os.makedirs(WORK)
     for f in ['sensor-wifi.kicad_pcb', 'sensor-wifi.kicad_pro', 'sensor-wifi.kicad_sch',
-              'fp-lib-table', 'sym-lib-table', 'sensor-wifi.kicad_sym']:
+              'fp-lib-table', 'sym-lib-table', 'sensor-wifi.kicad_sym', 'sensor-wifi.kicad_dru']:
         shutil.copy(os.path.join(SRC, f), WORK)
     shutil.copytree(os.path.join(SRC, 'sensor-wifi.pretty'), os.path.join(WORK, 'sensor-wifi.pretty'))
     strip_copper(PCB)
@@ -103,12 +104,20 @@ def add_hand(b):
         b.Add(vi)
 
 
+def edges(b, inset):
+    """Board outline bounding box in mm, shrunk by inset."""
+    bb = b.GetBoardEdgesBoundingBox()
+    return (pcbnew.ToMM(bb.GetLeft()) + inset, pcbnew.ToMM(bb.GetTop()) + inset,
+            pcbnew.ToMM(bb.GetRight()) - inset, pcbnew.ToMM(bb.GetBottom()) - inset)
+
+
 def add_pours(b):
     # BQ24074 ground pins are too narrow for two thermal spokes; pour into them solid.
     for fp in b.GetFootprints():
         if fp.GetReference() == 'U2':
             fp.SetLocalZoneConnection(pcbnew.ZONE_CONNECTION_FULL)
     gnd = b.GetNetsByName()['GND']
+    x0, y0, x1, y1 = edges(b, 0.3)
     for layer in (pcbnew.F_Cu, pcbnew.B_Cu):
         z = pcbnew.ZONE(b)
         z.SetLayer(layer); z.SetNet(gnd)
@@ -119,7 +128,7 @@ def add_pours(b):
         z.SetThermalReliefGap(mm(0.3))
         z.SetThermalReliefSpokeWidth(mm(0.4))
         o = z.Outline(); o.NewOutline()
-        for x, y in [(100.3, 100.3), (149.7, 100.3), (149.7, 189.7), (100.3, 189.7)]:
+        for x, y in [(x0, y0), (x1, y0), (x1, y1), (x0, y1)]:
             o.Append(mm(x), mm(y))
         b.Add(z)
 
@@ -207,8 +216,10 @@ def stitch(b):
         if todo == 0:
             break
     # Sparse grid: tie the two pours together every ~6 mm where a via fits.
-    for gx in range(103, 148, 6):
-        for gy in range(103, 188, 6):
+    x0, y0, x1, y1 = edges(b, 3.0)
+    for i in range(int((x1 - x0) // 6) + 1):
+        for j in range(int((y1 - y0) // 6) + 1):
+            gx, gy = x0 + 6 * i, y0 + 6 * j
             if _fits(b, gx, gy, 0.6):
                 _add_via(b, gx, gy); added += 1
     fill(b)

@@ -8008,7 +8008,7 @@
 		)
 		(uuid "42613ae1-366e-4b74-bbf0-d3519524ca1e")
 	)
-  (text "R4 ILIM ~1 A in · R5 ISET ~0.5 A charge · R6 TMR safety timer\nR7 ITERM: open = default termination (verify) · RT1 under the cell\nEN2=1 EN1=0: input limit set by R4 · CE low: charge enabled"
+  (text "R4 ILIM ~1 A in · R5 ISET ~0.5 A charge · R6 TMR safety timer\nR7 ITERM: open = default termination (verify) · RT1 by U2: board temp\nEN2=1 EN1=0: input limit set by R4 · CE low: charge enabled"
     (at 114.3 119.38 0)
     (effects (font (size 1.27 1.27)) (justify left top))
     (uuid "9c845f4f-1e80-44b4-8ad2-224b1f4ac2b6")

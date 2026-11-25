@@ -355,30 +355,56 @@ and reverts after 3 boots without that, or after 5 minutes in mains mode.
 
 ---
 
-## 5. PCB layout (`pcb/`) — schematic done, layout not started
+## 5. PCB layout (`pcb/`) — placed and routed, DRC clean
 
-- 2-layer, ~85 × 45 mm, 1.6 mm. Sized by the 18650 holder (77 × 21 mm). The
-  WROOM-1U has no on-board antenna, so no keep-out constrains the layout, and
-  the cell can run the full length under the module.
-- u.FL at the module, near the top edge. The pigtail runs to an SMA bulkhead
-  in the enclosure's top face, so the antenna can be replaced by a remote one
-  with an extension cable if the device ends up behind a metal cabinet.
-- USB-C and the probe screw terminal on the bottom short edge, so cables leave
-  the enclosure together at the bottom when wall-mounted. Terminal entry faces
-  the cable gland.
-- 18650 holder on the **back side**, along the long axis. RT1 sits under the
-  holder's middle, where the cell touches it.
-- BQ24074 thermal pad stitched to the ground pour (it dissipates ~0.5 W
-  while charging from 5 V).
-- NTC ADC trace short and guarded, away from the TPS63802 switch node and L1.
-- Draw in KiCad 10 (Copperpour MCP), not PCBCraft.
+- 2-layer, **50 × 90 mm**, 1.6 mm. Sized by the 18650 holder (77 × 21 mm),
+  which runs the full length of the **back side** at the left edge. The
+  WROOM-1U has no on-board antenna, so no keep-out constrains the layout.
+- Front, top to bottom: WROOM-1U with its support parts (crystal, straps, LED,
+  button RC) at the top; SW1 RESET / SW2 button below it; J_PROG at the left
+  edge; the TPS63802 cluster in the middle with the BQ24074 to its right; USB-C,
+  its fuse and TVS, and the probe terminal J3 on the bottom edge.
+- Cell protection sits next to the holder pads, so the 3 A paths stay short.
+  The DW01A/FS8205A pair is at the top, by the cell − pad. The fuse and the
+  reverse-polarity FET Q1 are at the bottom, by the + pad. Both pads join the
+  front through clusters of 0.8/0.4 mm vias.
+- **RT1 (the charger's TS thermistor) is on the front, next to the BQ24074,
+  not under the cell.** It senses board temperature, which is what the charger
+  heats. The cell is read only through that. If charging a cold cell turns out
+  to matter, move RT1 onto a flying lead against the holder.
+- u.FL is on the module, near the top edge. The pigtail goes to an SMA
+  bulkhead in the enclosure.
+- **Copper.** Signals are 0.25 mm. The `Power` netclass (VBUS, VBUS_IN, VSYS,
+  VBAT, +3V3) is 0.5 mm. Minimum track width is 0.15 mm, because Freerouting
+  narrows tracks at the module pins and JLCPCB's standard process allows 0.127.
+  There are GND pours on both layers, tied with about 60 stitching vias. The
+  BQ24074 connects to the pour solid (its GND pins are too narrow for two
+  thermal spokes), and its thermal pad has a via.
+- **Hand-routed and locked.** The TPS63802 loop, a copy of v2's geometry. The
+  BQ24074 fan-out (0.5 mm pitch). The cell paths and the DW01A/FS8205A wiring.
+  The 0.6 mm VSYS trunk, which goes around the regulator to C8. The VBUS trunk,
+  which runs down the back past the VSYS trunk. Freerouting routed everything
+  else.
+- **Reproducible.** `pcb/routing/build.py auto` copies the live board, adds
+  `handroutes.py`, pours, autoroutes (DSN → Freerouting 2.4.1 → SES), stitches,
+  and runs DRC with schematic parity. It never touches the real board, and it
+  takes about 2 minutes. If a part moves: fix `handroutes.py`, re-run, and copy
+  `routing/work/sensor-wifi.kicad_pcb` and `.kicad_pro` over the project with KiCad
+  closed. It runs under KiCad's bundled Python. Freerouting needs
+  `--gui.enabled=false`, otherwise an exception dialog leaves an empty SES.
+- **DRC:** 0 errors, 0 unconnected, parity clean. The 91 warnings are
+  silkscreen overlaps (reference text, a GUI tidy job) plus 6
+  `lib_footprint_mismatch`, all cosmetic.
+- Still to do before fab: tidy the silkscreen and mark pin 1 on J_PROG.
+  Run a final DRC.
 
 ## 6. Enclosure (`enclosure/`) — not started
 
 - Wall-mounted outside the fridge/freezer. The probe enters through the door
   gasket on a flat-section cable. The electronics, and above all the Li-ion
   cell, stay at room temperature: **Li-ion must not be charged below 0 °C**.
-  The BQ24074 TS input enforces that through RT1 under the cell.
+  The BQ24074 TS input enforces that through RT1, which reads board
+  temperature next to the charger (see §5), not the cell's.
 - Two-part printed PETG box, ~95 × 55 × 40 mm plus gland and SMA (sized by the
   18650 under the board): base with keyhole slots, lid with a light pipe for the LED and a
   pin-hole for the button. The lid comes off without tools so the cell can be

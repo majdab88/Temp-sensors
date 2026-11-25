@@ -1,0 +1,168 @@
+{
+  "format": "pcbcraft-project/23",
+  "id": "d5108ed1-85e4-49c2-b6f6-5dc587d0406a",
+  "name": "NTC_SENSOR",
+  "numeric_id_high_water": 894,
+  "layout_root": ".",
+  "boards": [{"id":"60c05a2a-d793-4be3-9e8f-81bdee3e3ef9","name":"NTC_SENSOR","folder":"ntc-sensor-60c05a2ad793"}],
+  "sheets": [{"id":"21a6a5e8-4b16-448d-9eac-825c427eab74","name":"Main","file":"sheets/21a6a5e8-4b16-448d-9eac-825c427eab74.json"}],
+  "components": [
+    {"id":508,"library":"ntc-sensor-sym","definition":"resistor","definition_revision":2,"reference_number":1,"reference":"R_en1","value":"10 kΩ"}
+
+    ,
+    {"id":510,"library":"ntc-sensor-sym","definition":"pwr-flag","definition_revision":2,"reference_number":1,"reference":"FLG1","value":"V_bat","metadata":{"fields":{},"attributes":{"do_not_populate":false,"exclude_from_bom":true,"exclude_from_board":true,"exclude_from_simulation":false,"exclude_from_position_files":true}}}
+
+    ,
+    {"id":512,"library":"ntc-sensor-sym","definition":"capacitor","definition_revision":2,"reference_number":1,"reference":"C_out1","value":"22 uf"}
+
+    ,
+    {"id":514,"library":"ntc-sensor-sym","definition":"resistor","definition_revision":2,"reference_number":2,"reference":"R1","value":"560 kΩ 1%"}
+
+    ,
+    {"id":516,"library":"ntc-sensor-sym","definition":"capacitor","definition_revision":2,"reference_number":2,"reference":"C_en1","value":"1 µF"}
+
+    ,
+    {"id":518,"library":"ntc-sensor-sym","definition":"esp32-c6-wroom-1","definition_revision":2,"reference_number":1,"reference":"U1","value":"ESP32-C6-WROOM-1U-N4","no_connects":[{"terminal":"11","electrical_type":"bidirectional"},{"terminal":"12","electrical_type":"bidirectional"},{"terminal":"13","electrical_type":"bidirectional"},{"terminal":"14","electrical_type":"bidirectional"},{"terminal":"16","electrical_type":"bidirectional"},{"terminal":"17","electrical_type":"bidirectional"},{"terminal":"18","electrical_type":"bidirectional"},{"terminal":"21","electrical_type":"bidirectional"},{"terminal":"23","electrical_type":"bidirectional"},{"terminal":"26","electrical_type":"bidirectional"},{"terminal":"4","electrical_type":"bidirectional"},{"terminal":"6","electrical_type":"bidirectional"},{"terminal":"7","electrical_type":"bidirectional"}]}
+
+    ,
+    {"id":530,"library":"power","definition":"gnd","definition_revision":1,"reference_number":1,"reference":"PWR1","value":"GND","metadata":{"fields":{},"attributes":{"do_not_populate":false,"exclude_from_bom":true,"exclude_from_board":true,"exclude_from_simulation":false,"exclude_from_position_files":true}}}
+
+    ,
+    {"id":531,"library":"power","definition":"gnd","definition_revision":1,"reference_number":2,"reference":"PWR2","value":"GND","metadata":{"fields":{},"attributes":{"do_not_populate":false,"exclude_from_bom":true,"exclude_from_board":true,"exclude_from_simulation":false,"exclude_from_position_files":true}}}
+
+    ,
+    {"id":532,"library":"ntc-sensor-sym","definition":"resistor","definition_revision":2,"reference_number":3,"reference":"R_gpio8","value":"10 kΩ"}
+
+    ,
+    {"id":534,"library":"ntc-sensor-sym","definition":"inductor","definition_revision":2,"reference_number":1,"reference":"L1_ext1","value":"1.5 uH TDK VLS3015CX-1R5M-H"}
+
+    ,
+    {"id":536,"library":"ntc-sensor-sym","definition":"conn-02x03-odd-even","definition_revision":2,"reference_number":1,"reference":"J1","value":"Conn_02x03_Odd_Even"}
+
+    ,
+    {"id":538,"library":"ntc-sensor-sym","definition":"pwr-flag","definition_revision":2,"reference_number":2,"reference":"FLG2","value":"GND_FLAG","metadata":{"fields":{},"attributes":{"do_not_populate":false,"exclude_from_bom":true,"exclude_from_board":true,"exclude_from_simulation":false,"exclude_from_position_files":true}}}
+
+    ,
+    {"id":540,"library":"ntc-sensor-sym","definition":"resistor","definition_revision":2,"reference_number":4,"reference":"R_gpio0","value":"10 kΩ"}
+
+    ,
+    {"id":542,"library":"ntc-sensor-sym","definition":"led","definition_revision":2,"reference_number":1,"reference":"D1","value":"knightbright APT1608SURCK"}
+
+    ,
+    {"id":544,"library":"ntc-sensor-sym","definition":"capacitor","definition_revision":2,"reference_number":3,"reference":"C_in1","value":"10 uf"}
+
+    ,
+    {"id":546,"library":"ntc-sensor-sym","definition":"capacitor","definition_revision":2,"reference_number":4,"reference":"C_buf1","value":"22 uf"}
+
+    ,
+    {"id":548,"library":"ntc-sensor-sym","definition":"capacitor","definition_revision":2,"reference_number":5,"reference":"C_d0","value":"100 nF X7R"}
+
+    ,
+    {"id":550,"library":"power","definition":"gnd","definition_revision":1,"reference_number":3,"reference":"PWR3","value":"GND","metadata":{"fields":{},"attributes":{"do_not_populate":false,"exclude_from_bom":true,"exclude_from_board":true,"exclude_from_simulation":false,"exclude_from_position_files":true}}}
+
+    ,
+    {"id":551,"library":"power","definition":"gnd","definition_revision":1,"reference_number":4,"reference":"PWR4","value":"GND","metadata":{"fields":{},"attributes":{"do_not_populate":false,"exclude_from_bom":true,"exclude_from_board":true,"exclude_from_simulation":false,"exclude_from_position_files":true}}}
+
+    ,
+    {"id":552,"library":"power","definition":"gnd","definition_revision":1,"reference_number":5,"reference":"PWR5","value":"GND","metadata":{"fields":{},"attributes":{"do_not_populate":false,"exclude_from_bom":true,"exclude_from_board":true,"exclude_from_simulation":false,"exclude_from_position_files":true}}}
+
+    ,
+    {"id":553,"library":"ntc-sensor-sym","definition":"capacitor","definition_revision":2,"reference_number":6,"reference":"Cfn1","value":"100 nF X7R"}
+
+    ,
+    {"id":555,"library":"power","definition":"gnd","definition_revision":1,"reference_number":6,"reference":"PWR6","value":"GND","metadata":{"fields":{},"attributes":{"do_not_populate":false,"exclude_from_bom":true,"exclude_from_board":true,"exclude_from_simulation":false,"exclude_from_position_files":true}}}
+
+    ,
+    {"id":556,"library":"ntc-sensor-sym","definition":"switch-push","definition_revision":2,"reference_number":1,"reference":"SW1","value":"SW_Reset"}
+
+    ,
+    {"id":558,"library":"ntc-sensor-sym","definition":"capacitor-polarized","definition_revision":2,"reference_number":7,"reference":"C1","value":"EEU-FR0J102"}
+
+    ,
+    {"id":560,"library":"ntc-sensor-sym","definition":"thermistor-ntc","definition_revision":2,"reference_number":1,"reference":"TH1","value":"NTC 10 kΩ @25 °CB = 3435"}
+
+    ,
+    {"id":562,"library":"power","definition":"gnd","definition_revision":1,"reference_number":7,"reference":"PWR7","value":"GND","metadata":{"fields":{},"attributes":{"do_not_populate":false,"exclude_from_bom":true,"exclude_from_board":true,"exclude_from_simulation":false,"exclude_from_position_files":true}}}
+
+    ,
+    {"id":563,"library":"ntc-sensor-sym","definition":"resistor","definition_revision":2,"reference_number":5,"reference":"R3","value":"100 kΩ 1%"}
+
+    ,
+    {"id":565,"library":"power","definition":"gnd","definition_revision":1,"reference_number":8,"reference":"PWR8","value":"GND","metadata":{"fields":{},"attributes":{"do_not_populate":false,"exclude_from_bom":true,"exclude_from_board":true,"exclude_from_simulation":false,"exclude_from_position_files":true}}}
+
+    ,
+    {"id":566,"library":"ntc-sensor-sym","definition":"resistor","definition_revision":2,"reference_number":6,"reference":"R4","value":"100 kΩ 1%"}
+
+    ,
+    {"id":568,"library":"power","definition":"gnd","definition_revision":1,"reference_number":9,"reference":"PWR9","value":"GND","metadata":{"fields":{},"attributes":{"do_not_populate":false,"exclude_from_bom":true,"exclude_from_board":true,"exclude_from_simulation":false,"exclude_from_position_files":true}}}
+
+    ,
+    {"id":569,"library":"ntc-sensor-sym","definition":"capacitor","definition_revision":2,"reference_number":8,"reference":"C_vdd_hf1","value":"100 nF X7R"}
+
+    ,
+    {"id":571,"library":"ntc-sensor-sym","definition":"resistor","definition_revision":2,"reference_number":7,"reference":"R2","value":"100 kΩ 1%"}
+
+    ,
+    {"id":573,"library":"power","definition":"gnd","definition_revision":1,"reference_number":10,"reference":"PWR10","value":"GND","metadata":{"fields":{},"attributes":{"do_not_populate":false,"exclude_from_bom":true,"exclude_from_board":true,"exclude_from_simulation":false,"exclude_from_position_files":true}}}
+
+    ,
+    {"id":574,"library":"power","definition":"gnd","definition_revision":1,"reference_number":11,"reference":"PWR11","value":"GND","metadata":{"fields":{},"attributes":{"do_not_populate":false,"exclude_from_bom":true,"exclude_from_board":true,"exclude_from_simulation":false,"exclude_from_position_files":true}}}
+
+    ,
+    {"id":575,"library":"power","definition":"gnd","definition_revision":1,"reference_number":12,"reference":"PWR12","value":"GND","metadata":{"fields":{},"attributes":{"do_not_populate":false,"exclude_from_bom":true,"exclude_from_board":true,"exclude_from_simulation":false,"exclude_from_position_files":true}}}
+
+    ,
+    {"id":576,"library":"ntc-sensor-sym","definition":"tps63802","definition_revision":2,"reference_number":2,"reference":"U2","value":"TPS63802DLAR","no_connects":[{"terminal":"5","electrical_type":"output"}]}
+
+    ,
+    {"id":580,"library":"ntc-sensor-sym","definition":"switch-push","definition_revision":2,"reference_number":2,"reference":"SW2","value":"SW_D0"}
+
+    ,
+    {"id":582,"library":"ntc-sensor-sym","definition":"resistor","definition_revision":2,"reference_number":8,"reference":"R5","value":"10 kΩ 1%"}
+
+    ,
+    {"id":584,"library":"ntc-sensor-sym","definition":"battery","definition_revision":2,"reference_number":1,"reference":"BT1","value":"3.0-3.6V"}
+
+    ,
+    {"id":586,"library":"ntc-sensor-sym","definition":"resistor","definition_revision":2,"reference_number":9,"reference":"R_boot1","value":"10 kΩ"}
+
+    ,
+    {"id":588,"library":"ntc-sensor-sym","definition":"capacitor","definition_revision":2,"reference_number":9,"reference":"C_vdd_bulk1","value":"10 µF X7R"}
+
+    ,
+    {"id":590,"library":"ntc-sensor-sym","definition":"capacitor","definition_revision":2,"reference_number":10,"reference":"Cfb1","value":"10 nF X7R"}
+
+    ,
+    {"id":592,"library":"ntc-sensor-sym","definition":"resistor","definition_revision":2,"reference_number":10,"reference":"R_LED1","value":"1 kΩ"}
+
+    ,
+    {"id":594,"library":"power","definition":"gnd","definition_revision":1,"reference_number":13,"reference":"PWR13","value":"GND","metadata":{"fields":{},"attributes":{"do_not_populate":false,"exclude_from_bom":true,"exclude_from_board":true,"exclude_from_simulation":false,"exclude_from_position_files":true}}}
+
+    ,
+    {"id":803,"library":"ntc-sections","definition":"section-frame-1","definition_revision":1,"reference_number":1,"reference":"SEC1","value":"Block 4","metadata":{"fields":{},"attributes":{"do_not_populate":true,"exclude_from_bom":true,"exclude_from_board":true,"exclude_from_simulation":true,"exclude_from_position_files":true}}}
+
+    ,
+    {"id":805,"library":"ntc-sections","definition":"section-frame-2","definition_revision":1,"reference_number":2,"reference":"SEC2","value":"Espressif ESP-PROG UART standard pinout. Plug ESP-PROG ribbon di","metadata":{"fields":{},"attributes":{"do_not_populate":true,"exclude_from_bom":true,"exclude_from_board":true,"exclude_from_simulation":true,"exclude_from_position_files":true}}}
+
+    ,
+    {"id":807,"library":"ntc-sections","definition":"section-frame-3","definition_revision":1,"reference_number":3,"reference":"SEC3","value":"HW RESET","metadata":{"fields":{},"attributes":{"do_not_populate":true,"exclude_from_bom":true,"exclude_from_board":true,"exclude_from_simulation":true,"exclude_from_position_files":true}}}
+
+    ,
+    {"id":809,"library":"ntc-sections","definition":"section-frame-4","definition_revision":1,"reference_number":4,"reference":"SEC4","value":"Block 6","metadata":{"fields":{},"attributes":{"do_not_populate":true,"exclude_from_bom":true,"exclude_from_board":true,"exclude_from_simulation":true,"exclude_from_position_files":true}}}
+
+    ,
+    {"id":811,"library":"ntc-sections","definition":"section-frame-5","definition_revision":1,"reference_number":5,"reference":"SEC5","value":"D0 input (button conditioning)","metadata":{"fields":{},"attributes":{"do_not_populate":true,"exclude_from_bom":true,"exclude_from_board":true,"exclude_from_simulation":true,"exclude_from_position_files":true}}}
+
+    ,
+    {"id":813,"library":"ntc-sections","definition":"section-frame-6","definition_revision":1,"reference_number":6,"reference":"SEC6","value":"3V3 IN decoupling","metadata":{"fields":{},"attributes":{"do_not_populate":true,"exclude_from_bom":true,"exclude_from_board":true,"exclude_from_simulation":true,"exclude_from_position_files":true}}}
+
+    ,
+    {"id":815,"library":"ntc-sections","definition":"section-frame-7","definition_revision":1,"reference_number":7,"reference":"SEC7","value":"WROOM GPIO2","metadata":{"fields":{},"attributes":{"do_not_populate":true,"exclude_from_bom":true,"exclude_from_board":true,"exclude_from_simulation":true,"exclude_from_position_files":true}}}
+
+    ,
+    {"id":817,"library":"ntc-sections","definition":"section-frame-8","definition_revision":1,"reference_number":8,"reference":"SEC8","value":"Block 1","metadata":{"fields":{},"attributes":{"do_not_populate":true,"exclude_from_bom":true,"exclude_from_board":true,"exclude_from_simulation":true,"exclude_from_position_files":true}}}
+
+    ,
+    {"id":819,"library":"ntc-sections","definition":"section-frame-9","definition_revision":1,"reference_number":9,"reference":"SEC9","value":"EN reset RC + strap pullups","metadata":{"fields":{},"attributes":{"do_not_populate":true,"exclude_from_bom":true,"exclude_from_board":true,"exclude_from_simulation":true,"exclude_from_position_files":true}}}
+  ]
+}

@@ -1,0 +1,211 @@
+{
+  "format": "pcbcraft-footprint/1",
+  "library": "ntc-sensor",
+  "id": "tps63802-dla",
+  "revision": 1,
+  "name": "TPS63802 HotRod DFN-10 (DLA)",
+  "license": "LicenseRef-Private",
+  "source": {
+    "kind": "converted",
+    "reference": "KiCad footprint Footprints:VREG_TPS63802DLAR",
+    "locator": "Converted from NTC_SENSOR.kicad_pcb (as fabricated); pads, silkscreen and fab artwork copied"
+  },
+  "pads": [
+    {
+      "number": "1",
+      "center": {
+        "x_nm": -900000,
+        "y_nm": -1000000
+      },
+      "width_nm": 600000,
+      "height_nm": 250000,
+      "rotation": 0,
+      "shape": "rounded_rectangle",
+      "copper": "component_side",
+      "corner_radius_nm": 50000
+    },
+    {
+      "number": "2",
+      "center": {
+        "x_nm": -900000,
+        "y_nm": -500000
+      },
+      "width_nm": 600000,
+      "height_nm": 250000,
+      "rotation": 0,
+      "shape": "rounded_rectangle",
+      "copper": "component_side",
+      "corner_radius_nm": 50000
+    },
+    {
+      "number": "3",
+      "center": {
+        "x_nm": -900000,
+        "y_nm": 0
+      },
+      "width_nm": 600000,
+      "height_nm": 250000,
+      "rotation": 0,
+      "shape": "rounded_rectangle",
+      "copper": "component_side",
+      "corner_radius_nm": 50000
+    },
+    {
+      "number": "4",
+      "center": {
+        "x_nm": -900000,
+        "y_nm": 500000
+      },
+      "width_nm": 600000,
+      "height_nm": 250000,
+      "rotation": 0,
+      "shape": "rounded_rectangle",
+      "copper": "component_side",
+      "corner_radius_nm": 50000
+    },
+    {
+      "number": "5",
+      "center": {
+        "x_nm": -900000,
+        "y_nm": 1000000
+      },
+      "width_nm": 600000,
+      "height_nm": 250000,
+      "rotation": 0,
+      "shape": "rounded_rectangle",
+      "copper": "component_side",
+      "corner_radius_nm": 50000
+    },
+    {
+      "number": "6",
+      "center": {
+        "x_nm": 750000,
+        "y_nm": 1000000
+      },
+      "width_nm": 900000,
+      "height_nm": 250000,
+      "rotation": 0,
+      "shape": "rounded_rectangle",
+      "copper": "component_side",
+      "corner_radius_nm": 50000
+    },
+    {
+      "number": "7",
+      "center": {
+        "x_nm": 750000,
+        "y_nm": 500000
+      },
+      "width_nm": 900000,
+      "height_nm": 250000,
+      "rotation": 0,
+      "shape": "rounded_rectangle",
+      "copper": "component_side",
+      "corner_radius_nm": 50000
+    },
+    {
+      "number": "8",
+      "center": {
+        "x_nm": 550000,
+        "y_nm": 0
+      },
+      "width_nm": 1300000,
+      "height_nm": 250000,
+      "rotation": 0,
+      "shape": "rounded_rectangle",
+      "copper": "component_side",
+      "corner_radius_nm": 50000
+    },
+    {
+      "number": "9",
+      "center": {
+        "x_nm": 750000,
+        "y_nm": -500000
+      },
+      "width_nm": 900000,
+      "height_nm": 250000,
+      "rotation": 0,
+      "shape": "rounded_rectangle",
+      "copper": "component_side",
+      "corner_radius_nm": 50000
+    },
+    {
+      "number": "10",
+      "center": {
+        "x_nm": 750000,
+        "y_nm": -1000000
+      },
+      "width_nm": 900000,
+      "height_nm": 250000,
+      "rotation": 0,
+      "shape": "rounded_rectangle",
+      "copper": "component_side",
+      "corner_radius_nm": 50000
+    }
+  ],
+  "graphics": [
+    {
+      "purpose": "courtyard",
+      "center": {
+        "x_nm": 0,
+        "y_nm": 0
+      },
+      "width_nm": 2900000,
+      "height_nm": 3500000,
+      "rotation": 0
+    }
+  ],
+  "artwork": [
+    {
+      "purpose": "silkscreen",
+      "graphic": {
+        "geometry": {
+          "type": "line",
+          "from": {
+            "x_nm": -1000000,
+            "y_nm": -1500000
+          },
+          "to": {
+            "x_nm": 1000000,
+            "y_nm": -1500000
+          }
+        },
+        "stroke_nm": 127000,
+        "fill": "none"
+      }
+    },
+    {
+      "purpose": "silkscreen",
+      "graphic": {
+        "geometry": {
+          "type": "line",
+          "from": {
+            "x_nm": -1000000,
+            "y_nm": 1500000
+          },
+          "to": {
+            "x_nm": 1000000,
+            "y_nm": 1500000
+          }
+        },
+        "stroke_nm": 127000,
+        "fill": "none"
+      }
+    },
+    {
+      "purpose": "silkscreen",
+      "graphic": {
+        "geometry": {
+          "type": "circle",
+          "center": {
+            "x_nm": -1750000,
+            "y_nm": -1250000
+          },
+          "radius_nm": 100000
+        },
+        "stroke_nm": 200000,
+        "fill": "none"
+      }
+    }
+  ],
+  "reference": "pcbcraft-technical-1"
+}

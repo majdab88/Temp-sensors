@@ -1,0 +1,154 @@
+{
+  "format": "pcbcraft-footprint/1",
+  "library": "ntc-sensor",
+  "id": "sw-push-6mm-h5mm",
+  "revision": 1,
+  "name": "Tactile switch 6 mm THT",
+  "license": "LicenseRef-Private",
+  "source": {
+    "kind": "converted",
+    "reference": "KiCad footprint Button_Switch_THT:SW_PUSH_6mm_H5mm",
+    "locator": "Converted from NTC_SENSOR.kicad_pcb (as fabricated); pads, silkscreen and fab artwork copied"
+  },
+  "pads": [
+    {
+      "number": "1",
+      "center": {
+        "x_nm": 0,
+        "y_nm": 0
+      },
+      "width_nm": 2000000,
+      "height_nm": 2000000,
+      "rotation": 90,
+      "shape": "circle",
+      "copper": "all_copper",
+      "drill_nm": 1100000
+    },
+    {
+      "number": "1-2",
+      "center": {
+        "x_nm": 6500000,
+        "y_nm": 0
+      },
+      "width_nm": 2000000,
+      "height_nm": 2000000,
+      "rotation": 90,
+      "shape": "circle",
+      "copper": "all_copper",
+      "drill_nm": 1100000
+    },
+    {
+      "number": "2",
+      "center": {
+        "x_nm": 0,
+        "y_nm": 4500000
+      },
+      "width_nm": 2000000,
+      "height_nm": 2000000,
+      "rotation": 90,
+      "shape": "circle",
+      "copper": "all_copper",
+      "drill_nm": 1100000
+    },
+    {
+      "number": "2-2",
+      "center": {
+        "x_nm": 6500000,
+        "y_nm": 4500000
+      },
+      "width_nm": 2000000,
+      "height_nm": 2000000,
+      "rotation": 90,
+      "shape": "circle",
+      "copper": "all_copper",
+      "drill_nm": 1100000
+    }
+  ],
+  "graphics": [
+    {
+      "purpose": "courtyard",
+      "center": {
+        "x_nm": 3250000,
+        "y_nm": 2250000
+      },
+      "width_nm": 9500000,
+      "height_nm": 7500000,
+      "rotation": 0
+    }
+  ],
+  "artwork": [
+    {
+      "purpose": "silkscreen",
+      "graphic": {
+        "geometry": {
+          "type": "line",
+          "from": {
+            "x_nm": -250000,
+            "y_nm": 1500000
+          },
+          "to": {
+            "x_nm": -250000,
+            "y_nm": 3000000
+          }
+        },
+        "stroke_nm": 120000,
+        "fill": "none"
+      }
+    },
+    {
+      "purpose": "silkscreen",
+      "graphic": {
+        "geometry": {
+          "type": "line",
+          "from": {
+            "x_nm": 1000000,
+            "y_nm": 5500000
+          },
+          "to": {
+            "x_nm": 5500000,
+            "y_nm": 5500000
+          }
+        },
+        "stroke_nm": 120000,
+        "fill": "none"
+      }
+    },
+    {
+      "purpose": "silkscreen",
+      "graphic": {
+        "geometry": {
+          "type": "line",
+          "from": {
+            "x_nm": 5500000,
+            "y_nm": -1000000
+          },
+          "to": {
+            "x_nm": 1000000,
+            "y_nm": -1000000
+          }
+        },
+        "stroke_nm": 120000,
+        "fill": "none"
+      }
+    },
+    {
+      "purpose": "silkscreen",
+      "graphic": {
+        "geometry": {
+          "type": "line",
+          "from": {
+            "x_nm": 6750000,
+            "y_nm": 3000000
+          },
+          "to": {
+            "x_nm": 6750000,
+            "y_nm": 1500000
+          }
+        },
+        "stroke_nm": 120000,
+        "fill": "none"
+      }
+    }
+  ],
+  "reference": "pcbcraft-technical-1"
+}

@@ -1,0 +1,17 @@
+{"library":"ntc-sensor-sym","format":"pcbcraft-symbol/2","id":"pwr-flag","revision":2,"name":"PWR_FLAG","reference_prefix":"FLG","default_value":"PWR_FLAG","provenance":{"library_name":"NTC sensor v2 symbols (from KiCad)","license":"LicenseRef-Private"},"defaults":{"metadata":{"fields":{},"attributes":{"do_not_populate":false,"exclude_from_bom":true,"exclude_from_board":true,"exclude_from_simulation":false,"exclude_from_position_files":true}},"field_layout":{}}
+,
+  "terminals":[
+    {"id":"1","electrical_type":"power_out"}
+  ]
+  ,
+  "units":[
+    {"id":"main"
+    ,
+      "drawing":[
+        {"type":"polyline","points_nm":[[0,0],[0,-1270000],[-1016000,-1905000],[0,-2540000],[1016000,-1905000],[0,-1270000]]}
+      ]
+      ,
+      "pins":[
+        {"terminal":"1","at_nm":[0,0],"appearance":{"orientation":"up","length_nm":100000,"style":"line","show_name":false,"show_number":false,"name_height_nm":1270000,"number_height_nm":1270000}}
+      ]}
+  ]}

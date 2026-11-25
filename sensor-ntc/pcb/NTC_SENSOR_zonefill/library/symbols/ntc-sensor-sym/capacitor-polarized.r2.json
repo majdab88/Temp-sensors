@@ -1,0 +1,31 @@
+{"library":"ntc-sensor-sym","format":"pcbcraft-symbol/2","id":"capacitor-polarized","revision":2,"name":"EEU-FR0J102","reference_prefix":"C","default_value":"EEU-FR0J102","provenance":{"library_name":"NTC sensor v2 symbols (from KiCad)","license":"LicenseRef-Private"}
+,
+  "terminals":[
+    {"id":"1","name":"+","electrical_type":"passive"}
+    ,
+    {"id":"2","name":"-","electrical_type":"passive"}
+  ]
+  ,
+  "units":[
+    {"id":"main"
+    ,
+      "drawing":[
+        {"type":"polyline","points_nm":[[2540000,0],[5080000,0]]}
+        ,
+        {"type":"polyline","points_nm":[[4064000,-1778000],[4064000,-762000]]}
+        ,
+        {"type":"polyline","points_nm":[[4572000,-1270000],[3556000,-1270000]]}
+        ,
+        {"type":"rect","min_nm":[5080000,-2540000],"max_nm":[5842000,2540000]}
+        ,
+        {"type":"polyline","points_nm":[[7620000,-2540000],[7620000,2540000],[6858000,2540000],[6858000,-2540000],[7620000,-2540000]]}
+        ,
+        {"type":"polyline","points_nm":[[7620000,0],[10160000,0]]}
+      ]
+      ,
+      "pins":[
+        {"terminal":"1","at_nm":[0,0],"appearance":{"orientation":"right","length_nm":2540000,"style":"line","show_name":false,"show_number":true,"name_height_nm":1270000,"number_height_nm":1270000}}
+        ,
+        {"terminal":"2","at_nm":[12700000,0],"appearance":{"orientation":"left","length_nm":2540000,"style":"line","show_name":false,"show_number":true,"name_height_nm":1270000,"number_height_nm":1270000}}
+      ]}
+  ]}

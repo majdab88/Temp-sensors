@@ -1,0 +1,27 @@
+{"library":"ntc-sensor-sym","format":"pcbcraft-symbol/2","id":"inductor","revision":2,"name":"L","reference_prefix":"L","default_value":"L","provenance":{"library_name":"NTC sensor v2 symbols (from KiCad)","license":"LicenseRef-Private"}
+,
+  "terminals":[
+    {"id":"1","name":"1","electrical_type":"passive"}
+    ,
+    {"id":"2","name":"2","electrical_type":"passive"}
+  ]
+  ,
+  "units":[
+    {"id":"main"
+    ,
+      "drawing":[
+        {"type":"polyline","points_nm":[[0,-2540000],[242174,-2490889],[447267,-2353059],[584222,-2147381],[632300,-1905000],[584222,-1662619],[447267,-1456941],[242174,-1319111],[0,-1270000]]}
+        ,
+        {"type":"polyline","points_nm":[[0,-1270000],[242174,-1220889],[447267,-1083059],[584222,-877381],[632300,-635000],[584222,-392619],[447267,-186941],[242174,-49111],[0,0]]}
+        ,
+        {"type":"polyline","points_nm":[[0,0],[242174,49111],[447267,186941],[584222,392619],[632300,635000],[584222,877381],[447267,1083059],[242174,1220889],[0,1270000]]}
+        ,
+        {"type":"polyline","points_nm":[[0,1270000],[242174,1319111],[447267,1456941],[584222,1662619],[632300,1905000],[584222,2147381],[447267,2353059],[242174,2490889],[0,2540000]]}
+      ]
+      ,
+      "pins":[
+        {"terminal":"1","at_nm":[0,-3810000],"appearance":{"orientation":"down","length_nm":1270000,"style":"line","show_name":false,"show_number":false,"name_height_nm":1270000,"number_height_nm":1270000}}
+        ,
+        {"terminal":"2","at_nm":[0,3810000],"appearance":{"orientation":"up","length_nm":1270000,"style":"line","show_name":false,"show_number":false,"name_height_nm":1270000,"number_height_nm":1270000}}
+      ]}
+  ]}

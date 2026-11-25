@@ -1,0 +1,25 @@
+{"library":"ntc-sections","format":"pcbcraft-symbol/2","id":"section-frame-1","revision":1,"name":"Section frame 1","reference_prefix":"SEC","default_value":"Section","provenance":{"library_name":"NTC sensor v2 schematic section frames","license":"LicenseRef-Private"},"defaults":{"metadata":{"fields":{},"attributes":{"do_not_populate":true,"exclude_from_bom":true,"exclude_from_board":true,"exclude_from_simulation":true,"exclude_from_position_files":true}},"field_layout":{"reference":{"offset":null,"visible":false,"show_name":false,"rotation":0,"align":"middle","height_nm":1270000},"value":{"offset":null,"visible":false,"show_name":false,"rotation":0,"align":"middle","height_nm":1270000}}}
+,
+  "terminals":[
+    {"id":"1","electrical_type":"no_connect"}
+  ]
+  ,
+  "units":[
+    {"id":"main"
+    ,
+      "drawing":[
+        {"type":"rect","min_nm":[-33020000,0],"max_nm":[31750000,45720000]}
+        ,
+        {"type":"graphic","graphic":{"geometry":{"type":"text","at":{"x_nm":-2794000,"y_nm":3810000},"text":"Block 4 - NTC probe divider","height_nm":1270000,"rotation":0,"align":"middle"},"stroke_nm":158750,"fill":"none"}}
+        ,
+        {"type":"graphic","graphic":{"geometry":{"type":"text","at":{"x_nm":-2794000,"y_nm":5842000},"text":"3V3 -> R5 -> [NTC_ADC tap] -> probe -> [NTC_EN GND switch]","height_nm":1270000,"rotation":0,"align":"middle"},"stroke_nm":158750,"fill":"none"}}
+        ,
+        {"type":"graphic","graphic":{"geometry":{"type":"text","at":{"x_nm":11176000,"y_nm":39370000},"text":"WROOM GPIO22 (GND switch)","height_nm":1270000,"rotation":0,"align":"middle"},"stroke_nm":158750,"fill":"none"}}
+        ,
+        {"type":"graphic","graphic":{"geometry":{"type":"text","at":{"x_nm":3556000,"y_nm":20574000},"text":"WROOM GPIO1","height_nm":1270000,"rotation":0,"align":"middle"},"stroke_nm":158750,"fill":"none"}}
+      ]
+      ,
+      "pins":[
+        {"terminal":"1","at_nm":[0,0],"appearance":{"orientation":"down","length_nm":100000,"style":"line","show_name":false,"show_number":false,"name_height_nm":100000,"number_height_nm":100000}}
+      ]}
+  ]}

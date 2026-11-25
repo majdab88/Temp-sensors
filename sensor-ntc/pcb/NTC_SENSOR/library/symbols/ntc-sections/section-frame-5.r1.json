@@ -1,0 +1,19 @@
+{"library":"ntc-sections","format":"pcbcraft-symbol/2","id":"section-frame-5","revision":1,"name":"Section frame 5","reference_prefix":"SEC","default_value":"Section","provenance":{"library_name":"NTC sensor v2 schematic section frames","license":"LicenseRef-Private"},"defaults":{"metadata":{"fields":{},"attributes":{"do_not_populate":true,"exclude_from_bom":true,"exclude_from_board":true,"exclude_from_simulation":true,"exclude_from_position_files":true}},"field_layout":{"reference":{"offset":null,"visible":false,"show_name":false,"rotation":0,"align":"middle","height_nm":1270000},"value":{"offset":null,"visible":false,"show_name":false,"rotation":0,"align":"middle","height_nm":1270000}}}
+,
+  "terminals":[
+    {"id":"1","electrical_type":"no_connect"}
+  ]
+  ,
+  "units":[
+    {"id":"main"
+    ,
+      "drawing":[
+        {"type":"rect","min_nm":[-19050000,0],"max_nm":[19050000,27940000]}
+        ,
+        {"type":"graphic","graphic":{"geometry":{"type":"text","at":{"x_nm":-1778000,"y_nm":3048000},"text":"D0 input (button conditioning)","height_nm":1270000,"rotation":0,"align":"middle"},"stroke_nm":158750,"fill":"none"}}
+      ]
+      ,
+      "pins":[
+        {"terminal":"1","at_nm":[0,0],"appearance":{"orientation":"down","length_nm":100000,"style":"line","show_name":false,"show_number":false,"name_height_nm":100000,"number_height_nm":100000}}
+      ]}
+  ]}

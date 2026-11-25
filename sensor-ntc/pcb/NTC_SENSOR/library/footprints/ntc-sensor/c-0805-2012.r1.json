@@ -1,0 +1,92 @@
+{
+  "format": "pcbcraft-footprint/1",
+  "library": "ntc-sensor",
+  "id": "c-0805-2012",
+  "revision": 1,
+  "name": "Capacitor 0805 (2012 metric)",
+  "license": "LicenseRef-Private",
+  "source": {
+    "kind": "converted",
+    "reference": "KiCad footprint Capacitor_SMD:C_0805_2012Metric",
+    "locator": "Converted from NTC_SENSOR.kicad_pcb (as fabricated); pads, silkscreen and fab artwork copied"
+  },
+  "pads": [
+    {
+      "number": "1",
+      "center": {
+        "x_nm": -950000,
+        "y_nm": 0
+      },
+      "width_nm": 1000000,
+      "height_nm": 1450000,
+      "rotation": 0,
+      "shape": "rounded_rectangle",
+      "copper": "component_side",
+      "corner_radius_nm": 250000
+    },
+    {
+      "number": "2",
+      "center": {
+        "x_nm": 950000,
+        "y_nm": 0
+      },
+      "width_nm": 1000000,
+      "height_nm": 1450000,
+      "rotation": 0,
+      "shape": "rounded_rectangle",
+      "copper": "component_side",
+      "corner_radius_nm": 250000
+    }
+  ],
+  "graphics": [
+    {
+      "purpose": "courtyard",
+      "center": {
+        "x_nm": 0,
+        "y_nm": 0
+      },
+      "width_nm": 3400000,
+      "height_nm": 1960000,
+      "rotation": 0
+    }
+  ],
+  "artwork": [
+    {
+      "purpose": "silkscreen",
+      "graphic": {
+        "geometry": {
+          "type": "line",
+          "from": {
+            "x_nm": -261252,
+            "y_nm": 735000
+          },
+          "to": {
+            "x_nm": 261252,
+            "y_nm": 735000
+          }
+        },
+        "stroke_nm": 120000,
+        "fill": "none"
+      }
+    },
+    {
+      "purpose": "silkscreen",
+      "graphic": {
+        "geometry": {
+          "type": "line",
+          "from": {
+            "x_nm": -261252,
+            "y_nm": -735000
+          },
+          "to": {
+            "x_nm": 261252,
+            "y_nm": -735000
+          }
+        },
+        "stroke_nm": 120000,
+        "fill": "none"
+      }
+    }
+  ],
+  "reference": "pcbcraft-technical-1"
+}

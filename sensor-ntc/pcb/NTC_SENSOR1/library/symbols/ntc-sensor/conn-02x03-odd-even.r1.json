@@ -1,0 +1,37 @@
+{"library":"ntc-sensor","format":"pcbcraft-symbol/2","id":"conn-02x03-odd-even","revision":1,"name":"Connector 2x03 odd/even","reference_prefix":"J","default_value":"Conn_02x03","provenance":{"library_name":"NTC sensor v2 (from KiCad)","license":"LicenseRef-Private"}
+,
+  "terminals":[
+    {"id":"1","name":"Pin_1","electrical_type":"passive"}
+    ,
+    {"id":"2","name":"Pin_2","electrical_type":"passive"}
+    ,
+    {"id":"3","name":"Pin_3","electrical_type":"passive"}
+    ,
+    {"id":"4","name":"Pin_4","electrical_type":"passive"}
+    ,
+    {"id":"5","name":"Pin_5","electrical_type":"passive"}
+    ,
+    {"id":"6","name":"Pin_6","electrical_type":"passive"}
+  ]
+  ,
+  "units":[
+    {"id":"main"
+    ,
+      "drawing":[
+        {"type":"rect","min_nm":[-7620000,-5080000],"max_nm":[7620000,5080000]}
+      ]
+      ,
+      "pins":[
+        {"terminal":"1","at_nm":[-10160000,-2540000],"appearance":{"orientation":"right","length_nm":2540000,"style":"line","show_name":true,"show_number":true,"name_height_nm":750000,"number_height_nm":650000}}
+        ,
+        {"terminal":"2","at_nm":[-10160000,0],"appearance":{"orientation":"right","length_nm":2540000,"style":"line","show_name":true,"show_number":true,"name_height_nm":750000,"number_height_nm":650000}}
+        ,
+        {"terminal":"3","at_nm":[-10160000,2540000],"appearance":{"orientation":"right","length_nm":2540000,"style":"line","show_name":true,"show_number":true,"name_height_nm":750000,"number_height_nm":650000}}
+        ,
+        {"terminal":"4","at_nm":[10160000,-2540000],"appearance":{"orientation":"left","length_nm":2540000,"style":"line","show_name":true,"show_number":true,"name_height_nm":750000,"number_height_nm":650000}}
+        ,
+        {"terminal":"5","at_nm":[10160000,0],"appearance":{"orientation":"left","length_nm":2540000,"style":"line","show_name":true,"show_number":true,"name_height_nm":750000,"number_height_nm":650000}}
+        ,
+        {"terminal":"6","at_nm":[10160000,2540000],"appearance":{"orientation":"left","length_nm":2540000,"style":"line","show_name":true,"show_number":true,"name_height_nm":750000,"number_height_nm":650000}}
+      ]}
+  ]}

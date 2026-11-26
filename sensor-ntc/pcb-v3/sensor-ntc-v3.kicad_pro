@@ -249,6 +249,7 @@
     "layer_presets": [],
     "viewports": []
   },
+  "boards": [],
   "component_class_settings": {
     "assignments": [],
     "meta": {
@@ -314,7 +315,7 @@
       "version": 5
     },
     "net_colors": {},
-    "netclass_assignments": null,
+    "netclass_assignments": {},
     "netclass_patterns": [
       {
         "netclass": "Power",
@@ -343,12 +344,13 @@
     "legacy_lib_list": [],
     "top_level_sheets": [
       {
-        "filename": "sensor-wifi.kicad_sch",
-        "name": "sensor-wifi",
+        "filename": "sensor-ntc-v3.kicad_sch",
+        "name": "sensor-ntc-v3",
         "uuid": "00000000-0000-0000-0000-000000000000"
       }
     ]
   },
+  "sheets": [],
   "text_variables": {},
   "tuning_profiles": {
     "meta": {

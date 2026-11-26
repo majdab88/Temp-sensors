@@ -1,0 +1,8 @@
+(version 1)
+# J_BTN's GND pin (4) gets one back-side spoke: the LED+ / SW / LED- lanes leaving
+# the connector on B.Cu box it in. The front pour reaches it fully, and it carries
+# only the panel LED and button current. Accept one spoke there instead of
+# lowering the board-wide minimum.
+(rule "J_BTN GND: one back spoke"
+	(constraint min_resolved_spokes 1)
+	(condition "A.memberOfFootprint('J_BTN') || B.memberOfFootprint('J_BTN')"))

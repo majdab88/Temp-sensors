@@ -1,0 +1,4 @@
+(fp_lib_table
+	(version 7)
+	(lib (name "sensor-ntc-v3") (type "KiCad") (uri "${KIPRJMOD}/sensor-ntc-v3.pretty") (options "") (descr "sensor-ntc v3 project footprints"))
+)

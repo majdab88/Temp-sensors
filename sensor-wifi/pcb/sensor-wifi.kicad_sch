@@ -8676,7 +8676,34 @@
 				)
 			)
 		)
-	)
+	
+		(property "LCSC" "C165948"
+			(at 35.56 71.12 0)
+			(hide yes)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "MPN" "TYPE-C-31-M-12"
+			(at 35.56 71.12 0)
+			(hide yes)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Manufacturer" "Korean Hroparts Elec"
+			(at 35.56 71.12 0)
+			(hide yes)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		))
 	(symbol
 		(lib_id "Device:R")
 		(at 63.5 101.6 0)
@@ -8736,7 +8763,34 @@
 				)
 			)
 		)
-	)
+	
+		(property "LCSC" "C23186"
+			(at 63.5 101.6 0)
+			(hide yes)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "MPN" "0603WAF5101T5E"
+			(at 63.5 101.6 0)
+			(hide yes)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Manufacturer" "UNI-ROYAL(Uniroyal Elec)"
+			(at 63.5 101.6 0)
+			(hide yes)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		))
 	(symbol
 		(lib_id "Device:R")
 		(at 71.12 101.6 0)
@@ -8796,7 +8850,34 @@
 				)
 			)
 		)
-	)
+	
+		(property "LCSC" "C23186"
+			(at 71.12 101.6 0)
+			(hide yes)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "MPN" "0603WAF5101T5E"
+			(at 71.12 101.6 0)
+			(hide yes)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Manufacturer" "UNI-ROYAL(Uniroyal Elec)"
+			(at 71.12 101.6 0)
+			(hide yes)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		))
 	(symbol
 		(lib_id "Device:R")
 		(at 27.94 111.76 0)
@@ -8856,7 +8937,34 @@
 				)
 			)
 		)
-	)
+	
+		(property "LCSC" "C22935"
+			(at 27.94 111.76 0)
+			(hide yes)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "MPN" "0603WAF1004T5E"
+			(at 27.94 111.76 0)
+			(hide yes)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Manufacturer" "UNI-ROYAL(Uniroyal Elec)"
+			(at 27.94 111.76 0)
+			(hide yes)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		))
 	(symbol
 		(lib_id "Device:C")
 		(at 38.1 111.76 0)
@@ -8918,7 +9026,34 @@
 				)
 			)
 		)
-	)
+	
+		(property "LCSC" "C53987"
+			(at 38.1 111.76 0)
+			(hide yes)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "MPN" "0603B472K500NT"
+			(at 38.1 111.76 0)
+			(hide yes)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Manufacturer" "FH (Guangdong Fenghua Advanced Tech)"
+			(at 38.1 111.76 0)
+			(hide yes)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		))
 	(symbol
 		(lib_id "Device:Polyfuse")
 		(at 81.28 45.72 90)
@@ -8978,7 +9113,34 @@
 				)
 			)
 		)
-	)
+	
+		(property "LCSC" "C21714343"
+			(at 81.28 45.72 0)
+			(hide yes)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "MPN" "BSMD1206-110-30V"
+			(at 81.28 45.72 0)
+			(hide yes)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Manufacturer" "BHFUSE"
+			(at 81.28 45.72 0)
+			(hide yes)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		))
 	(symbol
 		(lib_id "Diode:SMF5V0A")
 		(at 83.82 60.96 90)
@@ -9038,7 +9200,34 @@
 				)
 			)
 		)
-	)
+	
+		(property "LCSC" "C19077497"
+			(at 83.82 60.96 0)
+			(hide yes)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "MPN" "SMF5.0A"
+			(at 83.82 60.96 0)
+			(hide yes)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Manufacturer" "hongjiacheng"
+			(at 83.82 60.96 0)
+			(hide yes)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		))
 	(symbol
 		(lib_id "Device:C")
 		(at 93.98 60.96 0)
@@ -9056,7 +9245,7 @@
 				(justify left)
 			)
 		)
-		(property "Value" "10uF 16V"
+		(property "Value" "10uF"
 			(at 94.615 63.5 0)
 			(effects
 				(font
@@ -9100,7 +9289,34 @@
 				)
 			)
 		)
-	)
+	
+		(property "LCSC" "C15850"
+			(at 93.98 60.96 0)
+			(hide yes)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "MPN" "CL21A106KAYNNNE"
+			(at 93.98 60.96 0)
+			(hide yes)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Manufacturer" "Samsung Electro-Mechanics"
+			(at 93.98 60.96 0)
+			(hide yes)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		))
 	(symbol
 		(lib_id "Battery_Management:BQ24074RGT")
 		(at 149.86 68.58 0)
@@ -9162,7 +9378,34 @@
 				)
 			)
 		)
-	)
+	
+		(property "LCSC" "C54313"
+			(at 149.86 68.58 0)
+			(hide yes)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "MPN" "BQ24074RGTR"
+			(at 149.86 68.58 0)
+			(hide yes)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Manufacturer" "Texas Instruments"
+			(at 149.86 68.58 0)
+			(hide yes)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		))
 	(symbol
 		(lib_id "Device:C")
 		(at 119.38 93.98 0)
@@ -9180,7 +9423,7 @@
 				(justify left)
 			)
 		)
-		(property "Value" "1uF 16V"
+		(property "Value" "1uF"
 			(at 120.015 96.52 0)
 			(effects
 				(font
@@ -9224,7 +9467,34 @@
 				)
 			)
 		)
-	)
+	
+		(property "LCSC" "C15849"
+			(at 119.38 93.98 0)
+			(hide yes)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "MPN" "CL10A105KB8NNNC"
+			(at 119.38 93.98 0)
+			(hide yes)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Manufacturer" "Samsung Electro-Mechanics"
+			(at 119.38 93.98 0)
+			(hide yes)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		))
 	(symbol
 		(lib_id "Device:R")
 		(at 127 104.14 0)
@@ -9284,7 +9554,34 @@
 				)
 			)
 		)
-	)
+	
+		(property "LCSC" "C22843"
+			(at 127 104.14 0)
+			(hide yes)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "MPN" "0603WAF1501T5E"
+			(at 127 104.14 0)
+			(hide yes)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Manufacturer" "UNI-ROYAL(Uniroyal Elec)"
+			(at 127 104.14 0)
+			(hide yes)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		))
 	(symbol
 		(lib_id "Device:R")
 		(at 137.16 104.14 0)
@@ -9344,7 +9641,34 @@
 				)
 			)
 		)
-	)
+	
+		(property "LCSC" "C4177"
+			(at 137.16 104.14 0)
+			(hide yes)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "MPN" "0603WAF1801T5E"
+			(at 137.16 104.14 0)
+			(hide yes)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Manufacturer" "UNI-ROYAL(Uniroyal Elec)"
+			(at 137.16 104.14 0)
+			(hide yes)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		))
 	(symbol
 		(lib_id "Device:R")
 		(at 147.32 104.14 0)
@@ -9404,7 +9728,34 @@
 				)
 			)
 		)
-	)
+	
+		(property "LCSC" "C23231"
+			(at 147.32 104.14 0)
+			(hide yes)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "MPN" "0603WAF6802T5E"
+			(at 147.32 104.14 0)
+			(hide yes)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Manufacturer" "UNI-ROYAL(Uniroyal Elec)"
+			(at 147.32 104.14 0)
+			(hide yes)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		))
 	(symbol
 		(lib_id "Device:R")
 		(at 157.48 104.14 0)
@@ -9481,7 +9832,7 @@
 				)
 			)
 		)
-		(property "Value" "10k NTC"
+		(property "Value" "10k NTC B3435"
 			(at 170.815 104.14 90)
 			(effects
 				(font
@@ -9524,7 +9875,34 @@
 				)
 			)
 		)
-	)
+	
+		(property "LCSC" "C13564"
+			(at 167.64 104.14 0)
+			(hide yes)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "MPN" "NCP18XH103F03RB"
+			(at 167.64 104.14 0)
+			(hide yes)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Manufacturer" "Murata Electronics"
+			(at 167.64 104.14 0)
+			(hide yes)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		))
 	(symbol
 		(lib_id "Device:C")
 		(at 182.88 93.98 0)
@@ -9542,7 +9920,7 @@
 				(justify left)
 			)
 		)
-		(property "Value" "10uF 10V"
+		(property "Value" "10uF"
 			(at 183.515 96.52 0)
 			(effects
 				(font
@@ -9586,7 +9964,34 @@
 				)
 			)
 		)
-	)
+	
+		(property "LCSC" "C15850"
+			(at 182.88 93.98 0)
+			(hide yes)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "MPN" "CL21A106KAYNNNE"
+			(at 182.88 93.98 0)
+			(hide yes)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Manufacturer" "Samsung Electro-Mechanics"
+			(at 182.88 93.98 0)
+			(hide yes)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		))
 	(symbol
 		(lib_id "Device:C")
 		(at 193.04 93.98 0)
@@ -9604,7 +10009,7 @@
 				(justify left)
 			)
 		)
-		(property "Value" "10uF 10V"
+		(property "Value" "10uF"
 			(at 193.675 96.52 0)
 			(effects
 				(font
@@ -9648,7 +10053,34 @@
 				)
 			)
 		)
-	)
+	
+		(property "LCSC" "C15850"
+			(at 193.04 93.98 0)
+			(hide yes)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "MPN" "CL21A106KAYNNNE"
+			(at 193.04 93.98 0)
+			(hide yes)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Manufacturer" "Samsung Electro-Mechanics"
+			(at 193.04 93.98 0)
+			(hide yes)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		))
 	(symbol
 		(lib_id "Device:R")
 		(at 177.8 38.1 0)
@@ -9708,7 +10140,34 @@
 				)
 			)
 		)
-	)
+	
+		(property "LCSC" "C25803"
+			(at 177.8 38.1 0)
+			(hide yes)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "MPN" "0603WAF1003T5E"
+			(at 177.8 38.1 0)
+			(hide yes)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Manufacturer" "UNI-ROYAL(Uniroyal Elec)"
+			(at 177.8 38.1 0)
+			(hide yes)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		))
 	(symbol
 		(lib_id "Device:R")
 		(at 187.96 38.1 0)
@@ -9768,7 +10227,34 @@
 				)
 			)
 		)
-	)
+	
+		(property "LCSC" "C25803"
+			(at 187.96 38.1 0)
+			(hide yes)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "MPN" "0603WAF1003T5E"
+			(at 187.96 38.1 0)
+			(hide yes)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Manufacturer" "UNI-ROYAL(Uniroyal Elec)"
+			(at 187.96 38.1 0)
+			(hide yes)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		))
 	(symbol
 		(lib_id "Device:Battery_Cell")
 		(at 30.48 167.64 0)
@@ -9917,7 +10403,34 @@
 				)
 			)
 		)
-	)
+	
+		(property "LCSC" "C354897"
+			(at 48.26 149.86 0)
+			(hide yes)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "MPN" "1206T3A63V"
+			(at 48.26 149.86 0)
+			(hide yes)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Manufacturer" "Walter Elec"
+			(at 48.26 149.86 0)
+			(hide yes)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		))
 	(symbol
 		(lib_id "Transistor_FET:Q_PMOS_GSD")
 		(at 71.12 149.86 0)
@@ -9935,7 +10448,7 @@
 				(justify left)
 			)
 		)
-		(property "Value" "DMG2305UX"
+		(property "Value" "AO3401A"
 			(at 76.2 149.86 0)
 			(effects
 				(font
@@ -9979,7 +10492,34 @@
 				)
 			)
 		)
-	)
+	
+		(property "LCSC" "C15127"
+			(at 71.12 149.86 0)
+			(hide yes)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "MPN" "AO3401A"
+			(at 71.12 149.86 0)
+			(hide yes)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Manufacturer" "Alpha & Omega Semicon"
+			(at 71.12 149.86 0)
+			(hide yes)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		))
 	(symbol
 		(lib_id "Device:R")
 		(at 66.04 180.34 0)
@@ -10039,7 +10579,34 @@
 				)
 			)
 		)
-	)
+	
+		(property "LCSC" "C25804"
+			(at 66.04 180.34 0)
+			(hide yes)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "MPN" "0603WAF1002T5E"
+			(at 66.04 180.34 0)
+			(hide yes)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Manufacturer" "UNI-ROYAL(Uniroyal Elec)"
+			(at 66.04 180.34 0)
+			(hide yes)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		))
 	(symbol
 		(lib_id "Device:R")
 		(at 76.2 180.34 0)
@@ -10099,7 +10666,34 @@
 				)
 			)
 		)
-	)
+	
+		(property "LCSC" "C22935"
+			(at 76.2 180.34 0)
+			(hide yes)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "MPN" "0603WAF1004T5E"
+			(at 76.2 180.34 0)
+			(hide yes)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Manufacturer" "UNI-ROYAL(Uniroyal Elec)"
+			(at 76.2 180.34 0)
+			(hide yes)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		))
 	(symbol
 		(lib_id "Device:D_Schottky")
 		(at 96.52 149.86 0)
@@ -10117,7 +10711,7 @@
 				)
 			)
 		)
-		(property "Value" "RB751S40"
+		(property "Value" "RB751S-40"
 			(at 96.52 152.4 0)
 			(effects
 				(font
@@ -10160,7 +10754,34 @@
 				)
 			)
 		)
-	)
+	
+		(property "LCSC" "C7502700"
+			(at 96.52 149.86 0)
+			(hide yes)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "MPN" "RB751S-40"
+			(at 96.52 149.86 0)
+			(hide yes)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Manufacturer" "hongjiacheng"
+			(at 96.52 149.86 0)
+			(hide yes)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		))
 	(symbol
 		(lib_id "Device:R")
 		(at 109.22 149.86 90)
@@ -10220,7 +10841,34 @@
 				)
 			)
 		)
-	)
+	
+		(property "LCSC" "C23138"
+			(at 109.22 149.86 0)
+			(hide yes)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "MPN" "0603WAF3300T5E"
+			(at 109.22 149.86 0)
+			(hide yes)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Manufacturer" "UNI-ROYAL(Uniroyal Elec)"
+			(at 109.22 149.86 0)
+			(hide yes)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		))
 	(symbol
 		(lib_id "Device:C")
 		(at 119.38 177.8 0)
@@ -10282,7 +10930,34 @@
 				)
 			)
 		)
-	)
+	
+		(property "LCSC" "C14663"
+			(at 119.38 177.8 0)
+			(hide yes)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "MPN" "CC0603KRX7R9BB104"
+			(at 119.38 177.8 0)
+			(hide yes)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Manufacturer" "YAGEO"
+			(at 119.38 177.8 0)
+			(hide yes)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		))
 	(symbol
 		(lib_id "Battery_Management:DW01A")
 		(at 137.16 162.56 0)
@@ -10342,7 +11017,34 @@
 				)
 			)
 		)
-	)
+	
+		(property "LCSC" "C351410"
+			(at 137.16 162.56 0)
+			(hide yes)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "MPN" "DW01A"
+			(at 137.16 162.56 0)
+			(hide yes)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Manufacturer" "PUOLOP"
+			(at 137.16 162.56 0)
+			(hide yes)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		))
 	(symbol
 		(lib_id "Device:R")
 		(at 154.94 182.88 0)
@@ -10402,7 +11104,34 @@
 				)
 			)
 		)
-	)
+	
+		(property "LCSC" "C21190"
+			(at 154.94 182.88 0)
+			(hide yes)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "MPN" "0603WAF1001T5E"
+			(at 154.94 182.88 0)
+			(hide yes)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Manufacturer" "UNI-ROYAL(Uniroyal Elec)"
+			(at 154.94 182.88 0)
+			(hide yes)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		))
 	(symbol
 		(lib_id "Device:R")
 		(at 165.1 182.88 0)
@@ -10462,7 +11191,34 @@
 				)
 			)
 		)
-	)
+	
+		(property "LCSC" "C22935"
+			(at 165.1 182.88 0)
+			(hide yes)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "MPN" "0603WAF1004T5E"
+			(at 165.1 182.88 0)
+			(hide yes)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Manufacturer" "UNI-ROYAL(Uniroyal Elec)"
+			(at 165.1 182.88 0)
+			(hide yes)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		))
 	(symbol
 		(lib_id "sensor-wifi:FS8205A")
 		(at 185.42 162.56 0)
@@ -10479,7 +11235,7 @@
 				)
 			)
 		)
-		(property "Value" "FS8205A"
+		(property "Value" "8205A"
 			(at 185.42 168.91 0)
 			(effects
 				(font
@@ -10522,7 +11278,34 @@
 				)
 			)
 		)
-	)
+	
+		(property "LCSC" "C5148694"
+			(at 185.42 162.56 0)
+			(hide yes)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "MPN" "8205A"
+			(at 185.42 162.56 0)
+			(hide yes)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Manufacturer" "HXY MOSFET"
+			(at 185.42 162.56 0)
+			(hide yes)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		))
 	(symbol
 		(lib_id "Device:R")
 		(at 215.9 152.4 0)
@@ -10582,7 +11365,34 @@
 				)
 			)
 		)
-	)
+	
+		(property "LCSC" "C25803"
+			(at 215.9 152.4 0)
+			(hide yes)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "MPN" "0603WAF1003T5E"
+			(at 215.9 152.4 0)
+			(hide yes)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Manufacturer" "UNI-ROYAL(Uniroyal Elec)"
+			(at 215.9 152.4 0)
+			(hide yes)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		))
 	(symbol
 		(lib_id "Device:R")
 		(at 215.9 172.72 0)
@@ -10642,7 +11452,34 @@
 				)
 			)
 		)
-	)
+	
+		(property "LCSC" "C25803"
+			(at 215.9 172.72 0)
+			(hide yes)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "MPN" "0603WAF1003T5E"
+			(at 215.9 172.72 0)
+			(hide yes)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Manufacturer" "UNI-ROYAL(Uniroyal Elec)"
+			(at 215.9 172.72 0)
+			(hide yes)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		))
 	(symbol
 		(lib_id "Device:C")
 		(at 226.06 172.72 0)
@@ -10704,7 +11541,34 @@
 				)
 			)
 		)
-	)
+	
+		(property "LCSC" "C57112"
+			(at 226.06 172.72 0)
+			(hide yes)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "MPN" "0603B103K500NT"
+			(at 226.06 172.72 0)
+			(hide yes)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Manufacturer" "FH (Guangdong Fenghua Advanced Tech)"
+			(at 226.06 172.72 0)
+			(hide yes)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		))
 	(symbol
 		(lib_id "sensor-wifi:TPS63802DLAR")
 		(at 248.92 63.5 0)
@@ -10865,7 +11729,34 @@
 				)
 			)
 		)
-	)
+	
+		(property "LCSC" "C2845237"
+			(at 248.92 63.5 0)
+			(hide yes)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "MPN" "TPS63802DLAR"
+			(at 248.92 63.5 0)
+			(hide yes)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Manufacturer" "Texas Instruments"
+			(at 248.92 63.5 0)
+			(hide yes)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		))
 	(symbol
 		(lib_id "Device:L")
 		(at 248.92 33.02 90)
@@ -10925,7 +11816,34 @@
 				)
 			)
 		)
-	)
+	
+		(property "LCSC" "C167745"
+			(at 248.92 33.02 0)
+			(hide yes)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "MPN" "FNR3015S1R5MT"
+			(at 248.92 33.02 0)
+			(hide yes)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Manufacturer" "cjiang (Changjiang Microelectronics Tech)"
+			(at 248.92 33.02 0)
+			(hide yes)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		))
 	(symbol
 		(lib_id "Device:C")
 		(at 220.98 83.82 0)
@@ -10943,7 +11861,7 @@
 				(justify left)
 			)
 		)
-		(property "Value" "10uF 10V"
+		(property "Value" "10uF"
 			(at 221.615 86.36 0)
 			(effects
 				(font
@@ -10987,7 +11905,34 @@
 				)
 			)
 		)
-	)
+	
+		(property "LCSC" "C15850"
+			(at 220.98 83.82 0)
+			(hide yes)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "MPN" "CL21A106KAYNNNE"
+			(at 220.98 83.82 0)
+			(hide yes)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Manufacturer" "Samsung Electro-Mechanics"
+			(at 220.98 83.82 0)
+			(hide yes)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		))
 	(symbol
 		(lib_id "Device:C")
 		(at 274.32 83.82 0)
@@ -11005,7 +11950,7 @@
 				(justify left)
 			)
 		)
-		(property "Value" "22uF 10V"
+		(property "Value" "22uF"
 			(at 274.955 86.36 0)
 			(effects
 				(font
@@ -11014,7 +11959,7 @@
 				(justify left)
 			)
 		)
-		(property "Footprint" "Capacitor_SMD:C_1210_3225Metric"
+		(property "Footprint" "Capacitor_SMD:C_1206_3216Metric"
 			(at 274.32 83.82 0)
 			(hide yes)
 			(effects
@@ -11049,7 +11994,34 @@
 				)
 			)
 		)
-	)
+	
+		(property "LCSC" "C12891"
+			(at 274.32 83.82 0)
+			(hide yes)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "MPN" "CL31A226KAHNNNE"
+			(at 274.32 83.82 0)
+			(hide yes)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Manufacturer" "Samsung Electro-Mechanics"
+			(at 274.32 83.82 0)
+			(hide yes)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		))
 	(symbol
 		(lib_id "Device:C")
 		(at 284.48 83.82 0)
@@ -11076,7 +12048,7 @@
 				(justify left)
 			)
 		)
-		(property "Footprint" "Capacitor_SMD:C_1210_3225Metric"
+		(property "Footprint" "Capacitor_SMD:C_1206_3216Metric"
 			(at 284.48 83.82 0)
 			(hide yes)
 			(effects
@@ -11111,7 +12083,34 @@
 				)
 			)
 		)
-	)
+	
+		(property "LCSC" "C15008"
+			(at 284.48 83.82 0)
+			(hide yes)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "MPN" "CL31A107MQHNNNE"
+			(at 284.48 83.82 0)
+			(hide yes)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Manufacturer" "Samsung Electro-Mechanics"
+			(at 284.48 83.82 0)
+			(hide yes)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		))
 	(symbol
 		(lib_id "Device:R")
 		(at 271.78 104.14 0)
@@ -11171,7 +12170,34 @@
 				)
 			)
 		)
-	)
+	
+		(property "LCSC" "C23203"
+			(at 271.78 104.14 0)
+			(hide yes)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "MPN" "0603WAF5603T5E"
+			(at 271.78 104.14 0)
+			(hide yes)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Manufacturer" "UNI-ROYAL(Uniroyal Elec)"
+			(at 271.78 104.14 0)
+			(hide yes)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		))
 	(symbol
 		(lib_id "Device:R")
 		(at 271.78 119.38 0)
@@ -11231,7 +12257,34 @@
 				)
 			)
 		)
-	)
+	
+		(property "LCSC" "C25803"
+			(at 271.78 119.38 0)
+			(hide yes)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "MPN" "0603WAF1003T5E"
+			(at 271.78 119.38 0)
+			(hide yes)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Manufacturer" "UNI-ROYAL(Uniroyal Elec)"
+			(at 271.78 119.38 0)
+			(hide yes)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		))
 	(symbol
 		(lib_id "Device:C")
 		(at 312.42 50.8 0)
@@ -11249,7 +12302,7 @@
 				(justify left)
 			)
 		)
-		(property "Value" "10uF 10V"
+		(property "Value" "10uF"
 			(at 313.055 53.34 0)
 			(effects
 				(font
@@ -11293,7 +12346,34 @@
 				)
 			)
 		)
-	)
+	
+		(property "LCSC" "C15850"
+			(at 312.42 50.8 0)
+			(hide yes)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "MPN" "CL21A106KAYNNNE"
+			(at 312.42 50.8 0)
+			(hide yes)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Manufacturer" "Samsung Electro-Mechanics"
+			(at 312.42 50.8 0)
+			(hide yes)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		))
 	(symbol
 		(lib_id "Device:C")
 		(at 320.04 50.8 0)
@@ -11355,7 +12435,34 @@
 				)
 			)
 		)
-	)
+	
+		(property "LCSC" "C14663"
+			(at 320.04 50.8 0)
+			(hide yes)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "MPN" "CC0603KRX7R9BB104"
+			(at 320.04 50.8 0)
+			(hide yes)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Manufacturer" "YAGEO"
+			(at 320.04 50.8 0)
+			(hide yes)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		))
 	(symbol
 		(lib_id "Device:R")
 		(at 302.26 173.99 0)
@@ -11415,7 +12522,34 @@
 				)
 			)
 		)
-	)
+	
+		(property "LCSC" "C25804"
+			(at 302.26 173.99 0)
+			(hide yes)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "MPN" "0603WAF1002T5E"
+			(at 302.26 173.99 0)
+			(hide yes)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Manufacturer" "UNI-ROYAL(Uniroyal Elec)"
+			(at 302.26 173.99 0)
+			(hide yes)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		))
 	(symbol
 		(lib_id "Device:C")
 		(at 309.88 181.61 0)
@@ -11477,7 +12611,34 @@
 				)
 			)
 		)
-	)
+	
+		(property "LCSC" "C15849"
+			(at 309.88 181.61 0)
+			(hide yes)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "MPN" "CL10A105KB8NNNC"
+			(at 309.88 181.61 0)
+			(hide yes)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Manufacturer" "Samsung Electro-Mechanics"
+			(at 309.88 181.61 0)
+			(hide yes)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		))
 	(symbol
 		(lib_id "Switch:SW_Push")
 		(at 320.04 194.31 90)
@@ -11598,7 +12759,34 @@
 				)
 			)
 		)
-	)
+	
+		(property "LCSC" "C25804"
+			(at 332.74 181.61 0)
+			(hide yes)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "MPN" "0603WAF1002T5E"
+			(at 332.74 181.61 0)
+			(hide yes)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Manufacturer" "UNI-ROYAL(Uniroyal Elec)"
+			(at 332.74 181.61 0)
+			(hide yes)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		))
 	(symbol
 		(lib_id "Device:R")
 		(at 342.9 181.61 0)
@@ -11658,7 +12846,34 @@
 				)
 			)
 		)
-	)
+	
+		(property "LCSC" "C25804"
+			(at 342.9 181.61 0)
+			(hide yes)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "MPN" "0603WAF1002T5E"
+			(at 342.9 181.61 0)
+			(hide yes)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Manufacturer" "UNI-ROYAL(Uniroyal Elec)"
+			(at 342.9 181.61 0)
+			(hide yes)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		))
 	(symbol
 		(lib_id "Device:Crystal")
 		(at 389.89 137.16 0)
@@ -11718,7 +12933,34 @@
 				)
 			)
 		)
-	)
+	
+		(property "LCSC" "C32346"
+			(at 389.89 137.16 0)
+			(hide yes)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "MPN" "Q13FC13500004"
+			(at 389.89 137.16 0)
+			(hide yes)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Manufacturer" "Seiko Epson"
+			(at 389.89 137.16 0)
+			(hide yes)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		))
 	(symbol
 		(lib_id "Device:C")
 		(at 382.27 149.86 0)
@@ -11780,7 +13022,34 @@
 				)
 			)
 		)
-	)
+	
+		(property "LCSC" "C38523"
+			(at 382.27 149.86 0)
+			(hide yes)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "MPN" "CL10C120JB8NNNC"
+			(at 382.27 149.86 0)
+			(hide yes)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Manufacturer" "Samsung Electro-Mechanics"
+			(at 382.27 149.86 0)
+			(hide yes)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		))
 	(symbol
 		(lib_id "Device:C")
 		(at 397.51 149.86 0)
@@ -11842,7 +13111,34 @@
 				)
 			)
 		)
-	)
+	
+		(property "LCSC" "C38523"
+			(at 397.51 149.86 0)
+			(hide yes)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "MPN" "CL10C120JB8NNNC"
+			(at 397.51 149.86 0)
+			(hide yes)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Manufacturer" "Samsung Electro-Mechanics"
+			(at 397.51 149.86 0)
+			(hide yes)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		))
 	(symbol
 		(lib_id "Device:R")
 		(at 149.86 220.98 0)
@@ -11902,7 +13198,34 @@
 				)
 			)
 		)
-	)
+	
+		(property "LCSC" "C21190"
+			(at 149.86 220.98 0)
+			(hide yes)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "MPN" "0603WAF1001T5E"
+			(at 149.86 220.98 0)
+			(hide yes)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Manufacturer" "UNI-ROYAL(Uniroyal Elec)"
+			(at 149.86 220.98 0)
+			(hide yes)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		))
 	(symbol
 		(lib_id "Device:LED")
 		(at 149.86 236.22 90)
@@ -11971,7 +13294,34 @@
 				)
 			)
 		)
-	)
+	
+		(property "LCSC" "C2286"
+			(at 149.86 236.22 0)
+			(hide yes)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "MPN" "KT-0603R"
+			(at 149.86 236.22 0)
+			(hide yes)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Manufacturer" "Hubei KENTO Elec"
+			(at 149.86 236.22 0)
+			(hide yes)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		))
 	(symbol
 		(lib_id "Device:R")
 		(at 172.72 215.9 0)
@@ -12031,7 +13381,34 @@
 				)
 			)
 		)
-	)
+	
+		(property "LCSC" "C25804"
+			(at 172.72 215.9 0)
+			(hide yes)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "MPN" "0603WAF1002T5E"
+			(at 172.72 215.9 0)
+			(hide yes)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Manufacturer" "UNI-ROYAL(Uniroyal Elec)"
+			(at 172.72 215.9 0)
+			(hide yes)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		))
 	(symbol
 		(lib_id "Device:C")
 		(at 182.88 231.14 0)
@@ -12093,7 +13470,34 @@
 				)
 			)
 		)
-	)
+	
+		(property "LCSC" "C14663"
+			(at 182.88 231.14 0)
+			(hide yes)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "MPN" "CC0603KRX7R9BB104"
+			(at 182.88 231.14 0)
+			(hide yes)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Manufacturer" "YAGEO"
+			(at 182.88 231.14 0)
+			(hide yes)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		))
 	(symbol
 		(lib_id "Switch:SW_Push")
 		(at 172.72 238.76 90)
@@ -12274,7 +13678,34 @@
 				)
 			)
 		)
-	)
+	
+		(property "LCSC" "C960019"
+			(at 238.76 210.82 0)
+			(hide yes)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "MPN" "BSMD0805-005-60V"
+			(at 238.76 210.82 0)
+			(hide yes)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Manufacturer" "BHFUSE"
+			(at 238.76 210.82 0)
+			(hide yes)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		))
 	(symbol
 		(lib_id "Connector:Screw_Terminal_01x02")
 		(at 261.62 223.52 0)
@@ -12351,7 +13782,7 @@
 				)
 			)
 		)
-		(property "Value" "10k 0.1% 25ppm"
+		(property "Value" "10k 1%"
 			(at 281.94 241.3 90)
 			(effects
 				(font
@@ -12394,7 +13825,34 @@
 				)
 			)
 		)
-	)
+	
+		(property "LCSC" "C25804"
+			(at 281.94 241.3 0)
+			(hide yes)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "MPN" "0603WAF1002T5E"
+			(at 281.94 241.3 0)
+			(hide yes)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Manufacturer" "UNI-ROYAL(Uniroyal Elec)"
+			(at 281.94 241.3 0)
+			(hide yes)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		))
 	(symbol
 		(lib_id "Device:C")
 		(at 294.64 241.3 0)
@@ -12456,7 +13914,34 @@
 				)
 			)
 		)
-	)
+	
+		(property "LCSC" "C14663"
+			(at 294.64 241.3 0)
+			(hide yes)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "MPN" "CC0603KRX7R9BB104"
+			(at 294.64 241.3 0)
+			(hide yes)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Manufacturer" "YAGEO"
+			(at 294.64 241.3 0)
+			(hide yes)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		))
 	(symbol
 		(lib_id "Device:D_TVS")
 		(at 304.8 241.3 90)
@@ -12473,7 +13958,7 @@
 				)
 			)
 		)
-		(property "Value" "PESD5V0S1BL"
+		(property "Value" "H5VLD3B"
 			(at 307.34 241.3 0)
 			(effects
 				(font
@@ -12516,7 +14001,34 @@
 				)
 			)
 		)
-	)
+	
+		(property "LCSC" "C20615805"
+			(at 304.8 241.3 0)
+			(hide yes)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "MPN" "H5VLD3B"
+			(at 304.8 241.3 0)
+			(hide yes)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Manufacturer" "hongjiacheng"
+			(at 304.8 241.3 0)
+			(hide yes)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		))
 	(symbol
 		(lib_id "power:PWR_FLAG")
 		(at 101.6 35.56 0)
@@ -15500,7 +17012,34 @@
 				)
 			)
 		)
-	)
+	
+		(property "LCSC" "C20627095"
+			(at 345.44 116.84 0)
+			(hide yes)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "MPN" "ESP32-C6-MINI-1U-H4"
+			(at 345.44 116.84 0)
+			(hide yes)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Manufacturer" "Espressif Systems"
+			(at 345.44 116.84 0)
+			(hide yes)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		))
 	(symbol
 		(lib_id "power:+3V3")
 		(at 345.44 91.44 0)

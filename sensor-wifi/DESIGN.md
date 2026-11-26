@@ -291,17 +291,41 @@ part. Project libraries live beside it, so the design opens on any machine:
     still point at absolute paths on the dev machine, as in v2.
 
 ERC is clean, and an exported netlist matched the intended 44 nets exactly.
-Values marked for checking against datasheets before layout:
 
-| Ref | Value | Check |
+**JLCPCB parts (2026-11-26).** Every SMD part carries `LCSC`, `MPN` and
+`Manufacturer` fields, Basic or Preferred wherever JLCPCB has one: 20 Basic and
+4 Preferred part numbers. The 11 Extended ones have no Basic equivalent: U1, U2
+(BQ24074), U3 (DW01A), U4 (TPS63802), Q2, L1, J1 (USB-C), F1–F3 and RT1.
+Changes made for it:
+
+| Ref | Was | Now | Why |
+|---|---|---|---|
+| Q1 | DMG2305UX | **AO3401A** (C15127, Basic) | Same SOT-23 pinout (1 G, 2 S, 3 D); −30 V, ±12 V gate, 85 mΩ at −2.5 V |
+| Q2 | FS8205A | **8205A** HXY (C5148694), TSSOP-8 | JLCPCB stocks the FS8205A only in SOT-23-6 |
+| D5 | PESD5V0S1BL | **H5VLD3B** (C20615805, Preferred), SOD-323 | Every stocked PESD5V0S1BL is DFN1006/SOD-882; 5 V bidirectional, 15 pF, 50 nA |
+| D2 | RB751S40 | RB751S-40 (C7502700, Preferred) | Same part, SOD-523 |
+| C9, C10 | 22 µF / 100 µF 1210 | **1206** (C12891 / C15008, Basic) | Same pad centres (±1.475 mm), so the routing stands |
+| R24 | 10 k 0.1 % 25 ppm | **10 k 1 %** (C25804, Basic) | No Basic 0.1 % part. The board sits indoors at room temperature, and r_series is calibrated per sensor. Back to C95204 (0.1 %, Extended) if that is not good enough |
+| RT1 | 10 k NTC | Murata NCP18XH103F03RB (C13564) | B25/85 3434: matches the 103AT the charger's TS window is specified for |
+| L1 | TDK VLS3015CX-1R5M-H | cjiang FNR3015S1R5MT (C167745) | As sensor-ntc v3; the TDK part is not stocked |
+
+Values checked against the BQ24074 datasheet (SLUS810N):
+
+| Ref | Value | Result |
 |---|---|---|
-| R4 | 1.5 k (ILIM ≈ 1 A) | K_ILIM in the BQ24074 datasheet |
-| R5 | 1.8 k (ISET ≈ 0.5 A) | K_ISET |
-| R6 | 68 k (TMR) | Safety timer must exceed the ~7 h a 3.5 Ah cell takes at 0.5 A; check K_TMR and the allowed range |
-| R7 | DNP | ITERM left open for the default termination current; confirm that is what open means on the BQ24074 |
-| Q2 | FS8205A, TSSOP-8 | Pinout (1,8 D; 2,3 S1; 4 G1; 5 G2; 6,7 S2) against the purchased part |
-| BT1 | Keystone 1042 footprint | Must take 65 mm flat-top **and** 70 mm button-top cells; swap for a holder that does |
-| L1 | TDK VLS3015CX-1R5M-H | Same inductor as v2 (the earlier MLP2520 note was wrong) |
+| R4 | 1.5 k | I_IN = K_ILIM / R_ILIM, K_ILIM 1500–1720 AΩ (typ 1610) → **1.0–1.15 A**. Range 1.1–8 kΩ; EN2 = HI, EN1 = LO selects it. OK |
+| R5 | 1.8 k | I_CHG = K_ISET / R_ISET, K_ISET 797–975 AΩ (typ 890) → **0.44–0.54 A**. OK |
+| R6 | 68 k | Allowed 18–72 kΩ. t_MAXCHG = 10 × K_TMR × R_TMR, K_TMR 36–60 s/kΩ (typ 48) → **9.1 h typ, 6.8 h worst case**. A full charge of an empty 3.5 Ah cell at 0.49 A takes about 7 h, so a low-K_TMR part could time out on that one case (charging stops until power is cycled). Acceptable for a cell kept topped up; R5 = 1.5 k (0.59 A) would remove the margin problem |
+| R7 | DNP | Datasheet: "Leave ITERM unconnected to set the termination current to the default 10 %." OK |
+| U2 pad | thermal pad | Must connect to VSS but must not be the primary ground: VSS (pin 8) to ground directly. OK as laid out |
+
+Still to check by hand before ordering (the distributor PDFs did not load):
+
+| Ref | Check |
+|---|---|
+| Q2 | HXY 8205A pinout against the expected 1, 8 D; 2, 3 S1; 4 G1; 5 G2; 6, 7 S2 (LCSC C5148694 datasheet) |
+| Y1, C14, C15 | Crystal CL is 12.5 pF; 2 × 12 pF gives about 9 pF with stray. The RTC runs a few tens of ppm fast (seconds per day). Espressif says only "according to the crystal's specification". 18 pF (C0G, 0603) would centre it |
+| BT1 | Must take 65 mm flat-top **and** 70 mm button-top cells. It is on the back, so it is hand-soldered (Economic PCBA is single-sided; JLCPCB has 261 in stock at $4.89) |
 
 ---
 
@@ -435,7 +459,8 @@ and reverts after 3 boots without that, or after 5 minutes in mains mode.
 - **VBAT is hand-routed end to end.** Freerouting dropped one branch or
   another on different runs. A broken battery divider reads as a flat cell, not
   a fault.
-- **DRC:** 0 errors, 0 unconnected, parity clean. The 86 warnings are
+- **DRC** (re-run 2026-11-26 after the JLCPCB part pass): 0 errors,
+  0 unconnected, parity clean; ERC clean. The 73 warnings are
   silkscreen overlaps (reference text, a GUI tidy job) plus 6
   `lib_footprint_mismatch`, all cosmetic. `sensor-wifi.kicad_dru` has one
   exception: J2's GND pin gets one back-side thermal spoke. +3V3 and BOOT box

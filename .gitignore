@@ -33,6 +33,9 @@ sensor-ntc/enclosure/*-Enclosure*.step
 # KiCad project — tracking it here would let the two drift.
 sensor-ntc/enclosure/esp32c6.step
 sensor-ntc/enclosure/NTC_SENSOR.kicad_pcb
+# v3 board STEP for sensor-ntc-v3-toplid.sc, regenerated from pcb-v3 with
+# kicad-cli pcb export step --subst-models --include-tracks.
+sensor-ntc/enclosure/sensor-ntc-v3-board.step
 
 # ESP-NOW message authentication key — anyone holding it can forge readings
 # and configuration for every node. Only the template is versioned.

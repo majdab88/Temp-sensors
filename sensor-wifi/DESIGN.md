@@ -396,6 +396,13 @@ and reverts after 3 boots without that, or after 5 minutes in mains mode.
 
 ---
 
+> **PCB v2 (`pcb-v2/`, 2026-11-26):** the same board with the USB-C, BQ24074 and
+> DW01A/8205A replaced by a soldered-on TP4056 Mini Type-C module, cutting
+> JLCPCB Extended parts from 11 to 4. A second FET (Q2, on the cell's − side)
+> keeps reversed-cell protection with USB present. USB presence moves to a
+> divider on GPIO7 (active high) and `/CHG` goes away. Placed, routed, DRC
+> clean; see `pcb-v2/README.md`. This section describes v1.
+
 ## 5. PCB layout (`pcb/`) — placed and routed, DRC clean
 
 - 2-layer, **64 × 90 mm**, 1.6 mm. The length is set by the 18650 holder

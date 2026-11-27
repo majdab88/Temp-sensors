@@ -42,3 +42,7 @@ secrets/*
 # sensor-wifi enclosure: board STEPs exported from the KiCad projects (regenerate,
 # then component.update_links)
 sensor-wifi/enclosure/*-board.step
+
+# KiCad Fabrication Toolkit output (Gerbers, BOM, CPL) — regenerate from the
+# board before every order; a committed copy goes stale with the next edit.
+**/production/

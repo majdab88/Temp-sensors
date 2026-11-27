@@ -1,20 +1,22 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { View, Text, Pressable, StyleSheet, ActivityIndicator, Alert, PermissionsAndroid, Platform } from 'react-native';
 import type { Device as BLEDevice } from 'react-native-ble-plx';
-import { Screen, Card, T, Row, Button, Field, Notice, Icon, Empty } from '../ui';
+import { Screen, Card, T, Row, Button, Field, Icon, Empty } from '../ui';
 import {
   scanForHubs, connectToHub, readHubMac, scanWifiNetworks, provisionWifi, provisionCloud,
   subscribeStatus, disconnectHub, WiFiNetwork, ProvStatus,
 } from '../services/ble';
 import * as api from '../services/api';
 import { useOrgData } from '../store/OrgData';
-import { formatTime } from '../utils/time';
 import type { ScreenProps } from '../navigation/types';
 import { C, F, R, S } from '../theme';
 
-const MAC_RE = /^[0-9A-Fa-f]{2}(:[0-9A-Fa-f]{2}){5}$/;
-type Phase = 'find' | 'register' | 'wifi' | 'sending' | 'done' | 'failed';
-type Log = { ts: string; msg: string; type: 'ok' | 'err' | 'inf' };
+// A plain step-by-step flow: find the hub, pick its WiFi, wait. Whoever sets a
+// hub up should never see a MAC address, a broker or a log — the cloud
+// registration and broker credentials happen behind the "Connect" button.
+type Step = 'scan' | 'wifi' | 'password' | 'working' | 'done' | 'failed';
+
+const PROGRESS = ['Joining your WiFi', 'Connecting to the cloud', 'Hub is online'];
 
 function bars(rssi: number) { return rssi >= -50 ? 4 : rssi >= -60 ? 3 : rssi >= -70 ? 2 : 1; }
 
@@ -31,295 +33,242 @@ async function blePermissions(): Promise<boolean> {
   return (await PermissionsAndroid.request(PermissionsAndroid.PERMISSIONS.ACCESS_FINE_LOCATION)) === PermissionsAndroid.RESULTS.GRANTED;
 }
 
-/**
- * Add a hub over Bluetooth: find it, register it with the cloud (which issues
- * the hub's own broker account), then hand it WiFi + broker credentials and
- * follow its status until it reaches the cloud. (Provision.jsx)
- */
+/** Turn whatever went wrong into something the person holding the phone can act on. */
+function friendlyError(err: any, ssid: string): string {
+  const msg = String(err?.message ?? err?.response?.data?.error ?? '').toLowerCase();
+  if (/pass|auth|4-way|handshake|wrong/.test(msg)) return `The hub couldn't join "${ssid}". Check the WiFi password and try again.`;
+  if (/no ap|not found|ssid/.test(msg)) return `The hub couldn't find "${ssid}". Move it closer to the router and try again.`;
+  if (/timed out/.test(msg)) return 'The hub took too long to come online. Check it has power and is in range of your WiFi, then try again.';
+  if (err?.response || /network|request failed/.test(msg)) return "Couldn't reach the cloud. Check your phone's internet connection and try again.";
+  if (/disconnect|bluetooth|ble|gatt/.test(msg)) return 'Lost the Bluetooth connection to the hub. Keep the phone close to it and try again.';
+  return 'Something went wrong while setting up the hub. Try again.';
+}
+
+/** Add a hub over Bluetooth. (Same backend steps as the dashboard's Setup page.) */
 export default function AddHubScreen({ navigation }: ScreenProps<'AddHub'>) {
   const { refresh } = useOrgData();
-  const [phase, setPhase] = useState<Phase>('find');
+  const [step, setStep] = useState<Step>('scan');
   const [found, setFound] = useState<BLEDevice[]>([]);
   const [scanning, setScanning] = useState(false);
   const [connecting, setConnecting] = useState<string | null>(null);
-  const [hub, setHub] = useState<BLEDevice | null>(null);
-  const [mac, setMac] = useState('');
-  const [macAuto, setMacAuto] = useState(false);
-  const [name, setName] = useState('');
-  const [registering, setRegistering] = useState(false);
-  const [creds, setCreds] = useState<{ user: string; pass: string } | null>(null);
-  const [broker, setBroker] = useState<{ host: string; port: number } | null>(null);
-  const [brokerErr, setBrokerErr] = useState(false);
+  const [hubName, setHubName] = useState('');
   const [nets, setNets] = useState<WiFiNetwork[]>([]);
   const [netScan, setNetScan] = useState(false);
-  const [ssid, setSsid] = useState<string | null>(null);
-  const [openNet, setOpenNet] = useState(false);
-  const [manual, setManual] = useState('');
+  const [ssid, setSsid] = useState('');
+  const [typed, setTyped] = useState(false);
   const [pass, setPass] = useState('');
   const [showPass, setShowPass] = useState(false);
-  const [stage, setStage] = useState('');
-  const [logs, setLogs] = useState<Log[]>([]);
+  const [progress, setProgress] = useState(0);
+  const [error, setError] = useState('');
   const stopScan = useRef<(() => void) | null>(null);
   const hubRef = useRef<BLEDevice | null>(null);
 
-  const log = (msg: string, type: Log['type'] = 'inf') => setLogs((p) => [...p.slice(-99), { ts: formatTime(new Date()), msg, type }]);
-
-  useEffect(() => {
-    api.getProvisionConfig()
-      .then((r) => { if (r.data.mqttHost) setBroker({ host: r.data.mqttHost, port: r.data.mqttPort || 8883 }); else setBrokerErr(true); })
-      .catch(() => setBrokerErr(true));
-    return () => { stopScan.current?.(); if (hubRef.current) disconnectHub(hubRef.current); };
-  }, []);
+  useEffect(() => () => { stopScan.current?.(); if (hubRef.current) disconnectHub(hubRef.current); }, []);
 
   async function scan() {
     if (!(await blePermissions())) {
-      Alert.alert('Permission needed', 'Bluetooth and location permissions are needed to find hubs.');
+      Alert.alert('Bluetooth needed', 'Allow Bluetooth and location so the app can find your hub.');
       return;
     }
     setFound([]); setScanning(true);
-    log('Scanning for TempHub devices…');
     stopScan.current = scanForHubs(
       (d) => setFound((p) => (p.some((x) => x.id === d.id) ? p : [...p, d])),
-      (err) => { setScanning(false); log(`Scan failed: ${err.message}`, 'err'); },
+      () => { setScanning(false); Alert.alert("Couldn't search", 'Check that Bluetooth is turned on, then try again.'); },
     );
     setTimeout(() => { stopScan.current?.(); setScanning(false); }, 10000);
   }
 
-  async function connect(d: BLEDevice) {
+  async function pick(d: BLEDevice) {
     stopScan.current?.(); setScanning(false);
     setConnecting(d.id);
     try {
-      const c = await connectToHub(d);
-      hubRef.current = c; setHub(c);
-      setName(d.name || '');
-      log(`Connected to ${d.name}`, 'ok');
-      try {
-        const m = await readHubMac(c);
-        if (MAC_RE.test(m)) { setMac(m.toUpperCase()); setMacAuto(true); log(`Hub MAC: ${m}`, 'ok'); }
-      } catch { log('Hub did not report its MAC — enter it manually', 'inf'); }
-      setPhase('register');
-    } catch (err: any) {
-      log(`Connection failed: ${err?.message ?? 'unknown'}`, 'err');
-      Alert.alert('Connection failed', err?.message ?? 'Could not connect to the hub.');
+      hubRef.current = await connectToHub(d);
+      setHubName(d.name ?? 'your hub');
+      setStep('wifi');
+      loadNetworks();
+    } catch {
+      Alert.alert("Couldn't connect", 'Keep the phone close to the hub and try again.');
     } finally { setConnecting(null); }
   }
 
-  async function register() {
-    const m = mac.trim().toUpperCase();
-    if (!MAC_RE.test(m)) return;
-    setRegistering(true);
-    log('Registering hub with the cloud…');
-    try {
-      const { data } = await api.registerDevice(m, name.trim() || null);
-      setCreds({ user: data.mqtt_user, pass: data.api_key });
-      log('Hub registered — broker account issued', 'ok');
-      setPhase('wifi');
-      wifiScan();
-    } catch (err) {
-      log(`Registration failed: ${api.errText(err, 'unknown error')}`, 'err');
-    } finally { setRegistering(false); }
-  }
-
-  async function wifiScan() {
+  async function loadNetworks() {
     if (!hubRef.current) return;
     setNetScan(true); setNets([]);
-    log('Requesting WiFi scan…');
     try {
       const list = await scanWifiNetworks(hubRef.current);
       setNets([...list].filter((n) => n.ssid).sort((a, b) => b.rssi - a.rssi));
-      log(`Found ${list.length} network(s)`, 'ok');
-    } catch (err: any) {
-      log(`WiFi scan unavailable (${err?.message ?? 'error'}) — enter the network name`, 'inf');
-    } finally { setNetScan(false); }
+    } catch { /* the "not listed" option still works */ }
+    finally { setNetScan(false); }
   }
 
-  async function provision() {
-    const net = ssid || manual.trim();
-    if (!hubRef.current || !creds || !broker || !net) return;
+  function chooseNetwork(n: WiFiNetwork) {
+    setSsid(n.ssid); setTyped(false); setPass('');
+    if (n.enc === 0 || n.auth === 'open') connect(n.ssid, '');
+    else setStep('password');
+  }
+
+  async function connect(net: string, password: string) {
     const h = hubRef.current;
-    setPhase('sending'); setStage('Sending credentials…');
-    log(`Sending credentials for "${net}"…`);
+    if (!h) return;
+    setStep('working'); setProgress(0); setError('');
     try {
+      // The cloud gives every hub its own broker account; the hub never needs
+      // the person to know any of it.
+      const mac = await readHubMac(h);
+      const { data: device } = await api.registerDevice(mac, null);
+      const { data: cfg } = await api.getProvisionConfig();
       await new Promise<void>((resolve, reject) => {
-        const timeout = setTimeout(() => { unsub(); reject(new Error('Timed out waiting for the hub to connect.')); }, 60000);
+        const timeout = setTimeout(() => { unsub(); reject(new Error('timed out')); }, 60000);
         const unsub = subscribeStatus(h, (st: ProvStatus) => {
-          log(`Hub: ${st.state}${st.detail ? ` — ${st.detail}` : ''}`);
-          if (st.state === 'connecting') setStage('Hub is connecting to WiFi and the cloud…');
+          if (st.state === 'connecting') setProgress(1);
           if (st.state === 'connected') { clearTimeout(timeout); unsub(); resolve(); }
-          if (st.state === 'failed') { clearTimeout(timeout); unsub(); reject(new Error(st.detail ?? 'Provisioning failed.')); }
+          if (st.state === 'failed') { clearTimeout(timeout); unsub(); reject(new Error(st.detail ?? 'failed')); }
         });
-        provisionWifi(h, net, openNet && ssid ? '' : pass)
-          .then(() => { log('WiFi credentials written', 'ok'); return provisionCloud(h, broker.host, broker.port, creds.user, creds.pass); })
-          .then(() => { log('Broker credentials written — waiting for the hub…', 'ok'); setStage('Waiting for the hub…'); })
+        provisionWifi(h, net, password)
+          .then(() => provisionCloud(h, cfg.mqttHost, cfg.mqttPort || 8883, device.mqtt_user, device.api_key))
           .catch((e) => { clearTimeout(timeout); unsub(); reject(e); });
       });
-      log('Provisioning complete', 'ok');
+      setProgress(2);
       await disconnectHub(h); hubRef.current = null;
-      setPhase('done');
+      setStep('done');
       refresh();
-    } catch (err: any) {
-      log(`Failed: ${err?.message ?? 'unknown'}`, 'err');
-      setStage(err?.message ?? 'Provisioning failed.');
-      setPhase('failed');
+    } catch (err) {
+      setError(friendlyError(err, net));
+      setStep('failed');
     }
   }
 
-  function startOver() {
-    if (hubRef.current) disconnectHub(hubRef.current);
-    hubRef.current = null; setHub(null);
-    setMac(''); setMacAuto(false); setName(''); setCreds(null);
-    setNets([]); setSsid(null); setOpenNet(false); setManual(''); setPass(''); setLogs([]);
-    setPhase('find');
-  }
-
   if (Platform.OS === 'web') {
-    return <Screen><Empty icon="bluetooth" title="Bluetooth needs the phone app" body="Hub setup talks to the hub over Bluetooth, which the web build can't do." /></Screen>;
+    return <Screen><Empty icon="bluetooth" title="Use the phone app" body="Setting up a hub uses Bluetooth, which only the phone app can do." /></Screen>;
   }
 
-  if (phase === 'done') {
+  // ── Find the hub ───────────────────────────────────────────────────────────
+  if (step === 'scan') {
     return (
       <Screen>
-        <Card style={{ alignItems: 'center', paddingVertical: S.xxl }}>
-          <View style={styles.okIcon}><Icon name="check" size={28} color={C.onDark} /></View>
-          <T v="title" style={{ marginTop: S.md }}>Hub ready</T>
-          <T v="small" style={{ textAlign: 'center', marginTop: 4 }}>It's on WiFi and connected to the cloud. Pair sensors to it from the Hubs tab.</T>
-          <Row style={{ marginTop: S.lg }}>
-            <Button label="Set up another" onPress={startOver} />
-            <Button label="Done" variant="primary" onPress={() => navigation.goBack()} />
-          </Row>
+        <Hero icon="bluetooth" title="Find your hub" body="Plug the hub in and keep your phone close to it." />
+        <Button label={scanning ? 'Searching…' : 'Search for hubs'} icon="search" variant="primary" full busy={scanning} onPress={scan} />
+        <View style={{ marginTop: S.lg }}>
+          {found.map((d) => (
+            <Pressable key={d.id} disabled={!!connecting} onPress={() => pick(d)}>
+              {({ pressed }) => (
+                <Card style={[styles.row, pressed && { opacity: 0.7 }]}>
+                  <View style={styles.rowIcon}><Icon name="hard-drive" color={C.ice} /></View>
+                  <T v="h3" style={{ flex: 1 }}>{d.name ?? 'Hub'}</T>
+                  {connecting === d.id ? <ActivityIndicator color={C.ice} /> : <Icon name="chevron-right" color={C.ink3} />}
+                </Card>
+              )}
+            </Pressable>
+          ))}
+          {!scanning && found.length === 0 && (
+            <T v="small" style={{ textAlign: 'center' }}>No hub showing up? Hold its button for 3 seconds to reset it, then search again.</T>
+          )}
+          {connecting && <T v="small" style={{ textAlign: 'center', marginTop: S.md }}>Connecting to the hub…</T>}
+        </View>
+      </Screen>
+    );
+  }
+
+  // ── Pick the WiFi ──────────────────────────────────────────────────────────
+  if (step === 'wifi') {
+    return (
+      <Screen>
+        <Hero icon="wifi" title="Choose your WiFi" body={`${hubName} will use this network to reach the cloud.`} />
+        {netScan && <Row style={{ justifyContent: 'center', marginBottom: S.md }}><ActivityIndicator color={C.ice} /><T v="small">Looking for networks…</T></Row>}
+        {nets.map((n) => (
+          <Pressable key={n.ssid} onPress={() => chooseNetwork(n)}>
+            {({ pressed }) => (
+              <Card style={[styles.row, pressed && { opacity: 0.7 }]}>
+                <View style={styles.bars}>{[1, 2, 3, 4].map((i) => <View key={i} style={[styles.bar, { height: 3 + i * 3 }, bars(n.rssi) >= i && { backgroundColor: C.ice }]} />)}</View>
+                <T v="h3" style={{ flex: 1 }} numberOfLines={1}>{n.ssid}</T>
+                {n.enc !== 0 && n.auth !== 'open' && <Icon name="lock" size={14} color={C.ink3} />}
+              </Card>
+            )}
+          </Pressable>
+        ))}
+        <Row style={{ justifyContent: 'center', marginTop: S.sm }}>
+          {!netScan && <Button label="Search again" icon="refresh-cw" variant="ghost" small onPress={loadNetworks} />}
+          <Button label="My network isn't listed" variant="ghost" small onPress={() => { setSsid(''); setTyped(true); setPass(''); setStep('password'); }} />
+        </Row>
+      </Screen>
+    );
+  }
+
+  // ── Password ───────────────────────────────────────────────────────────────
+  if (step === 'password') {
+    return (
+      <Screen>
+        <Hero icon="lock" title={typed ? 'Enter your WiFi' : 'WiFi password'} body={typed ? 'Type the network name and password exactly as they are.' : `For "${ssid}"`} />
+        <Card>
+          {typed && <Field label="Network name" value={ssid} onChangeText={setSsid} autoCapitalize="none" autoCorrect={false} placeholder="Home WiFi" />}
+          <Field label="Password" value={pass} onChangeText={setPass} secureTextEntry={!showPass} autoCapitalize="none" autoCorrect={false}
+            autoFocus={!typed} placeholder="WiFi password" returnKeyType="go" onSubmitEditing={() => ssid.trim() && connect(ssid.trim(), pass)} />
+          <Button label={showPass ? 'Hide password' : 'Show password'} icon={showPass ? 'eye-off' : 'eye'} variant="ghost" small onPress={() => setShowPass((v) => !v)} style={{ marginTop: -6 }} />
+          <Button label="Connect hub" variant="primary" full disabled={!ssid.trim()} onPress={() => connect(ssid.trim(), pass)} style={{ marginTop: S.md }} />
+        </Card>
+        <Button label="Choose another network" variant="ghost" small style={{ alignSelf: 'center', marginTop: S.md }} onPress={() => setStep('wifi')} />
+      </Screen>
+    );
+  }
+
+  // ── Working / failed / done ────────────────────────────────────────────────
+  if (step === 'working') {
+    return (
+      <Screen>
+        <Hero icon="loader" title="Setting up your hub" body="This takes up to a minute. Keep the phone near the hub." />
+        <Card>
+          {PROGRESS.map((label, i) => (
+            <Row key={label} gap={S.md} style={{ paddingVertical: 10 }}>
+              {i < progress ? <View style={[styles.dot, { backgroundColor: C.ok }]}><Icon name="check" size={13} color={C.onDark} /></View>
+                : i === progress ? <ActivityIndicator color={C.ice} style={{ width: 24 }} />
+                : <View style={styles.dot} />}
+              <T v="body" style={i > progress ? { color: C.ink3 } : undefined}>{label}</T>
+            </Row>
+          ))}
         </Card>
       </Screen>
     );
   }
 
-  const ssidChosen = !!(ssid || manual.trim());
-  const step = (n: number, title: string, state: 'done' | 'active' | 'locked') => (
-    <Row style={{ marginBottom: S.sm }}>
-      <View style={[styles.num, state === 'done' && { backgroundColor: C.ok }, state === 'active' && { backgroundColor: C.ice }]}>
-        {state === 'done' ? <Icon name="check" size={14} color={C.onDark} /> : <Text style={[styles.numText, state !== 'locked' && { color: C.onDark }]}>{n}</Text>}
-      </View>
-      <T v="h3" style={state === 'locked' ? { color: C.ink3 } : undefined}>{title}</T>
-    </Row>
-  );
+  if (step === 'failed') {
+    return (
+      <Screen>
+        <Hero icon="alert-triangle" tone="amber" title="That didn't work" body={error} />
+        <Button label="Try again" variant="primary" full onPress={() => setStep(hubRef.current ? 'wifi' : 'scan')} />
+        <Button label="Start over" variant="ghost" style={{ alignSelf: 'center', marginTop: S.sm }} onPress={() => {
+          if (hubRef.current) disconnectHub(hubRef.current);
+          hubRef.current = null; setFound([]); setStep('scan');
+        }} />
+      </Screen>
+    );
+  }
 
   return (
     <Screen>
-      {brokerErr && <Notice tone="alarm">Couldn't load the broker address from the server. Hub setup can't finish until it's configured.</Notice>}
-
-      <Card style={styles.step}>
-        {step(1, 'Find your hub', hub ? 'done' : 'active')}
-        {hub ? (
-          <Row style={{ justifyContent: 'space-between' }}>
-            <T v="mono">{hub.name}</T>
-            <Button label="Disconnect" variant="ghost" small onPress={startOver} />
-          </Row>
-        ) : (
-          <>
-            <T v="small" style={{ marginBottom: S.md }}>Power the hub on. A new or reset hub advertises as TempHub-XXXXXX.</T>
-            <Button label={scanning ? 'Scanning…' : 'Scan for hubs'} icon="bluetooth" variant="primary" busy={scanning} onPress={scan} />
-            {found.map((d) => (
-              <Pressable key={d.id} onPress={() => connect(d)} disabled={!!connecting} style={styles.listRow}>
-                <Icon name="hard-drive" color={C.ice} />
-                <View style={{ flex: 1 }}>
-                  <T v="h3">{d.name ?? 'Unknown'}</T>
-                  <T v="caption">{d.id}</T>
-                </View>
-                {connecting === d.id ? <ActivityIndicator color={C.ice} /> : <T v="monoSmall">{d.rssi} dBm</T>}
-              </Pressable>
-            ))}
-          </>
-        )}
-      </Card>
-
-      <Card style={styles.step}>
-        {step(2, 'Register with the cloud', creds ? 'done' : hub ? 'active' : 'locked')}
-        {phase === 'register' && (
-          <>
-            <Field label="Hub MAC address" value={mac} onChangeText={setMac} editable={!macAuto} autoCapitalize="characters"
-              placeholder="AA:BB:CC:DD:EE:FF" hint={macAuto ? 'Read from the hub.' : 'Find it on the hub label or its serial log.'} />
-            <Field label="Hub name (optional)" value={name} onChangeText={setName} placeholder="Coldroom hub" maxLength={64} />
-            <Button label="Register" variant="primary" busy={registering} disabled={!MAC_RE.test(mac.trim())} onPress={register} />
-          </>
-        )}
-        {creds && <T v="monoSmall">{mac} {name ? `· ${name}` : ''} · registered</T>}
-      </Card>
-
-      <Card style={styles.step}>
-        {step(3, 'WiFi network', phase === 'wifi' && ssidChosen ? 'done' : creds ? 'active' : 'locked')}
-        {creds && phase !== 'register' && (
-          <>
-            <Row style={{ justifyContent: 'space-between', marginBottom: S.sm }}>
-              <T v="small">The hub scans for networks itself.</T>
-              <Button label={netScan ? 'Scanning…' : 'Rescan'} icon="refresh-cw" variant="ghost" small busy={netScan} onPress={wifiScan} />
-            </Row>
-            {nets.map((n) => {
-              const sel = ssid === n.ssid, b = bars(n.rssi), open = n.enc === 0 || n.auth === 'open';
-              return (
-                <Pressable key={n.ssid} onPress={() => { setSsid(n.ssid); setOpenNet(open); setManual(''); }} style={[styles.listRow, sel && styles.listSel]}>
-                  <Icon name={sel ? 'check-circle' : 'circle'} color={sel ? C.ice : C.ink3} />
-                  <T v="body" style={{ flex: 1 }} numberOfLines={1}>{n.ssid}</T>
-                  <View style={styles.bars}>{[1, 2, 3, 4].map((i) => <View key={i} style={[styles.bar, { height: 3 + i * 3 }, b >= i && { backgroundColor: C.ice }]} />)}</View>
-                  <Icon name={open ? 'unlock' : 'lock'} size={14} color={C.ink3} />
-                </Pressable>
-              );
-            })}
-            <Field style={{ marginTop: S.sm }} label={nets.length ? 'Or enter the name' : 'Network name (SSID)'} value={manual}
-              onChangeText={(v) => { setManual(v); setSsid(null); }} autoCapitalize="none" autoCorrect={false} placeholder="Network name" />
-            {((ssid && !openNet) || (manual && !ssid)) && (
-              <View>
-                <Field label="Password" value={pass} onChangeText={setPass} secureTextEntry={!showPass} autoCapitalize="none" autoCorrect={false} placeholder="WiFi password" />
-                <Button label={showPass ? 'Hide password' : 'Show password'} icon={showPass ? 'eye-off' : 'eye'} variant="ghost" small onPress={() => setShowPass((v) => !v)} style={{ marginTop: -6 }} />
-              </View>
-            )}
-          </>
-        )}
-      </Card>
-
-      <Card style={styles.step}>
-        {step(4, 'Send to the hub', creds && ssidChosen ? 'active' : 'locked')}
-        {creds && ssidChosen && broker && (
-          <>
-            <View style={styles.broker}>
-              <Text style={styles.brokerText}>Broker  {broker.host}:{broker.port}</Text>
-              <Text style={styles.brokerText}>User    {creds.user}</Text>
-              <Text style={styles.brokerText}>Pass    ••••••••</Text>
-            </View>
-            {phase === 'sending' ? (
-              <Row style={{ marginTop: S.md }}><ActivityIndicator color={C.ice} /><T v="small">{stage}</T></Row>
-            ) : (
-              <>
-                {phase === 'failed' && <View style={{ marginTop: S.md }}><Notice tone="alarm">{stage}</Notice></View>}
-                <Button label={phase === 'failed' ? 'Try again' : 'Provision hub'} variant="primary" full style={{ marginTop: S.md }} onPress={provision} />
-              </>
-            )}
-          </>
-        )}
-      </Card>
-
-      {logs.length > 0 && (
-        <View style={styles.log}>
-          {logs.map((l, i) => (
-            <Text key={i} style={[styles.logLine, l.type === 'err' && { color: '#FFB3BC' }, l.type === 'ok' && { color: '#9FE1CB' }]}>
-              {l.ts}  {l.type === 'ok' ? '✓' : l.type === 'err' ? '✗' : '→'} {l.msg}
-            </Text>
-          ))}
-        </View>
-      )}
+      <Hero icon="check" tone="ok" title="Your hub is online" body="Next, pair your sensors to it from the Hubs tab." />
+      <Button label="Done" variant="primary" full onPress={() => navigation.goBack()} />
     </Screen>
   );
 }
 
+function Hero({ icon, title, body, tone = 'ice' }: { icon: React.ComponentProps<typeof Icon>['name']; title: string; body: string; tone?: 'ice' | 'ok' | 'amber' }) {
+  const bg = tone === 'ok' ? C.ok : tone === 'amber' ? C.amber : C.ice;
+  return (
+    <View style={styles.hero}>
+      <View style={[styles.heroIcon, { backgroundColor: bg }]}><Icon name={icon} size={28} color={C.onDark} /></View>
+      <T v="title" style={{ textAlign: 'center', marginTop: S.md }}>{title}</T>
+      <Text style={styles.heroBody}>{body}</Text>
+    </View>
+  );
+}
+
 const styles = StyleSheet.create({
-  step: { marginBottom: S.md },
-  num: { width: 24, height: 24, borderRadius: 12, backgroundColor: C.inset, alignItems: 'center', justifyContent: 'center' },
-  numText: { fontFamily: F.monoMedium, fontSize: 12, color: C.ink3 },
-  listRow: { flexDirection: 'row', alignItems: 'center', gap: S.md, paddingVertical: 12, paddingHorizontal: S.sm, borderRadius: R.control, marginTop: S.xs },
-  listSel: { backgroundColor: C.iceSoft },
-  bars: { flexDirection: 'row', alignItems: 'flex-end', gap: 2 },
+  hero: { alignItems: 'center', paddingVertical: S.xl, paddingHorizontal: S.md },
+  heroIcon: { width: 64, height: 64, borderRadius: 32, alignItems: 'center', justifyContent: 'center' },
+  heroBody: { fontFamily: F.regular, fontSize: 15, color: C.ink2, textAlign: 'center', marginTop: 6, lineHeight: 21 },
+  row: { flexDirection: 'row', alignItems: 'center', gap: S.md, marginBottom: S.sm, paddingVertical: 14 },
+  rowIcon: { width: 36, height: 36, borderRadius: 18, backgroundColor: C.iceSoft, alignItems: 'center', justifyContent: 'center' },
+  bars: { flexDirection: 'row', alignItems: 'flex-end', gap: 2, width: 22 },
   bar: { width: 3, borderRadius: 1, backgroundColor: C.lineStrong },
-  broker: { backgroundColor: C.page, borderRadius: R.control, padding: S.md, gap: 2 },
-  brokerText: { fontFamily: F.mono, fontSize: 12, color: C.ink2 },
-  okIcon: { width: 56, height: 56, borderRadius: 28, backgroundColor: C.ok, alignItems: 'center', justifyContent: 'center' },
-  log: { backgroundColor: C.ink, borderRadius: R.control, padding: S.md, marginTop: S.sm },
-  logLine: { fontFamily: F.mono, fontSize: 11, color: '#C9D6DE', lineHeight: 17 },
+  dot: { width: 24, height: 24, borderRadius: 12, backgroundColor: C.inset, alignItems: 'center', justifyContent: 'center' },
 });

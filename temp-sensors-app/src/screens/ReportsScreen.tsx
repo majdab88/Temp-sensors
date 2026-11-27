@@ -7,7 +7,7 @@ import { useToast } from '../ui/feedback';
 import { useOrgData } from '../store/OrgData';
 import { useAuth } from '../context/AuthContext';
 import * as api from '../services/api';
-import { shareCsv, sharePdf, reportHtml, statsHtml, tableHtml } from '../services/export';
+import { saveCsv, savePdf, reportHtml, statsHtml, tableHtml } from '../services/export';
 import { formatDayMonthTime, formatDuration, formatDateTimeShort } from '../utils/time';
 import { sensorLabel } from '../utils/sensor';
 import type { Excursion } from '../types';
@@ -62,7 +62,8 @@ export default function ReportsScreen() {
     setBusy('csv');
     try {
       const { text, filename } = await api.getCsv('/excursions/export.csv', filter());
-      await shareCsv(text, filename ?? 'excursions.csv');
+      const saved = await saveCsv(text, filename ?? 'excursions.csv');
+      if (saved) toast.success(saved);
     } catch { toast.error('Export failed — try again'); }
     finally { setBusy(null); }
   }
@@ -86,7 +87,8 @@ export default function ReportsScreen() {
             r.limit_value != null ? `${Number(r.limit_value).toFixed(1)}°` : null,
             r.ack_at ? `${r.ack_by || 'yes'} · ${formatDateTimeShort(r.ack_at)}` : 'no',
           ])));
-      await sharePdf(html, 'excursion-log.pdf');
+      const saved = await savePdf(html, 'excursion-log.pdf');
+      if (saved) toast.success(saved);
     } catch { toast.error("Couldn't create the PDF"); }
     finally { setBusy(null); }
   }
@@ -112,7 +114,7 @@ export default function ReportsScreen() {
           <Segmented style={{ marginTop: S.sm }} value={days} onChange={setDays} options={RANGES} />
           <Row style={{ marginTop: S.md }}>
             <Button label="Export CSV" icon="download" small onPress={exportCsv} busy={busy === 'csv'} disabled={!rows?.length} />
-            <Button label="PDF" icon="file-text" small onPress={exportPdf} busy={busy === 'pdf'} disabled={!rows?.length} />
+            <Button label="PDF" icon="download" small onPress={exportPdf} busy={busy === 'pdf'} disabled={!rows?.length} />
           </Row>
         </View>
 

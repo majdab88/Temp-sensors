@@ -1,35 +1,85 @@
-// CSV and PDF exports. The web dashboard downloads a CSV and prints the page;
-// on a phone both become a file handed to the share sheet (mail, Drive,
-// WhatsApp, print…). The web build of the app downloads / opens print instead.
+// CSV and PDF exports, saved to the phone like a browser download.
+//
+// Android: the first export asks once for a folder (Downloads is offered) and
+// every later one writes straight into it. iOS has no Downloads folder, so the
+// file goes to the share sheet, whose "Save to Files" is the equivalent. The
+// web build of the app downloads the CSV and opens print for the PDF.
 import { Platform } from 'react-native';
 import * as FileSystem from 'expo-file-system';
 import * as Sharing from 'expo-sharing';
 import * as Print from 'expo-print';
+import { getItem, setItem, deleteItem } from './storage';
 import { formatDateTime, formatDateTimeShort } from '../utils/time';
 
+const SAF = FileSystem.StorageAccessFramework;
+const DIR_KEY = 'export_dir_uri';
 const safe = (name: string) => name.replace(/[^\w.-]+/g, '_');
 
-export async function shareCsv(text: string, filename: string): Promise<void> {
+/** "Download" from content://…/tree/primary%3ADownload */
+function folderName(dirUri: string): string {
+  const last = decodeURIComponent(dirUri.split('/').pop() || '');
+  return last.split(':').pop() || 'the chosen folder';
+}
+
+/**
+ * Write a file into the remembered folder, asking for one the first time (or
+ * again if access was revoked). Returns the folder's name, or null when the
+ * person backed out of the folder picker.
+ */
+async function saveAndroid(filename: string, mime: string, data: string, encoding: FileSystem.EncodingType): Promise<string | null> {
+  // Android adds the extension that matches the MIME type itself.
+  const base = safe(filename).replace(/\.(pdf|csv)$/i, '');
+  const write = async (dir: string) => {
+    const uri = await SAF.createFileAsync(dir, base, mime);
+    await FileSystem.writeAsStringAsync(uri, data, { encoding });
+    return folderName(dir);
+  };
+  const remembered = await getItem(DIR_KEY);
+  if (remembered) {
+    try { return await write(remembered); } catch { await deleteItem(DIR_KEY); }
+  }
+  const perm = await SAF.requestDirectoryPermissionsAsync(SAF.getUriForDirectoryInRoot('Download'));
+  if (!perm.granted) return null;
+  await setItem(DIR_KEY, perm.directoryUri);
+  return write(perm.directoryUri);
+}
+
+/** Save a CSV. Resolves to a "Saved to …" message, or null if nothing to say. */
+export async function saveCsv(text: string, filename: string): Promise<string | null> {
   const name = safe(filename);
   if (Platform.OS === 'web') {
     const url = URL.createObjectURL(new Blob([text], { type: 'text/csv' }));
     const a = document.createElement('a');
     a.href = url; a.download = name; a.click();
     URL.revokeObjectURL(url);
-    return;
+    return null;
+  }
+  if (Platform.OS === 'android') {
+    const where = await saveAndroid(name, 'text/csv', text, FileSystem.EncodingType.UTF8);
+    return where ? `Saved ${name} to ${where}` : null;
   }
   const uri = `${FileSystem.cacheDirectory}${name}`;
   await FileSystem.writeAsStringAsync(uri, text, { encoding: FileSystem.EncodingType.UTF8 });
-  await Sharing.shareAsync(uri, { mimeType: 'text/csv', dialogTitle: name, UTI: 'public.comma-separated-values-text' });
+  await Sharing.shareAsync(uri, { mimeType: 'text/csv', UTI: 'public.comma-separated-values-text' });
+  return null;
 }
 
-export async function sharePdf(html: string, filename: string): Promise<void> {
-  if (Platform.OS === 'web') { await Print.printAsync({ html }); return; }
+/** Render HTML to a PDF and save it. Resolves like saveCsv. */
+export async function savePdf(html: string, filename: string): Promise<string | null> {
+  if (Platform.OS === 'web') { await Print.printAsync({ html }); return null; }
   const { uri } = await Print.printToFileAsync({ html });
-  const target = `${FileSystem.cacheDirectory}${safe(filename)}`;
+  const name = safe(filename);
+  if (Platform.OS === 'android') {
+    const b64 = await FileSystem.readAsStringAsync(uri, { encoding: FileSystem.EncodingType.Base64 });
+    FileSystem.deleteAsync(uri, { idempotent: true }).catch(() => {});
+    const where = await saveAndroid(name, 'application/pdf', b64, FileSystem.EncodingType.Base64);
+    return where ? `Saved ${name} to ${where}` : null;
+  }
+  const target = `${FileSystem.cacheDirectory}${name}`;
   await FileSystem.deleteAsync(target, { idempotent: true });
   await FileSystem.moveAsync({ from: uri, to: target });
-  await Sharing.shareAsync(target, { mimeType: 'application/pdf', dialogTitle: filename, UTI: 'com.adobe.pdf' });
+  await Sharing.shareAsync(target, { mimeType: 'application/pdf', UTI: 'com.adobe.pdf' });
+  return null;
 }
 
 // ── Report HTML ──────────────────────────────────────────────────────────────

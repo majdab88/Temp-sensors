@@ -13,7 +13,7 @@ import { useOrgData } from '../store/OrgData';
 import { useAuth } from '../context/AuthContext';
 import { useLiveState } from '../utils/live';
 import * as api from '../services/api';
-import { shareCsv, sharePdf, reportHtml, statsHtml, tableHtml, chartSvg } from '../services/export';
+import { saveCsv, savePdf, reportHtml, statsHtml, tableHtml, chartSvg } from '../services/export';
 import { fmt, validHum, statusChip, limitText, sensorLabel, computeStats, BATTERY_TYPE_LABEL } from '../utils/sensor';
 import { timeAgo, formatDateTime, formatDate, startOfDay, endOfDay } from '../utils/time';
 import type { ScreenProps } from '../navigation/types';
@@ -155,7 +155,8 @@ export default function SensorDetailScreen({ route, navigation }: ScreenProps<'S
     try {
       const { text, filename } = await api.getCsv(`/sensors/${sensor!.id}/readings/export.csv`,
         { from: win.from.toISOString(), to: win.to.toISOString() });
-      await shareCsv(text, filename ?? `${sensorLabel(sensor!)}-readings.csv`);
+      const saved = await saveCsv(text, filename ?? `${sensorLabel(sensor!)}-readings.csv`);
+      if (saved) toast.success(saved);
     } catch { toast.error('Export failed — try again'); }
     finally { setBusy(null); }
   }
@@ -180,7 +181,8 @@ export default function SensorDetailScreen({ route, navigation }: ScreenProps<'S
       const html = reportHtml('Temperature history report',
         `${sensorLabel(sensor!)} · ${sensor!.mac}${sensor!.hub_name ? ` · Hub: ${sensor!.hub_name}` : ''} · Range: ${rangeText}${limits ? ` · Limits: ${limits}` : ''}`,
         statsHtml(statItems) + chart + table);
-      await sharePdf(html, `${sensorLabel(sensor!)}-report.pdf`);
+      const saved = await savePdf(html, `${sensorLabel(sensor!)}-report.pdf`);
+      if (saved) toast.success(saved);
     } catch { toast.error("Couldn't create the PDF"); }
     finally { setBusy(null); }
   }
@@ -266,7 +268,7 @@ export default function SensorDetailScreen({ route, navigation }: ScreenProps<'S
         {stats && <T v="caption" style={{ marginTop: 6 }}>MKT is the mean kinetic temperature — the Arrhenius-weighted average used for cold-chain compliance.</T>}
         <Row style={{ marginTop: S.md }}>
           <Button label="Export CSV" icon="download" small onPress={exportCsv} busy={busy === 'csv'} />
-          <Button label="PDF report" icon="file-text" small onPress={exportPdf} busy={busy === 'pdf'} disabled={!rows?.length} />
+          <Button label="PDF report" icon="download" small onPress={exportPdf} busy={busy === 'pdf'} disabled={!rows?.length} />
         </Row>
       </Section>
 

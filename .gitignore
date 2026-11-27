@@ -57,3 +57,11 @@ sensor-ntc/enclosure/render/*.glb
 # Vendor 3D models (GrabCAD) used by the enclosure model; their licence does
 # not cover redistribution in a public repo.
 sensor-ntc/enclosure/models/
+
+# sensor-wifi enclosure: board STEPs exported from the KiCad projects (regenerate,
+# then component.update_links)
+sensor-wifi/enclosure/*-board.step
+
+# KiCad Fabrication Toolkit output (Gerbers, BOM, CPL) — regenerate from the
+# board before every order; a committed copy goes stale with the next edit.
+**/production/

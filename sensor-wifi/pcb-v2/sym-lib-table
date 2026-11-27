@@ -1,0 +1,4 @@
+(sym_lib_table
+	(version 7)
+	(lib (name "sensor-wifi-v2") (type "KiCad") (uri "${KIPRJMOD}/sensor-wifi-v2.kicad_sym") (options "") (descr "sensor-wifi v2 project symbols"))
+)

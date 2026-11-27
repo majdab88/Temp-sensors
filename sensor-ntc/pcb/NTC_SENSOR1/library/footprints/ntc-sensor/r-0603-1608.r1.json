@@ -1,0 +1,92 @@
+{
+  "format": "pcbcraft-footprint/1",
+  "library": "ntc-sensor",
+  "id": "r-0603-1608",
+  "revision": 1,
+  "name": "Resistor 0603 (1608 metric)",
+  "license": "LicenseRef-Private",
+  "source": {
+    "kind": "converted",
+    "reference": "KiCad footprint Resistor_SMD:R_0603_1608Metric",
+    "locator": "Converted from NTC_SENSOR.kicad_pcb (as fabricated); pads, silkscreen and fab artwork copied"
+  },
+  "pads": [
+    {
+      "number": "1",
+      "center": {
+        "x_nm": -825000,
+        "y_nm": 0
+      },
+      "width_nm": 800000,
+      "height_nm": 950000,
+      "rotation": 0,
+      "shape": "rounded_rectangle",
+      "copper": "component_side",
+      "corner_radius_nm": 200000
+    },
+    {
+      "number": "2",
+      "center": {
+        "x_nm": 825000,
+        "y_nm": 0
+      },
+      "width_nm": 800000,
+      "height_nm": 950000,
+      "rotation": 0,
+      "shape": "rounded_rectangle",
+      "copper": "component_side",
+      "corner_radius_nm": 200000
+    }
+  ],
+  "graphics": [
+    {
+      "purpose": "courtyard",
+      "center": {
+        "x_nm": 0,
+        "y_nm": 0
+      },
+      "width_nm": 2960000,
+      "height_nm": 1460000,
+      "rotation": 0
+    }
+  ],
+  "artwork": [
+    {
+      "purpose": "silkscreen",
+      "graphic": {
+        "geometry": {
+          "type": "line",
+          "from": {
+            "x_nm": -237258,
+            "y_nm": -522500
+          },
+          "to": {
+            "x_nm": 237258,
+            "y_nm": -522500
+          }
+        },
+        "stroke_nm": 120000,
+        "fill": "none"
+      }
+    },
+    {
+      "purpose": "silkscreen",
+      "graphic": {
+        "geometry": {
+          "type": "line",
+          "from": {
+            "x_nm": -237258,
+            "y_nm": 522500
+          },
+          "to": {
+            "x_nm": 237258,
+            "y_nm": 522500
+          }
+        },
+        "stroke_nm": 120000,
+        "fill": "none"
+      }
+    }
+  ],
+  "reference": "pcbcraft-technical-1"
+}

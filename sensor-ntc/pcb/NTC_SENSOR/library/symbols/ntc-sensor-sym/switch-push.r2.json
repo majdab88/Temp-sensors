@@ -1,0 +1,27 @@
+{"library":"ntc-sensor-sym","format":"pcbcraft-symbol/2","id":"switch-push","revision":2,"name":"SW_Push","reference_prefix":"SW","default_value":"SW_Push","provenance":{"library_name":"NTC sensor v2 symbols (from KiCad)","license":"LicenseRef-Private"}
+,
+  "terminals":[
+    {"id":"1","name":"1","electrical_type":"passive"}
+    ,
+    {"id":"2","name":"2","electrical_type":"passive"}
+  ]
+  ,
+  "units":[
+    {"id":"main"
+    ,
+      "drawing":[
+        {"type":"circle","center_nm":[-2032000,0],"radius_nm":508000}
+        ,
+        {"type":"polyline","points_nm":[[0,-1270000],[0,-3048000]]}
+        ,
+        {"type":"circle","center_nm":[2032000,0],"radius_nm":508000}
+        ,
+        {"type":"polyline","points_nm":[[2540000,-1270000],[-2540000,-1270000]]}
+      ]
+      ,
+      "pins":[
+        {"terminal":"1","at_nm":[-5080000,0],"appearance":{"orientation":"right","length_nm":2540000,"style":"line","show_name":false,"show_number":false,"name_height_nm":1270000,"number_height_nm":1270000}}
+        ,
+        {"terminal":"2","at_nm":[5080000,0],"appearance":{"orientation":"left","length_nm":2540000,"style":"line","show_name":false,"show_number":false,"name_height_nm":1270000,"number_height_nm":1270000}}
+      ]}
+  ]}

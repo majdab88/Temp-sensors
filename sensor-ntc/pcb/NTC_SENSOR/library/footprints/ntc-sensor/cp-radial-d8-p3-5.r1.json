@@ -1,0 +1,378 @@
+{
+  "format": "pcbcraft-footprint/1",
+  "library": "ntc-sensor",
+  "id": "cp-radial-d8-p3-5",
+  "revision": 1,
+  "name": "Electrolytic radial D8.0 mm P3.50 mm",
+  "license": "LicenseRef-Private",
+  "source": {
+    "kind": "converted",
+    "reference": "KiCad footprint Capacitor_THT:CP_Radial_D8.0mm_P3.50mm",
+    "locator": "Converted from NTC_SENSOR.kicad_pcb (as fabricated); pads, silkscreen and fab artwork copied"
+  },
+  "pads": [
+    {
+      "number": "1",
+      "center": {
+        "x_nm": 0,
+        "y_nm": 0
+      },
+      "width_nm": 1600000,
+      "height_nm": 1600000,
+      "rotation": 0,
+      "shape": "rounded_rectangle",
+      "copper": "all_copper",
+      "corner_radius_nm": 250000,
+      "drill_nm": 800000
+    },
+    {
+      "number": "2",
+      "center": {
+        "x_nm": 3500000,
+        "y_nm": 0
+      },
+      "width_nm": 1600000,
+      "height_nm": 1600000,
+      "rotation": 0,
+      "shape": "circle",
+      "copper": "all_copper",
+      "drill_nm": 800000
+    }
+  ],
+  "graphics": [
+    {
+      "purpose": "courtyard",
+      "center": {
+        "x_nm": 1750000,
+        "y_nm": 0
+      },
+      "width_nm": 8500000,
+      "height_nm": 8500000,
+      "rotation": 0
+    }
+  ],
+  "artwork": [
+    {
+      "purpose": "silkscreen",
+      "graphic": {
+        "geometry": {
+          "type": "line",
+          "from": {
+            "x_nm": -2659698,
+            "y_nm": -2315000
+          },
+          "to": {
+            "x_nm": -1859698,
+            "y_nm": -2315000
+          }
+        },
+        "stroke_nm": 120000,
+        "fill": "none"
+      }
+    },
+    {
+      "purpose": "silkscreen",
+      "graphic": {
+        "geometry": {
+          "type": "line",
+          "from": {
+            "x_nm": -2259698,
+            "y_nm": -2715000
+          },
+          "to": {
+            "x_nm": -2259698,
+            "y_nm": -1915000
+          }
+        },
+        "stroke_nm": 120000,
+        "fill": "none"
+      }
+    },
+    {
+      "purpose": "silkscreen",
+      "graphic": {
+        "geometry": {
+          "type": "circle",
+          "center": {
+            "x_nm": 1750000,
+            "y_nm": 0
+          },
+          "radius_nm": 4120000
+        },
+        "stroke_nm": 120000,
+        "fill": "none"
+      }
+    },
+    {
+      "purpose": "silkscreen",
+      "graphic": {
+        "geometry": {
+          "type": "line",
+          "from": {
+            "x_nm": 1750000,
+            "y_nm": -4080000
+          },
+          "to": {
+            "x_nm": 1750000,
+            "y_nm": 4080000
+          }
+        },
+        "stroke_nm": 120000,
+        "fill": "none"
+      }
+    },
+    {
+      "purpose": "silkscreen",
+      "graphic": {
+        "geometry": {
+          "type": "line",
+          "from": {
+            "x_nm": 2150000,
+            "y_nm": -4061000
+          },
+          "to": {
+            "x_nm": 2150000,
+            "y_nm": 4061000
+          }
+        },
+        "stroke_nm": 120000,
+        "fill": "none"
+      }
+    },
+    {
+      "purpose": "silkscreen",
+      "graphic": {
+        "geometry": {
+          "type": "line",
+          "from": {
+            "x_nm": 2550000,
+            "y_nm": -4002000
+          },
+          "to": {
+            "x_nm": 2550000,
+            "y_nm": -1040000
+          }
+        },
+        "stroke_nm": 120000,
+        "fill": "none"
+      }
+    },
+    {
+      "purpose": "silkscreen",
+      "graphic": {
+        "geometry": {
+          "type": "line",
+          "from": {
+            "x_nm": 2950000,
+            "y_nm": -3901000
+          },
+          "to": {
+            "x_nm": 2950000,
+            "y_nm": -1040000
+          }
+        },
+        "stroke_nm": 120000,
+        "fill": "none"
+      }
+    },
+    {
+      "purpose": "silkscreen",
+      "graphic": {
+        "geometry": {
+          "type": "line",
+          "from": {
+            "x_nm": 3350000,
+            "y_nm": -3757000
+          },
+          "to": {
+            "x_nm": 3350000,
+            "y_nm": -1040000
+          }
+        },
+        "stroke_nm": 120000,
+        "fill": "none"
+      }
+    },
+    {
+      "purpose": "silkscreen",
+      "graphic": {
+        "geometry": {
+          "type": "line",
+          "from": {
+            "x_nm": 3750000,
+            "y_nm": -3562000
+          },
+          "to": {
+            "x_nm": 3750000,
+            "y_nm": -1040000
+          }
+        },
+        "stroke_nm": 120000,
+        "fill": "none"
+      }
+    },
+    {
+      "purpose": "silkscreen",
+      "graphic": {
+        "geometry": {
+          "type": "line",
+          "from": {
+            "x_nm": 4150000,
+            "y_nm": -3309000
+          },
+          "to": {
+            "x_nm": 4150000,
+            "y_nm": -1040000
+          }
+        },
+        "stroke_nm": 120000,
+        "fill": "none"
+      }
+    },
+    {
+      "purpose": "silkscreen",
+      "graphic": {
+        "geometry": {
+          "type": "line",
+          "from": {
+            "x_nm": 4510000,
+            "y_nm": -3019000
+          },
+          "to": {
+            "x_nm": 4510000,
+            "y_nm": -1040000
+          }
+        },
+        "stroke_nm": 120000,
+        "fill": "none"
+      }
+    },
+    {
+      "purpose": "silkscreen",
+      "graphic": {
+        "geometry": {
+          "type": "line",
+          "from": {
+            "x_nm": 4510000,
+            "y_nm": 1040000
+          },
+          "to": {
+            "x_nm": 4510000,
+            "y_nm": 3019000
+          }
+        },
+        "stroke_nm": 120000,
+        "fill": "none"
+      }
+    },
+    {
+      "purpose": "silkscreen",
+      "graphic": {
+        "geometry": {
+          "type": "line",
+          "from": {
+            "x_nm": 4550000,
+            "y_nm": -2982000
+          },
+          "to": {
+            "x_nm": 4550000,
+            "y_nm": 2982000
+          }
+        },
+        "stroke_nm": 120000,
+        "fill": "none"
+      }
+    },
+    {
+      "purpose": "silkscreen",
+      "graphic": {
+        "geometry": {
+          "type": "line",
+          "from": {
+            "x_nm": 4950000,
+            "y_nm": -2555000
+          },
+          "to": {
+            "x_nm": 4950000,
+            "y_nm": 2555000
+          }
+        },
+        "stroke_nm": 120000,
+        "fill": "none"
+      }
+    },
+    {
+      "purpose": "silkscreen",
+      "graphic": {
+        "geometry": {
+          "type": "line",
+          "from": {
+            "x_nm": 5350000,
+            "y_nm": -1964000
+          },
+          "to": {
+            "x_nm": 5350000,
+            "y_nm": 1964000
+          }
+        },
+        "stroke_nm": 120000,
+        "fill": "none"
+      }
+    },
+    {
+      "purpose": "silkscreen",
+      "graphic": {
+        "geometry": {
+          "type": "line",
+          "from": {
+            "x_nm": 5750000,
+            "y_nm": -947000
+          },
+          "to": {
+            "x_nm": 5750000,
+            "y_nm": 947000
+          }
+        },
+        "stroke_nm": 120000,
+        "fill": "none"
+      }
+    },
+    {
+      "purpose": "silkscreen",
+      "graphic": {
+        "geometry": {
+          "type": "line",
+          "from": {
+            "x_nm": 5790000,
+            "y_nm": -768000
+          },
+          "to": {
+            "x_nm": 5790000,
+            "y_nm": 768000
+          }
+        },
+        "stroke_nm": 120000,
+        "fill": "none"
+      }
+    },
+    {
+      "purpose": "silkscreen",
+      "graphic": {
+        "geometry": {
+          "type": "line",
+          "from": {
+            "x_nm": 5830000,
+            "y_nm": -533000
+          },
+          "to": {
+            "x_nm": 5830000,
+            "y_nm": 533000
+          }
+        },
+        "stroke_nm": 120000,
+        "fill": "none"
+      }
+    }
+  ],
+  "reference": "pcbcraft-technical-1"
+}

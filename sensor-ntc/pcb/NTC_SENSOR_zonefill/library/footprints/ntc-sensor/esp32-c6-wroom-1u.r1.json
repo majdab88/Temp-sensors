@@ -1,0 +1,600 @@
+{
+  "format": "pcbcraft-footprint/1",
+  "library": "ntc-sensor",
+  "id": "esp32-c6-wroom-1u",
+  "revision": 1,
+  "name": "ESP32-C6-WROOM-1U module",
+  "license": "LicenseRef-Private",
+  "source": {
+    "kind": "converted",
+    "reference": "KiCad footprint Footprints:ESP32-C6-WROOM-1U",
+    "locator": "Converted from NTC_SENSOR.kicad_pcb (as fabricated); pads, silkscreen and fab artwork copied"
+  },
+  "pads": [
+    {
+      "number": "1",
+      "center": {
+        "x_nm": -8750000,
+        "y_nm": -8260000
+      },
+      "width_nm": 1500000,
+      "height_nm": 900000,
+      "rotation": 0,
+      "shape": "rectangle",
+      "copper": "component_side"
+    },
+    {
+      "number": "2",
+      "center": {
+        "x_nm": -8750000,
+        "y_nm": -6990000
+      },
+      "width_nm": 1500000,
+      "height_nm": 900000,
+      "rotation": 0,
+      "shape": "rectangle",
+      "copper": "component_side"
+    },
+    {
+      "number": "3",
+      "center": {
+        "x_nm": -8750000,
+        "y_nm": -5720000
+      },
+      "width_nm": 1500000,
+      "height_nm": 900000,
+      "rotation": 0,
+      "shape": "rectangle",
+      "copper": "component_side"
+    },
+    {
+      "number": "4",
+      "center": {
+        "x_nm": -8750000,
+        "y_nm": -4450000
+      },
+      "width_nm": 1500000,
+      "height_nm": 900000,
+      "rotation": 0,
+      "shape": "rectangle",
+      "copper": "component_side"
+    },
+    {
+      "number": "5",
+      "center": {
+        "x_nm": -8750000,
+        "y_nm": -3180000
+      },
+      "width_nm": 1500000,
+      "height_nm": 900000,
+      "rotation": 0,
+      "shape": "rectangle",
+      "copper": "component_side"
+    },
+    {
+      "number": "6",
+      "center": {
+        "x_nm": -8750000,
+        "y_nm": -1910000
+      },
+      "width_nm": 1500000,
+      "height_nm": 900000,
+      "rotation": 0,
+      "shape": "rectangle",
+      "copper": "component_side"
+    },
+    {
+      "number": "7",
+      "center": {
+        "x_nm": -8750000,
+        "y_nm": -640000
+      },
+      "width_nm": 1500000,
+      "height_nm": 900000,
+      "rotation": 0,
+      "shape": "rectangle",
+      "copper": "component_side"
+    },
+    {
+      "number": "8",
+      "center": {
+        "x_nm": -8750000,
+        "y_nm": 630000
+      },
+      "width_nm": 1500000,
+      "height_nm": 900000,
+      "rotation": 0,
+      "shape": "rectangle",
+      "copper": "component_side"
+    },
+    {
+      "number": "9",
+      "center": {
+        "x_nm": -8750000,
+        "y_nm": 1900000
+      },
+      "width_nm": 1500000,
+      "height_nm": 900000,
+      "rotation": 0,
+      "shape": "rectangle",
+      "copper": "component_side"
+    },
+    {
+      "number": "10",
+      "center": {
+        "x_nm": -8750000,
+        "y_nm": 3170000
+      },
+      "width_nm": 1500000,
+      "height_nm": 900000,
+      "rotation": 0,
+      "shape": "rectangle",
+      "copper": "component_side"
+    },
+    {
+      "number": "11",
+      "center": {
+        "x_nm": -8750000,
+        "y_nm": 4440000
+      },
+      "width_nm": 1500000,
+      "height_nm": 900000,
+      "rotation": 0,
+      "shape": "rectangle",
+      "copper": "component_side"
+    },
+    {
+      "number": "12",
+      "center": {
+        "x_nm": -8750000,
+        "y_nm": 5710000
+      },
+      "width_nm": 1500000,
+      "height_nm": 900000,
+      "rotation": 0,
+      "shape": "rectangle",
+      "copper": "component_side"
+    },
+    {
+      "number": "13",
+      "center": {
+        "x_nm": -8750000,
+        "y_nm": 6980000
+      },
+      "width_nm": 1500000,
+      "height_nm": 900000,
+      "rotation": 0,
+      "shape": "rectangle",
+      "copper": "component_side"
+    },
+    {
+      "number": "14",
+      "center": {
+        "x_nm": -8750000,
+        "y_nm": 8250000
+      },
+      "width_nm": 1500000,
+      "height_nm": 900000,
+      "rotation": 0,
+      "shape": "rectangle",
+      "copper": "component_side"
+    },
+    {
+      "number": "15",
+      "center": {
+        "x_nm": 8750000,
+        "y_nm": 8250000
+      },
+      "width_nm": 1500000,
+      "height_nm": 900000,
+      "rotation": 180,
+      "shape": "rectangle",
+      "copper": "component_side"
+    },
+    {
+      "number": "16",
+      "center": {
+        "x_nm": 8750000,
+        "y_nm": 6980000
+      },
+      "width_nm": 1500000,
+      "height_nm": 900000,
+      "rotation": 180,
+      "shape": "rectangle",
+      "copper": "component_side"
+    },
+    {
+      "number": "17",
+      "center": {
+        "x_nm": 8750000,
+        "y_nm": 5710000
+      },
+      "width_nm": 1500000,
+      "height_nm": 900000,
+      "rotation": 180,
+      "shape": "rectangle",
+      "copper": "component_side"
+    },
+    {
+      "number": "18",
+      "center": {
+        "x_nm": 8750000,
+        "y_nm": 4440000
+      },
+      "width_nm": 1500000,
+      "height_nm": 900000,
+      "rotation": 180,
+      "shape": "rectangle",
+      "copper": "component_side"
+    },
+    {
+      "number": "19",
+      "center": {
+        "x_nm": 8750000,
+        "y_nm": 3170000
+      },
+      "width_nm": 1500000,
+      "height_nm": 900000,
+      "rotation": 180,
+      "shape": "rectangle",
+      "copper": "component_side"
+    },
+    {
+      "number": "20",
+      "center": {
+        "x_nm": 8750000,
+        "y_nm": 1900000
+      },
+      "width_nm": 1500000,
+      "height_nm": 900000,
+      "rotation": 180,
+      "shape": "rectangle",
+      "copper": "component_side"
+    },
+    {
+      "number": "21",
+      "center": {
+        "x_nm": 8750000,
+        "y_nm": 630000
+      },
+      "width_nm": 1500000,
+      "height_nm": 900000,
+      "rotation": 180,
+      "shape": "rectangle",
+      "copper": "component_side"
+    },
+    {
+      "number": "22",
+      "center": {
+        "x_nm": 8750000,
+        "y_nm": -640000
+      },
+      "width_nm": 1500000,
+      "height_nm": 900000,
+      "rotation": 180,
+      "shape": "rectangle",
+      "copper": "component_side"
+    },
+    {
+      "number": "23",
+      "center": {
+        "x_nm": 8750000,
+        "y_nm": -1910000
+      },
+      "width_nm": 1500000,
+      "height_nm": 900000,
+      "rotation": 180,
+      "shape": "rectangle",
+      "copper": "component_side"
+    },
+    {
+      "number": "24",
+      "center": {
+        "x_nm": 8750000,
+        "y_nm": -3180000
+      },
+      "width_nm": 1500000,
+      "height_nm": 900000,
+      "rotation": 180,
+      "shape": "rectangle",
+      "copper": "component_side"
+    },
+    {
+      "number": "25",
+      "center": {
+        "x_nm": 8750000,
+        "y_nm": -4450000
+      },
+      "width_nm": 1500000,
+      "height_nm": 900000,
+      "rotation": 180,
+      "shape": "rectangle",
+      "copper": "component_side"
+    },
+    {
+      "number": "26",
+      "center": {
+        "x_nm": 8750000,
+        "y_nm": -5720000
+      },
+      "width_nm": 1500000,
+      "height_nm": 900000,
+      "rotation": 180,
+      "shape": "rectangle",
+      "copper": "component_side"
+    },
+    {
+      "number": "27",
+      "center": {
+        "x_nm": 8750000,
+        "y_nm": -6990000
+      },
+      "width_nm": 1500000,
+      "height_nm": 900000,
+      "rotation": 180,
+      "shape": "rectangle",
+      "copper": "component_side"
+    },
+    {
+      "number": "28",
+      "center": {
+        "x_nm": 8750000,
+        "y_nm": -8260000
+      },
+      "width_nm": 1500000,
+      "height_nm": 900000,
+      "rotation": 180,
+      "shape": "rectangle",
+      "copper": "component_side"
+    },
+    {
+      "number": "29",
+      "center": {
+        "x_nm": -2755000,
+        "y_nm": -3790000
+      },
+      "width_nm": 800000,
+      "height_nm": 800000,
+      "rotation": 180,
+      "shape": "rectangle",
+      "copper": "component_side"
+    },
+    {
+      "number": "29-2",
+      "center": {
+        "x_nm": -2755000,
+        "y_nm": -2540000
+      },
+      "width_nm": 800000,
+      "height_nm": 800000,
+      "rotation": 180,
+      "shape": "rectangle",
+      "copper": "component_side"
+    },
+    {
+      "number": "29-3",
+      "center": {
+        "x_nm": -2755000,
+        "y_nm": -1290000
+      },
+      "width_nm": 800000,
+      "height_nm": 800000,
+      "rotation": 180,
+      "shape": "rectangle",
+      "copper": "component_side"
+    },
+    {
+      "number": "29-4",
+      "center": {
+        "x_nm": -1505000,
+        "y_nm": -3790000
+      },
+      "width_nm": 800000,
+      "height_nm": 800000,
+      "rotation": 180,
+      "shape": "rectangle",
+      "copper": "component_side"
+    },
+    {
+      "number": "29-5",
+      "center": {
+        "x_nm": -1505000,
+        "y_nm": -2540000
+      },
+      "width_nm": 800000,
+      "height_nm": 800000,
+      "rotation": 180,
+      "shape": "rectangle",
+      "copper": "component_side"
+    },
+    {
+      "number": "29-6",
+      "center": {
+        "x_nm": -1505000,
+        "y_nm": -1290000
+      },
+      "width_nm": 800000,
+      "height_nm": 800000,
+      "rotation": 180,
+      "shape": "rectangle",
+      "copper": "component_side"
+    },
+    {
+      "number": "29-7",
+      "center": {
+        "x_nm": -255000,
+        "y_nm": -3790000
+      },
+      "width_nm": 800000,
+      "height_nm": 800000,
+      "rotation": 180,
+      "shape": "rectangle",
+      "copper": "component_side"
+    },
+    {
+      "number": "29-8",
+      "center": {
+        "x_nm": -255000,
+        "y_nm": -2540000
+      },
+      "width_nm": 800000,
+      "height_nm": 800000,
+      "rotation": 180,
+      "shape": "rectangle",
+      "copper": "component_side"
+    },
+    {
+      "number": "29-9",
+      "center": {
+        "x_nm": -255000,
+        "y_nm": -1290000
+      },
+      "width_nm": 800000,
+      "height_nm": 800000,
+      "rotation": 180,
+      "shape": "rectangle",
+      "copper": "component_side"
+    }
+  ],
+  "graphics": [
+    {
+      "purpose": "courtyard",
+      "center": {
+        "x_nm": 0,
+        "y_nm": 150000
+      },
+      "width_nm": 19600000,
+      "height_nm": 19800000,
+      "rotation": 0
+    }
+  ],
+  "artwork": [
+    {
+      "purpose": "silkscreen",
+      "graphic": {
+        "geometry": {
+          "type": "line",
+          "from": {
+            "x_nm": -9000000,
+            "y_nm": -9450000
+          },
+          "to": {
+            "x_nm": -9000000,
+            "y_nm": -9000000
+          }
+        },
+        "stroke_nm": 120000,
+        "fill": "none"
+      }
+    },
+    {
+      "purpose": "silkscreen",
+      "graphic": {
+        "geometry": {
+          "type": "line",
+          "from": {
+            "x_nm": -9000000,
+            "y_nm": 9000000
+          },
+          "to": {
+            "x_nm": -9000000,
+            "y_nm": 9750000
+          }
+        },
+        "stroke_nm": 120000,
+        "fill": "none"
+      }
+    },
+    {
+      "purpose": "silkscreen",
+      "graphic": {
+        "geometry": {
+          "type": "line",
+          "from": {
+            "x_nm": -9000000,
+            "y_nm": 9750000
+          },
+          "to": {
+            "x_nm": -8000000,
+            "y_nm": 9750000
+          }
+        },
+        "stroke_nm": 120000,
+        "fill": "none"
+      }
+    },
+    {
+      "purpose": "silkscreen",
+      "graphic": {
+        "geometry": {
+          "type": "line",
+          "from": {
+            "x_nm": 9000000,
+            "y_nm": -9450000
+          },
+          "to": {
+            "x_nm": -9000000,
+            "y_nm": -9450000
+          }
+        },
+        "stroke_nm": 120000,
+        "fill": "none"
+      }
+    },
+    {
+      "purpose": "silkscreen",
+      "graphic": {
+        "geometry": {
+          "type": "line",
+          "from": {
+            "x_nm": 9000000,
+            "y_nm": -9450000
+          },
+          "to": {
+            "x_nm": 9000000,
+            "y_nm": -9000000
+          }
+        },
+        "stroke_nm": 120000,
+        "fill": "none"
+      }
+    },
+    {
+      "purpose": "silkscreen",
+      "graphic": {
+        "geometry": {
+          "type": "line",
+          "from": {
+            "x_nm": 9000000,
+            "y_nm": 9000000
+          },
+          "to": {
+            "x_nm": 9000000,
+            "y_nm": 9750000
+          }
+        },
+        "stroke_nm": 120000,
+        "fill": "none"
+      }
+    },
+    {
+      "purpose": "silkscreen",
+      "graphic": {
+        "geometry": {
+          "type": "line",
+          "from": {
+            "x_nm": 9000000,
+            "y_nm": 9750000
+          },
+          "to": {
+            "x_nm": 8000000,
+            "y_nm": 9750000
+          }
+        },
+        "stroke_nm": 120000,
+        "fill": "none"
+      }
+    }
+  ],
+  "reference": "pcbcraft-technical-1"
+}

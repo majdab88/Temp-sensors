@@ -1,0 +1,108 @@
+{
+  "format": "pcbcraft-footprint/1",
+  "library": "ntc-sensor",
+  "id": "ledc1608x85n",
+  "revision": 1,
+  "name": "LED 0603 (LEDC1608X85N)",
+  "license": "LicenseRef-Private",
+  "source": {
+    "kind": "converted",
+    "reference": "KiCad footprint samacSys:LEDC1608X85N",
+    "locator": "Converted from NTC_SENSOR.kicad_pcb (as fabricated); pads, silkscreen and fab artwork copied"
+  },
+  "pads": [
+    {
+      "number": "1",
+      "center": {
+        "x_nm": -800000,
+        "y_nm": 0
+      },
+      "width_nm": 800000,
+      "height_nm": 950000,
+      "rotation": 0,
+      "shape": "rectangle",
+      "copper": "component_side"
+    },
+    {
+      "number": "2",
+      "center": {
+        "x_nm": 800000,
+        "y_nm": 0
+      },
+      "width_nm": 800000,
+      "height_nm": 950000,
+      "rotation": 0,
+      "shape": "rectangle",
+      "copper": "component_side"
+    }
+  ],
+  "graphics": [
+    {
+      "purpose": "courtyard",
+      "center": {
+        "x_nm": 0,
+        "y_nm": 0
+      },
+      "width_nm": 3300000,
+      "height_nm": 1850000,
+      "rotation": 0
+    }
+  ],
+  "artwork": [
+    {
+      "purpose": "silkscreen",
+      "graphic": {
+        "geometry": {
+          "type": "line",
+          "from": {
+            "x_nm": -1550000,
+            "y_nm": 825000
+          },
+          "to": {
+            "x_nm": 800000,
+            "y_nm": 825000
+          }
+        },
+        "stroke_nm": 200000,
+        "fill": "none"
+      }
+    },
+    {
+      "purpose": "silkscreen",
+      "graphic": {
+        "geometry": {
+          "type": "line",
+          "from": {
+            "x_nm": -1550000,
+            "y_nm": -825000
+          },
+          "to": {
+            "x_nm": -1550000,
+            "y_nm": 825000
+          }
+        },
+        "stroke_nm": 200000,
+        "fill": "none"
+      }
+    },
+    {
+      "purpose": "silkscreen",
+      "graphic": {
+        "geometry": {
+          "type": "line",
+          "from": {
+            "x_nm": 800000,
+            "y_nm": -825000
+          },
+          "to": {
+            "x_nm": -1550000,
+            "y_nm": -825000
+          }
+        },
+        "stroke_nm": 200000,
+        "fill": "none"
+      }
+    }
+  ],
+  "reference": "pcbcraft-technical-1"
+}

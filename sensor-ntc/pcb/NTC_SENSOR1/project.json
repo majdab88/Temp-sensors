@@ -1,0 +1,96 @@
+{
+  "format": "pcbcraft-project/23",
+  "id": "bdee8fea-6971-4ffc-9acb-d05164cd1f65",
+  "name": "NTC_SENSOR",
+  "numeric_id_high_water": 279,
+  "layout_root": ".",
+  "boards": [{"id":"ffd72b19-43ab-414b-8142-a72d0674e624","name":"NTC_SENSOR","folder":"ntc-sensor-ffd72b1943ab"}],
+  "sheets": [{"id":"bc9ca81b-8a63-4ea1-8b26-fafb58550b3d","name":"Main","file":"sheets/bc9ca81b-8a63-4ea1-8b26-fafb58550b3d.json"}],
+  "components": [
+    {"id":80,"library":"ntc-sensor","definition":"esp32-c6-wroom-1","definition_revision":1,"reference_number":1,"reference":"U1","value":"ESP32-C6-WROOM-1U-N4"}
+
+    ,
+    {"id":81,"library":"ntc-sensor","definition":"tps63802","definition_revision":1,"reference_number":2,"reference":"U2","value":"TPS63802DLAR"}
+
+    ,
+    {"id":82,"library":"ntc-sensor","definition":"battery","definition_revision":1,"reference_number":1,"reference":"BT1","value":"3.0-3.6V"}
+
+    ,
+    {"id":83,"library":"ntc-sensor","definition":"capacitor-polarized","definition_revision":1,"reference_number":1,"reference":"C1","value":"EEU-FR0J102"}
+
+    ,
+    {"id":84,"library":"ntc-sensor","definition":"capacitor","definition_revision":1,"reference_number":2,"reference":"C_buf1","value":"22 uf"}
+
+    ,
+    {"id":86,"library":"ntc-sensor","definition":"capacitor","definition_revision":1,"reference_number":3,"reference":"C_d0","value":"100 nF X7R"}
+
+    ,
+    {"id":88,"library":"ntc-sensor","definition":"capacitor","definition_revision":1,"reference_number":4,"reference":"C_en1","value":"1 µF"}
+
+    ,
+    {"id":90,"library":"ntc-sensor","definition":"capacitor","definition_revision":1,"reference_number":5,"reference":"C_in1","value":"10 uf"}
+
+    ,
+    {"id":92,"library":"ntc-sensor","definition":"capacitor","definition_revision":1,"reference_number":6,"reference":"C_out1","value":"22 uf"}
+
+    ,
+    {"id":94,"library":"ntc-sensor","definition":"capacitor","definition_revision":1,"reference_number":7,"reference":"C_vdd_bulk1","value":"10 µF X7R"}
+
+    ,
+    {"id":96,"library":"ntc-sensor","definition":"capacitor","definition_revision":1,"reference_number":8,"reference":"C_vdd_hf1","value":"100 nF X7R"}
+
+    ,
+    {"id":98,"library":"ntc-sensor","definition":"capacitor","definition_revision":1,"reference_number":9,"reference":"Cfb1","value":"10 nF X7R"}
+
+    ,
+    {"id":100,"library":"ntc-sensor","definition":"capacitor","definition_revision":1,"reference_number":10,"reference":"Cfn1","value":"100 nF X7R"}
+
+    ,
+    {"id":102,"library":"ntc-sensor","definition":"led","definition_revision":1,"reference_number":1,"reference":"D1","value":"knightbright APT1608SURCK"}
+
+    ,
+    {"id":103,"library":"ntc-sensor","definition":"conn-02x03-odd-even","definition_revision":1,"reference_number":1,"reference":"J1","value":"Conn_02x03_Odd_Even"}
+
+    ,
+    {"id":104,"library":"ntc-sensor","definition":"inductor","definition_revision":1,"reference_number":1,"reference":"L1_ext1","value":"1.5 uH TDK VLS3015CX-1R5M-H"}
+
+    ,
+    {"id":106,"library":"ntc-sensor","definition":"resistor","definition_revision":1,"reference_number":1,"reference":"R1","value":"560 kΩ 1%"}
+
+    ,
+    {"id":107,"library":"ntc-sensor","definition":"resistor","definition_revision":1,"reference_number":2,"reference":"R2","value":"100 kΩ 1%"}
+
+    ,
+    {"id":108,"library":"ntc-sensor","definition":"resistor","definition_revision":1,"reference_number":3,"reference":"R3","value":"100 kΩ 1%"}
+
+    ,
+    {"id":109,"library":"ntc-sensor","definition":"resistor","definition_revision":1,"reference_number":4,"reference":"R4","value":"100 kΩ 1%"}
+
+    ,
+    {"id":110,"library":"ntc-sensor","definition":"resistor","definition_revision":1,"reference_number":5,"reference":"R5","value":"10 kΩ 1%"}
+
+    ,
+    {"id":111,"library":"ntc-sensor","definition":"resistor","definition_revision":1,"reference_number":6,"reference":"R_LED1","value":"1 kΩ"}
+
+    ,
+    {"id":113,"library":"ntc-sensor","definition":"resistor","definition_revision":1,"reference_number":7,"reference":"R_boot1","value":"10 kΩ"}
+
+    ,
+    {"id":115,"library":"ntc-sensor","definition":"resistor","definition_revision":1,"reference_number":8,"reference":"R_en1","value":"10 kΩ"}
+
+    ,
+    {"id":117,"library":"ntc-sensor","definition":"resistor","definition_revision":1,"reference_number":9,"reference":"R_gpio0","value":"10 kΩ"}
+
+    ,
+    {"id":119,"library":"ntc-sensor","definition":"resistor","definition_revision":1,"reference_number":10,"reference":"R_gpio8","value":"10 kΩ"}
+
+    ,
+    {"id":121,"library":"ntc-sensor","definition":"switch-push","definition_revision":1,"reference_number":1,"reference":"SW1","value":"SW_Reset"}
+
+    ,
+    {"id":122,"library":"ntc-sensor","definition":"switch-push","definition_revision":1,"reference_number":2,"reference":"SW2","value":"SW_D0"}
+
+    ,
+    {"id":123,"library":"ntc-sensor","definition":"thermistor-ntc","definition_revision":1,"reference_number":1,"reference":"TH1","value":"NTC 10 kΩ @25 °CB = 3435"}
+  ]
+}

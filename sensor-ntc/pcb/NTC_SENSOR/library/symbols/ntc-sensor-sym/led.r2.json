@@ -1,0 +1,29 @@
+{"library":"ntc-sensor-sym","format":"pcbcraft-symbol/2","id":"led","revision":2,"name":"LED","reference_prefix":"D","default_value":"LED","provenance":{"library_name":"NTC sensor v2 symbols (from KiCad)","license":"LicenseRef-Private"}
+,
+  "terminals":[
+    {"id":"1","name":"K","electrical_type":"passive"}
+    ,
+    {"id":"2","name":"A","electrical_type":"passive"}
+  ]
+  ,
+  "units":[
+    {"id":"main"
+    ,
+      "drawing":[
+        {"type":"polyline","points_nm":[[-3048000,762000],[-4572000,2286000],[-3810000,2286000],[-4572000,2286000],[-4572000,1524000]]}
+        ,
+        {"type":"polyline","points_nm":[[-1778000,762000],[-3302000,2286000],[-2540000,2286000],[-3302000,2286000],[-3302000,1524000]]}
+        ,
+        {"type":"polyline","points_nm":[[-1270000,0],[1270000,0]]}
+        ,
+        {"type":"polyline","points_nm":[[-1270000,1270000],[-1270000,-1270000]]}
+        ,
+        {"type":"polyline","points_nm":[[1270000,1270000],[1270000,-1270000],[-1270000,0],[1270000,1270000]]}
+      ]
+      ,
+      "pins":[
+        {"terminal":"1","at_nm":[-3810000,0],"appearance":{"orientation":"right","length_nm":2540000,"style":"line","show_name":false,"show_number":false,"name_height_nm":1270000,"number_height_nm":1270000}}
+        ,
+        {"terminal":"2","at_nm":[3810000,0],"appearance":{"orientation":"left","length_nm":2540000,"style":"line","show_name":false,"show_number":false,"name_height_nm":1270000,"number_height_nm":1270000}}
+      ]}
+  ]}

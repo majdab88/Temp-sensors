@@ -1,0 +1,21 @@
+{"library":"ntc-sensor","format":"pcbcraft-symbol/2","id":"led","revision":1,"name":"LED","reference_prefix":"D","default_value":"LED","provenance":{"library_name":"NTC sensor v2 (from KiCad)","license":"LicenseRef-Private"}
+,
+  "terminals":[
+    {"id":"1","name":"K","electrical_type":"passive"}
+    ,
+    {"id":"2","name":"A","electrical_type":"passive"}
+  ]
+  ,
+  "units":[
+    {"id":"main"
+    ,
+      "drawing":[
+        {"type":"rect","min_nm":[-1270000,-2540000],"max_nm":[1270000,2540000]}
+      ]
+      ,
+      "pins":[
+        {"terminal":"1","at_nm":[0,-5080000],"appearance":{"orientation":"down","length_nm":2540000,"style":"line","show_name":false,"show_number":true,"name_height_nm":750000,"number_height_nm":650000}}
+        ,
+        {"terminal":"2","at_nm":[0,5080000],"appearance":{"orientation":"up","length_nm":2540000,"style":"line","show_name":false,"show_number":true,"name_height_nm":750000,"number_height_nm":650000}}
+      ]}
+  ]}

@@ -1,0 +1,23 @@
+{"library":"ntc-sensor-sym","format":"pcbcraft-symbol/2","id":"capacitor","revision":2,"name":"C_Small","reference_prefix":"C","default_value":"C_Small","provenance":{"library_name":"NTC sensor v2 symbols (from KiCad)","license":"LicenseRef-Private"}
+,
+  "terminals":[
+    {"id":"1","electrical_type":"passive"}
+    ,
+    {"id":"2","electrical_type":"passive"}
+  ]
+  ,
+  "units":[
+    {"id":"main"
+    ,
+      "drawing":[
+        {"type":"polyline","points_nm":[[-1524000,-508000],[1524000,-508000]]}
+        ,
+        {"type":"polyline","points_nm":[[-1524000,508000],[1524000,508000]]}
+      ]
+      ,
+      "pins":[
+        {"terminal":"1","at_nm":[0,-2540000],"appearance":{"orientation":"down","length_nm":2032000,"style":"line","show_name":false,"show_number":false,"name_height_nm":1270000,"number_height_nm":1270000}}
+        ,
+        {"terminal":"2","at_nm":[0,2540000],"appearance":{"orientation":"up","length_nm":2032000,"style":"line","show_name":false,"show_number":false,"name_height_nm":1270000,"number_height_nm":1270000}}
+      ]}
+  ]}

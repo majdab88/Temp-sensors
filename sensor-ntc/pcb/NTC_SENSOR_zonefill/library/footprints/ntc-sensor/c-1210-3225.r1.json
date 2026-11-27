@@ -1,0 +1,92 @@
+{
+  "format": "pcbcraft-footprint/1",
+  "library": "ntc-sensor",
+  "id": "c-1210-3225",
+  "revision": 1,
+  "name": "Capacitor 1210 (3225 metric)",
+  "license": "LicenseRef-Private",
+  "source": {
+    "kind": "converted",
+    "reference": "KiCad footprint Capacitor_SMD:C_1210_3225Metric",
+    "locator": "Converted from NTC_SENSOR.kicad_pcb (as fabricated); pads, silkscreen and fab artwork copied"
+  },
+  "pads": [
+    {
+      "number": "1",
+      "center": {
+        "x_nm": -1475000,
+        "y_nm": 0
+      },
+      "width_nm": 1150000,
+      "height_nm": 2700000,
+      "rotation": 0,
+      "shape": "rounded_rectangle",
+      "copper": "component_side",
+      "corner_radius_nm": 250000
+    },
+    {
+      "number": "2",
+      "center": {
+        "x_nm": 1475000,
+        "y_nm": 0
+      },
+      "width_nm": 1150000,
+      "height_nm": 2700000,
+      "rotation": 0,
+      "shape": "rounded_rectangle",
+      "copper": "component_side",
+      "corner_radius_nm": 250000
+    }
+  ],
+  "graphics": [
+    {
+      "purpose": "courtyard",
+      "center": {
+        "x_nm": 0,
+        "y_nm": 0
+      },
+      "width_nm": 4600000,
+      "height_nm": 3200000,
+      "rotation": 0
+    }
+  ],
+  "artwork": [
+    {
+      "purpose": "silkscreen",
+      "graphic": {
+        "geometry": {
+          "type": "line",
+          "from": {
+            "x_nm": -711252,
+            "y_nm": -1360000
+          },
+          "to": {
+            "x_nm": 711252,
+            "y_nm": -1360000
+          }
+        },
+        "stroke_nm": 120000,
+        "fill": "none"
+      }
+    },
+    {
+      "purpose": "silkscreen",
+      "graphic": {
+        "geometry": {
+          "type": "line",
+          "from": {
+            "x_nm": -711252,
+            "y_nm": 1360000
+          },
+          "to": {
+            "x_nm": 711252,
+            "y_nm": 1360000
+          }
+        },
+        "stroke_nm": 120000,
+        "fill": "none"
+      }
+    }
+  ],
+  "reference": "pcbcraft-technical-1"
+}

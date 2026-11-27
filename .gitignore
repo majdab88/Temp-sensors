@@ -38,3 +38,19 @@ sensor-ntc/enclosure/NTC_SENSOR.kicad_pcb
 # and configuration for every node. Only the template is versioned.
 secrets/*
 !secrets/*.example.h
+
+# Local-only: secrets, per-user Claude settings, editor locks and backups.
+secrets/
+.claude/settings.local.json
+*.pcbcraft-lock
+.~*.lock
+*.sc.bak
+__pycache__/
+
+# Enclosure renders: the GLB is a 5 MB re-export of the SolidCraft model
+# (board included), regenerated before every render.
+sensor-ntc/enclosure/render/*.glb
+
+# Vendor 3D models (GrabCAD) used by the enclosure model; their licence does
+# not cover redistribution in a public repo.
+sensor-ntc/enclosure/models/

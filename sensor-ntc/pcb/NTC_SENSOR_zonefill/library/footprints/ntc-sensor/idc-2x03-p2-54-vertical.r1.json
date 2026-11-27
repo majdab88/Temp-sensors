@@ -1,0 +1,343 @@
+{
+  "format": "pcbcraft-footprint/1",
+  "library": "ntc-sensor",
+  "id": "idc-2x03-p2-54-vertical",
+  "revision": 1,
+  "name": "IDC header 2x03 P2.54 mm vertical",
+  "license": "LicenseRef-Private",
+  "source": {
+    "kind": "converted",
+    "reference": "KiCad footprint Connector_IDC:IDC-Header_2x03_P2.54mm_Vertical",
+    "locator": "Converted from NTC_SENSOR.kicad_pcb (as fabricated); pads, silkscreen and fab artwork copied"
+  },
+  "pads": [
+    {
+      "number": "1",
+      "center": {
+        "x_nm": 0,
+        "y_nm": 0
+      },
+      "width_nm": 1700000,
+      "height_nm": 1700000,
+      "rotation": 0,
+      "shape": "rounded_rectangle",
+      "copper": "all_copper",
+      "corner_radius_nm": 250000,
+      "drill_nm": 1000000
+    },
+    {
+      "number": "2",
+      "center": {
+        "x_nm": 2540000,
+        "y_nm": 0
+      },
+      "width_nm": 1700000,
+      "height_nm": 1700000,
+      "rotation": 0,
+      "shape": "circle",
+      "copper": "all_copper",
+      "drill_nm": 1000000
+    },
+    {
+      "number": "3",
+      "center": {
+        "x_nm": 0,
+        "y_nm": 2540000
+      },
+      "width_nm": 1700000,
+      "height_nm": 1700000,
+      "rotation": 0,
+      "shape": "circle",
+      "copper": "all_copper",
+      "drill_nm": 1000000
+    },
+    {
+      "number": "4",
+      "center": {
+        "x_nm": 2540000,
+        "y_nm": 2540000
+      },
+      "width_nm": 1700000,
+      "height_nm": 1700000,
+      "rotation": 0,
+      "shape": "circle",
+      "copper": "all_copper",
+      "drill_nm": 1000000
+    },
+    {
+      "number": "5",
+      "center": {
+        "x_nm": 0,
+        "y_nm": 5080000
+      },
+      "width_nm": 1700000,
+      "height_nm": 1700000,
+      "rotation": 0,
+      "shape": "circle",
+      "copper": "all_copper",
+      "drill_nm": 1000000
+    },
+    {
+      "number": "6",
+      "center": {
+        "x_nm": 2540000,
+        "y_nm": 5080000
+      },
+      "width_nm": 1700000,
+      "height_nm": 1700000,
+      "rotation": 0,
+      "shape": "circle",
+      "copper": "all_copper",
+      "drill_nm": 1000000
+    }
+  ],
+  "graphics": [
+    {
+      "purpose": "courtyard",
+      "center": {
+        "x_nm": 1270000,
+        "y_nm": 2545000
+      },
+      "width_nm": 9900000,
+      "height_nm": 16290000,
+      "rotation": 0
+    }
+  ],
+  "artwork": [
+    {
+      "purpose": "silkscreen",
+      "graphic": {
+        "geometry": {
+          "type": "line",
+          "from": {
+            "x_nm": -4680000,
+            "y_nm": -500000
+          },
+          "to": {
+            "x_nm": -4680000,
+            "y_nm": 500000
+          }
+        },
+        "stroke_nm": 120000,
+        "fill": "none"
+      }
+    },
+    {
+      "purpose": "silkscreen",
+      "graphic": {
+        "geometry": {
+          "type": "line",
+          "from": {
+            "x_nm": -4680000,
+            "y_nm": 500000
+          },
+          "to": {
+            "x_nm": -3680000,
+            "y_nm": 0
+          }
+        },
+        "stroke_nm": 120000,
+        "fill": "none"
+      }
+    },
+    {
+      "purpose": "silkscreen",
+      "graphic": {
+        "geometry": {
+          "type": "line",
+          "from": {
+            "x_nm": -3680000,
+            "y_nm": 0
+          },
+          "to": {
+            "x_nm": -4680000,
+            "y_nm": -500000
+          }
+        },
+        "stroke_nm": 120000,
+        "fill": "none"
+      }
+    },
+    {
+      "purpose": "silkscreen",
+      "graphic": {
+        "geometry": {
+          "type": "line",
+          "from": {
+            "x_nm": -3290000,
+            "y_nm": -5210000
+          },
+          "to": {
+            "x_nm": 5830000,
+            "y_nm": -5210000
+          }
+        },
+        "stroke_nm": 120000,
+        "fill": "none"
+      }
+    },
+    {
+      "purpose": "silkscreen",
+      "graphic": {
+        "geometry": {
+          "type": "line",
+          "from": {
+            "x_nm": -3290000,
+            "y_nm": 490000
+          },
+          "to": {
+            "x_nm": -1980000,
+            "y_nm": 490000
+          }
+        },
+        "stroke_nm": 120000,
+        "fill": "none"
+      }
+    },
+    {
+      "purpose": "silkscreen",
+      "graphic": {
+        "geometry": {
+          "type": "line",
+          "from": {
+            "x_nm": -3290000,
+            "y_nm": 10290000
+          },
+          "to": {
+            "x_nm": -3290000,
+            "y_nm": -5210000
+          }
+        },
+        "stroke_nm": 120000,
+        "fill": "none"
+      }
+    },
+    {
+      "purpose": "silkscreen",
+      "graphic": {
+        "geometry": {
+          "type": "line",
+          "from": {
+            "x_nm": -1980000,
+            "y_nm": -3910000
+          },
+          "to": {
+            "x_nm": 4520000,
+            "y_nm": -3910000
+          }
+        },
+        "stroke_nm": 120000,
+        "fill": "none"
+      }
+    },
+    {
+      "purpose": "silkscreen",
+      "graphic": {
+        "geometry": {
+          "type": "line",
+          "from": {
+            "x_nm": -1980000,
+            "y_nm": 490000
+          },
+          "to": {
+            "x_nm": -1980000,
+            "y_nm": -3910000
+          }
+        },
+        "stroke_nm": 120000,
+        "fill": "none"
+      }
+    },
+    {
+      "purpose": "silkscreen",
+      "graphic": {
+        "geometry": {
+          "type": "line",
+          "from": {
+            "x_nm": -1980000,
+            "y_nm": 4590000
+          },
+          "to": {
+            "x_nm": -3290000,
+            "y_nm": 4590000
+          }
+        },
+        "stroke_nm": 120000,
+        "fill": "none"
+      }
+    },
+    {
+      "purpose": "silkscreen",
+      "graphic": {
+        "geometry": {
+          "type": "line",
+          "from": {
+            "x_nm": 4520000,
+            "y_nm": -3910000
+          },
+          "to": {
+            "x_nm": 4520000,
+            "y_nm": 8990000
+          }
+        },
+        "stroke_nm": 120000,
+        "fill": "none"
+      }
+    },
+    {
+      "purpose": "silkscreen",
+      "graphic": {
+        "geometry": {
+          "type": "line",
+          "from": {
+            "x_nm": 4520000,
+            "y_nm": 8990000
+          },
+          "to": {
+            "x_nm": -1980000,
+            "y_nm": 8990000
+          }
+        },
+        "stroke_nm": 120000,
+        "fill": "none"
+      }
+    },
+    {
+      "purpose": "silkscreen",
+      "graphic": {
+        "geometry": {
+          "type": "line",
+          "from": {
+            "x_nm": 5830000,
+            "y_nm": -5210000
+          },
+          "to": {
+            "x_nm": 5830000,
+            "y_nm": 10290000
+          }
+        },
+        "stroke_nm": 120000,
+        "fill": "none"
+      }
+    },
+    {
+      "purpose": "silkscreen",
+      "graphic": {
+        "geometry": {
+          "type": "line",
+          "from": {
+            "x_nm": 5830000,
+            "y_nm": 10290000
+          },
+          "to": {
+            "x_nm": -3290000,
+            "y_nm": 10290000
+          }
+        },
+        "stroke_nm": 120000,
+        "fill": "none"
+      }
+    }
+  ],
+  "reference": "pcbcraft-technical-1"
+}

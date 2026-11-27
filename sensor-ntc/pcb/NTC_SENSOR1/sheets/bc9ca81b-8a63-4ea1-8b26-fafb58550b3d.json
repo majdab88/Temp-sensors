@@ -1,0 +1,346 @@
+{
+  "format": "pcbcraft-sheet/9",
+  "id": "bc9ca81b-8a63-4ea1-8b26-fafb58550b3d",
+  "page": {"paper":"a4","orientation":"landscape","at_nm":[-148590000,-105410000],"template":{"library":"basic-frames","name":"default","revision":1}},
+  "net_labels": [
+    {"id":124,"name":"V_bat","style":"local","at":{"x_nm":129540000,"y_nm":45720000},"rotation":180}
+
+    ,
+    {"id":125,"name":"GND","style":"local","at":{"x_nm":129540000,"y_nm":48260000},"rotation":180}
+
+    ,
+    {"id":126,"name":"GND","style":"local","at":{"x_nm":129540000,"y_nm":50800000},"rotation":180}
+
+    ,
+    {"id":127,"name":"Net-(U2-FB)","style":"local","at":{"x_nm":129540000,"y_nm":53340000},"rotation":180}
+
+    ,
+    {"id":128,"name":"3v3","style":"local","at":{"x_nm":149860000,"y_nm":45720000},"rotation":0}
+
+    ,
+    {"id":129,"name":"Net-(U2-L2)","style":"local","at":{"x_nm":149860000,"y_nm":48260000},"rotation":0}
+
+    ,
+    {"id":130,"name":"GND","style":"local","at":{"x_nm":149860000,"y_nm":50800000},"rotation":0}
+
+    ,
+    {"id":131,"name":"Net-(U2-L1)","style":"local","at":{"x_nm":149860000,"y_nm":53340000},"rotation":0}
+
+    ,
+    {"id":132,"name":"V_bat","style":"local","at":{"x_nm":149860000,"y_nm":55880000},"rotation":0}
+
+    ,
+    {"id":133,"name":"EN","style":"local","at":{"x_nm":381000000,"y_nm":134620000},"rotation":90}
+
+    ,
+    {"id":134,"name":"GND","style":"local","at":{"x_nm":381000000,"y_nm":144780000},"rotation":270}
+
+    ,
+    {"id":135,"name":"3v3","style":"local","at":{"x_nm":381000000,"y_nm":96520000},"rotation":90}
+
+    ,
+    {"id":136,"name":"NTC_ADC","style":"local","at":{"x_nm":381000000,"y_nm":106680000},"rotation":270}
+
+    ,
+    {"id":137,"name":"bat_ADC","style":"local","at":{"x_nm":342900000,"y_nm":96520000},"rotation":90}
+
+    ,
+    {"id":138,"name":"DIV_EN","style":"local","at":{"x_nm":342900000,"y_nm":106680000},"rotation":270}
+
+    ,
+    {"id":139,"name":"EN","style":"local","at":{"x_nm":342900000,"y_nm":20320000},"rotation":90}
+
+    ,
+    {"id":140,"name":"GND","style":"local","at":{"x_nm":342900000,"y_nm":30480000},"rotation":270}
+
+    ,
+    {"id":141,"name":"3v3","style":"local","at":{"x_nm":266700000,"y_nm":58420000},"rotation":90}
+
+    ,
+    {"id":142,"name":"GND","style":"local","at":{"x_nm":266700000,"y_nm":68580000},"rotation":270}
+
+    ,
+    {"id":143,"name":"V_bat","style":"local","at":{"x_nm":228600000,"y_nm":20320000},"rotation":90}
+
+    ,
+    {"id":144,"name":"GND","style":"local","at":{"x_nm":228600000,"y_nm":30480000},"rotation":270}
+
+    ,
+    {"id":145,"name":"3v3","style":"local","at":{"x_nm":304800000,"y_nm":134620000},"rotation":90}
+
+    ,
+    {"id":146,"name":"D0_BTN","style":"local","at":{"x_nm":304800000,"y_nm":144780000},"rotation":270}
+
+    ,
+    {"id":147,"name":"V_bat","style":"local","at":{"x_nm":266700000,"y_nm":20320000},"rotation":90}
+
+    ,
+    {"id":148,"name":"GND","style":"local","at":{"x_nm":266700000,"y_nm":30480000},"rotation":270}
+
+    ,
+    {"id":149,"name":"D0_BTN","style":"local","at":{"x_nm":304800000,"y_nm":20320000},"rotation":90}
+
+    ,
+    {"id":150,"name":"GND","style":"local","at":{"x_nm":304800000,"y_nm":30480000},"rotation":270}
+
+    ,
+    {"id":151,"name":"3v3","style":"local","at":{"x_nm":228600000,"y_nm":96520000},"rotation":90}
+
+    ,
+    {"id":152,"name":"Net-(U2-FB)","style":"local","at":{"x_nm":228600000,"y_nm":106680000},"rotation":270}
+
+    ,
+    {"id":153,"name":"Net-(U2-FB)","style":"local","at":{"x_nm":266700000,"y_nm":96520000},"rotation":90}
+
+    ,
+    {"id":154,"name":"GND","style":"local","at":{"x_nm":266700000,"y_nm":106680000},"rotation":270}
+
+    ,
+    {"id":155,"name":"bat_ADC","style":"local","at":{"x_nm":304800000,"y_nm":58420000},"rotation":90}
+
+    ,
+    {"id":156,"name":"GND","style":"local","at":{"x_nm":304800000,"y_nm":68580000},"rotation":270}
+
+    ,
+    {"id":157,"name":"Net-(U2-L1)","style":"local","at":{"x_nm":190500000,"y_nm":96520000},"rotation":90}
+
+    ,
+    {"id":158,"name":"Net-(U2-L2)","style":"local","at":{"x_nm":190500000,"y_nm":106680000},"rotation":270}
+
+    ,
+    {"id":159,"name":"3v3","style":"local","at":{"x_nm":266700000,"y_nm":134620000},"rotation":90}
+
+    ,
+    {"id":160,"name":"EN","style":"local","at":{"x_nm":266700000,"y_nm":144780000},"rotation":270}
+
+    ,
+    {"id":161,"name":"3v3","style":"local","at":{"x_nm":342900000,"y_nm":134620000},"rotation":90}
+
+    ,
+    {"id":162,"name":"GPIO8","style":"local","at":{"x_nm":342900000,"y_nm":144780000},"rotation":270}
+
+    ,
+    {"id":163,"name":"GND","style":"local","at":{"x_nm":38100000,"y_nm":40640000},"rotation":180}
+
+    ,
+    {"id":164,"name":"3v3","style":"local","at":{"x_nm":38100000,"y_nm":43180000},"rotation":180}
+
+    ,
+    {"id":165,"name":"EN","style":"local","at":{"x_nm":38100000,"y_nm":45720000},"rotation":180}
+
+    ,
+    {"id":166,"name":"LED","style":"local","at":{"x_nm":38100000,"y_nm":50800000},"rotation":180}
+
+    ,
+    {"id":167,"name":"D0_BTN","style":"local","at":{"x_nm":38100000,"y_nm":58420000},"rotation":180}
+
+    ,
+    {"id":168,"name":"NTC_ADC","style":"local","at":{"x_nm":38100000,"y_nm":60960000},"rotation":180}
+
+    ,
+    {"id":169,"name":"GPIO8","style":"local","at":{"x_nm":63500000,"y_nm":40640000},"rotation":0}
+
+    ,
+    {"id":170,"name":"Boot","style":"local","at":{"x_nm":63500000,"y_nm":53340000},"rotation":0}
+
+    ,
+    {"id":171,"name":"DIV_EN","style":"local","at":{"x_nm":44450000,"y_nm":38100000},"rotation":90}
+
+    ,
+    {"id":172,"name":"NTC_EN","style":"local","at":{"x_nm":46990000,"y_nm":38100000},"rotation":90}
+
+    ,
+    {"id":173,"name":"ESP_RXD","style":"local","at":{"x_nm":57150000,"y_nm":38100000},"rotation":90}
+
+    ,
+    {"id":174,"name":"ESP_TXD","style":"local","at":{"x_nm":45720000,"y_nm":63500000},"rotation":270}
+
+    ,
+    {"id":175,"name":"bat_ADC","style":"local","at":{"x_nm":50800000,"y_nm":63500000},"rotation":270}
+
+    ,
+    {"id":176,"name":"GND","style":"local","at":{"x_nm":53340000,"y_nm":63500000},"rotation":270}
+
+    ,
+    {"id":177,"name":"GND","style":"local","at":{"x_nm":55880000,"y_nm":63500000},"rotation":270}
+
+    ,
+    {"id":178,"name":"LED","style":"local","at":{"x_nm":190500000,"y_nm":134620000},"rotation":90}
+
+    ,
+    {"id":179,"name":"Net-(D1-A)","style":"local","at":{"x_nm":190500000,"y_nm":144780000},"rotation":270}
+
+    ,
+    {"id":180,"name":"GND","style":"local","at":{"x_nm":381000000,"y_nm":58420000},"rotation":90}
+
+    ,
+    {"id":181,"name":"Net-(D1-A)","style":"local","at":{"x_nm":381000000,"y_nm":68580000},"rotation":270}
+
+    ,
+    {"id":182,"name":"3v3","style":"local","at":{"x_nm":228600000,"y_nm":58420000},"rotation":90}
+
+    ,
+    {"id":183,"name":"GND","style":"local","at":{"x_nm":228600000,"y_nm":68580000},"rotation":270}
+
+    ,
+    {"id":184,"name":"D0_BTN","style":"local","at":{"x_nm":190500000,"y_nm":172720000},"rotation":90}
+
+    ,
+    {"id":185,"name":"GND","style":"local","at":{"x_nm":190500000,"y_nm":182880000},"rotation":270}
+
+    ,
+    {"id":186,"name":"3v3","style":"local","at":{"x_nm":228600000,"y_nm":134620000},"rotation":90}
+
+    ,
+    {"id":187,"name":"Boot","style":"local","at":{"x_nm":228600000,"y_nm":144780000},"rotation":270}
+
+    ,
+    {"id":188,"name":"V_bat","style":"local","at":{"x_nm":381000000,"y_nm":20320000},"rotation":90}
+
+    ,
+    {"id":189,"name":"GND","style":"local","at":{"x_nm":381000000,"y_nm":30480000},"rotation":270}
+
+    ,
+    {"id":190,"name":"3v3","style":"local","at":{"x_nm":190500000,"y_nm":58420000},"rotation":90}
+
+    ,
+    {"id":191,"name":"GND","style":"local","at":{"x_nm":190500000,"y_nm":68580000},"rotation":270}
+
+    ,
+    {"id":192,"name":"EN","style":"local","at":{"x_nm":129540000,"y_nm":111760000},"rotation":180}
+
+    ,
+    {"id":193,"name":"3v3","style":"local","at":{"x_nm":129540000,"y_nm":114300000},"rotation":180}
+
+    ,
+    {"id":194,"name":"ESP_TXD","style":"local","at":{"x_nm":129540000,"y_nm":116840000},"rotation":180}
+
+    ,
+    {"id":195,"name":"GND","style":"local","at":{"x_nm":149860000,"y_nm":111760000},"rotation":0}
+
+    ,
+    {"id":196,"name":"ESP_RXD","style":"local","at":{"x_nm":149860000,"y_nm":114300000},"rotation":0}
+
+    ,
+    {"id":197,"name":"Boot","style":"local","at":{"x_nm":149860000,"y_nm":116840000},"rotation":0}
+
+    ,
+    {"id":198,"name":"V_bat","style":"local","at":{"x_nm":190500000,"y_nm":20320000},"rotation":90}
+
+    ,
+    {"id":199,"name":"GND","style":"local","at":{"x_nm":190500000,"y_nm":30480000},"rotation":270}
+
+    ,
+    {"id":200,"name":"V_bat","style":"local","at":{"x_nm":304800000,"y_nm":96520000},"rotation":90}
+
+    ,
+    {"id":201,"name":"bat_ADC","style":"local","at":{"x_nm":304800000,"y_nm":106680000},"rotation":270}
+
+    ,
+    {"id":202,"name":"NTC_ADC","style":"local","at":{"x_nm":228600000,"y_nm":172720000},"rotation":90}
+
+    ,
+    {"id":203,"name":"NTC_EN","style":"local","at":{"x_nm":228600000,"y_nm":182880000},"rotation":270}
+
+    ,
+    {"id":204,"name":"NTC_ADC","style":"local","at":{"x_nm":342900000,"y_nm":58420000},"rotation":90}
+
+    ,
+    {"id":205,"name":"GND","style":"local","at":{"x_nm":342900000,"y_nm":68580000},"rotation":270}
+  ],
+  "labels": [
+  ],
+  "subsheets": [
+  ],
+  "symbols": [
+    {"id":80,"component":80,"unit":"main","x_nm":50800000,"y_nm":50800000,"rotation":0}
+
+    ,
+    {"id":81,"component":81,"unit":"main","x_nm":139700000,"y_nm":50800000,"rotation":0}
+
+    ,
+    {"id":82,"component":82,"unit":"main","x_nm":190500000,"y_nm":25400000,"rotation":0}
+
+    ,
+    {"id":83,"component":83,"unit":"main","x_nm":228600000,"y_nm":25400000,"rotation":0}
+
+    ,
+    {"id":84,"component":84,"unit":"main","x_nm":266700000,"y_nm":25400000,"rotation":0}
+
+    ,
+    {"id":86,"component":86,"unit":"main","x_nm":304800000,"y_nm":25400000,"rotation":0}
+
+    ,
+    {"id":88,"component":88,"unit":"main","x_nm":342900000,"y_nm":25400000,"rotation":0}
+
+    ,
+    {"id":90,"component":90,"unit":"main","x_nm":381000000,"y_nm":25400000,"rotation":0}
+
+    ,
+    {"id":92,"component":92,"unit":"main","x_nm":190500000,"y_nm":63500000,"rotation":0}
+
+    ,
+    {"id":94,"component":94,"unit":"main","x_nm":228600000,"y_nm":63500000,"rotation":0}
+
+    ,
+    {"id":96,"component":96,"unit":"main","x_nm":266700000,"y_nm":63500000,"rotation":0}
+
+    ,
+    {"id":98,"component":98,"unit":"main","x_nm":304800000,"y_nm":63500000,"rotation":0}
+
+    ,
+    {"id":100,"component":100,"unit":"main","x_nm":342900000,"y_nm":63500000,"rotation":0}
+
+    ,
+    {"id":102,"component":102,"unit":"main","x_nm":381000000,"y_nm":63500000,"rotation":0}
+
+    ,
+    {"id":103,"component":103,"unit":"main","x_nm":139700000,"y_nm":114300000,"rotation":0}
+
+    ,
+    {"id":104,"component":104,"unit":"main","x_nm":190500000,"y_nm":101600000,"rotation":0}
+
+    ,
+    {"id":106,"component":106,"unit":"main","x_nm":228600000,"y_nm":101600000,"rotation":0}
+
+    ,
+    {"id":107,"component":107,"unit":"main","x_nm":266700000,"y_nm":101600000,"rotation":0}
+
+    ,
+    {"id":108,"component":108,"unit":"main","x_nm":304800000,"y_nm":101600000,"rotation":0}
+
+    ,
+    {"id":109,"component":109,"unit":"main","x_nm":342900000,"y_nm":101600000,"rotation":0}
+
+    ,
+    {"id":110,"component":110,"unit":"main","x_nm":381000000,"y_nm":101600000,"rotation":0}
+
+    ,
+    {"id":111,"component":111,"unit":"main","x_nm":190500000,"y_nm":139700000,"rotation":0}
+
+    ,
+    {"id":113,"component":113,"unit":"main","x_nm":228600000,"y_nm":139700000,"rotation":0}
+
+    ,
+    {"id":115,"component":115,"unit":"main","x_nm":266700000,"y_nm":139700000,"rotation":0}
+
+    ,
+    {"id":117,"component":117,"unit":"main","x_nm":304800000,"y_nm":139700000,"rotation":0}
+
+    ,
+    {"id":119,"component":119,"unit":"main","x_nm":342900000,"y_nm":139700000,"rotation":0}
+
+    ,
+    {"id":121,"component":121,"unit":"main","x_nm":381000000,"y_nm":139700000,"rotation":0}
+
+    ,
+    {"id":122,"component":122,"unit":"main","x_nm":190500000,"y_nm":177800000,"rotation":0}
+
+    ,
+    {"id":123,"component":123,"unit":"main","x_nm":228600000,"y_nm":177800000,"rotation":0}
+  ],
+  "junctions": [
+  ],
+  "wires": [
+  ]
+}

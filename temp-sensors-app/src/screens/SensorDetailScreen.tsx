@@ -1,326 +1,337 @@
-import React, { useEffect, useState, useCallback } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
+import { View, Text, StyleSheet, Pressable } from 'react-native';
 import {
-  View, Text, ScrollView, StyleSheet, TouchableOpacity,
-  RefreshControl, Alert, ActivityIndicator, TextInput,
-} from 'react-native';
-import { NativeStackScreenProps } from '@react-navigation/native-stack';
-import { Ionicons } from '@expo/vector-icons';
-import { RootStackParamList } from '../navigation/AppNavigator';
-import ReadingChart from '../components/ReadingChart';
-import AlertRuleModal from '../components/AlertRuleModal';
-import { getSensorReadings, renameSensor, deleteSensor, getAlertRule, AlertRule } from '../services/api';
-import { Reading, TimeRange } from '../types';
+  Screen, Card, T, Row, Chip, Button, Section, Segmented, Stat, Sheet, Field, Notice, Loading, Empty, Icon, IconName,
+} from '../ui';
+import { confirm, useToast } from '../ui/feedback';
+import { TempChart, ChartPoint } from '../components/charts';
+import { LiveChips, BatteryLine } from '../components/SensorBits';
+import AlertRuleSheet from '../components/AlertRuleSheet';
+import SensorConfigSheet from '../components/SensorConfigSheet';
+import DateRangeSheet from '../components/DateRangeSheet';
+import { useOrgData } from '../store/OrgData';
 import { useAuth } from '../context/AuthContext';
-import { canEdit } from '../utils/permissions';
+import { useLiveState } from '../utils/live';
+import * as api from '../services/api';
+import { shareCsv, sharePdf, reportHtml, statsHtml, tableHtml, chartSvg } from '../services/export';
+import { fmt, validHum, statusChip, limitText, sensorLabel, computeStats, BATTERY_TYPE_LABEL } from '../utils/sensor';
+import { timeAgo, formatDateTime, formatDate, startOfDay, endOfDay } from '../utils/time';
+import type { ScreenProps } from '../navigation/types';
+import type { Reading } from '../types';
+import { C, F, R, S } from '../theme';
 
-type Props = NativeStackScreenProps<RootStackParamList, 'SensorDetail'>;
+type RangeKey = 24 | 168 | 720 | 'custom';
+const RANGES: { value: RangeKey; label: string }[] = [
+  { value: 24, label: '24 h' }, { value: 168, label: '7 d' }, { value: 720, label: '30 d' }, { value: 'custom', label: 'Custom' },
+];
+const TABLE_PAGE = 60;
 
-const TIME_RANGES: TimeRange[] = ['24h', '7d', '30d'];
+export default function SensorDetailScreen({ route, navigation }: ScreenProps<'SensorDetail'>) {
+  const { sensorId } = route.params;
+  const toast = useToast();
+  const { canEdit, isSuperadmin } = useAuth();
+  const store = useOrgData();
+  const sensor = store.sensors.find((s) => s.id === sensorId);
+  const reading = sensor ? store.readings[sensor.mac] ?? null : null;
+  const alert = sensor ? store.alerts[sensor.mac] ?? null : null;
+  const rule = store.rules[sensorId] ?? null;
 
-export default function SensorDetailScreen({ route, navigation }: Props) {
-  const { sensorId, sensorName: initialName } = route.params;
-  const { user } = useAuth();
-  const editor = canEdit(user);
-  const [readings, setReadings] = useState<Reading[]>([]);
-  const [range, setRange] = useState<TimeRange>('24h');
-  const [loading, setLoading] = useState(true);
-  const [refreshing, setRefreshing] = useState(false);
-  const [editing, setEditing] = useState(false);
-  const [name, setName] = useState(initialName);
-  const [nameInput, setNameInput] = useState(initialName);
-  const [saving, setSaving] = useState(false);
-  const [rule, setRule] = useState<AlertRule | null>(null);
-  const [showAlertModal, setShowAlertModal] = useState(false);
+  const [range, setRange] = useState<RangeKey>(24);
+  const [custom, setCustom] = useState<{ from: Date; to: Date } | null>(null);
+  const [rows, setRows] = useState<Reading[] | null>(null);
+  const [histErr, setHistErr] = useState<string | null>(null);
+  const [shown, setShown] = useState(TABLE_PAGE);
+  const [sheet, setSheet] = useState<null | 'rename' | 'rule' | 'config' | 'range'>(null);
+  const [draft, setDraft] = useState('');
+  const [busy, setBusy] = useState<string | null>(null);
+  const [liveNote, setLiveNote] = useState('');
 
-  const fetchReadings = useCallback(async () => {
-    try {
-      const { data } = await getSensorReadings(sensorId, range);
-      setReadings(data);
-    } catch {
-      // keep existing data
-    }
-  }, [sensorId, range]);
+  useEffect(() => { navigation.setOptions({ title: sensor ? sensorLabel(sensor) : 'Sensor' }); }, [navigation, sensor?.name]);
 
-  const fetchRule = useCallback(async () => {
-    try {
-      const { data } = await getAlertRule(sensorId);
-      setRule(data);
-    } catch {
-      // leave existing rule state
-    }
-  }, [sensorId]);
+  const win = useMemo(() => {
+    if (range === 'custom' && custom) return { from: startOfDay(custom.from), to: endOfDay(custom.to) };
+    const hours = range === 'custom' ? 24 : range;
+    return { from: new Date(Date.now() - hours * 3600000), to: new Date() };
+  }, [range, custom]);
 
   useEffect(() => {
-    setLoading(true);
-    fetchReadings().finally(() => setLoading(false));
-  }, [fetchReadings]);
+    let live = true;
+    setRows(null); setHistErr(null); setShown(TABLE_PAGE);
+    api.getReadings(sensorId, { from: win.from.toISOString(), to: win.to.toISOString(), limit: 500 })
+      .then((r) => { if (live) setRows([...r.data].reverse()); }) // API is newest-first
+      .catch(() => { if (live) setHistErr('Failed to load readings'); });
+    return () => { live = false; };
+  }, [sensorId, win]);
 
-  useEffect(() => { fetchRule(); }, [fetchRule]);
+  const live = useLiveState(sensor ?? ({} as any), reading, sensor ? store.liveSeen[sensor.mac] ?? 0 : 0);
 
-  const onRefresh = async () => {
-    setRefreshing(true);
-    await fetchReadings();
-    setRefreshing(false);
-  };
+  if (!sensor) {
+    return <Screen><Empty icon="slash" title="Sensor not found" body="It may have been removed or moved to another org." /></Screen>;
+  }
 
-  const saveName = async () => {
-    const trimmed = nameInput.trim();
-    if (!trimmed || trimmed === name) {
-      setEditing(false);
-      return;
-    }
-    setSaving(true);
+  const chip = statusChip(sensor, reading, !!alert);
+  const limits = limitText(rule);
+  const high = rule?.enabled ? rule.high_limit : null;
+  const low = rule?.enabled ? rule.low_limit : null;
+  const points: ChartPoint[] = (rows ?? []).map((r) => ({ t: new Date(r.recorded_at).getTime(), temp: r.temp, hum: r.hum }));
+  const temps = (rows ?? []).map((r) => r.temp).filter((t): t is number => t != null);
+  const stats = computeStats(temps, high, low);
+  const hasHum = (rows ?? []).some((r) => validHum(r.hum));
+  const rangeText = range === 'custom' && custom ? `${formatDate(custom.from)} → ${formatDate(custom.to)}`
+    : RANGES.find((r) => r.value === range)?.label ?? '';
+  const batteryType = sensor.battery_type || 'lithium';
+
+  // ── actions ────────────────────────────────────────────────────────────────
+  async function rename() {
+    const name = draft.trim();
+    if (!name) return;
+    setBusy('rename');
     try {
-      await renameSensor(sensorId, trimmed);
-      setName(trimmed);
-      navigation.setOptions({ title: trimmed });
-      setEditing(false);
-    } catch {
-      Alert.alert('Error', 'Failed to rename sensor.');
-    } finally {
-      setSaving(false);
-    }
-  };
+      await api.renameSensor(sensor!.id, name);
+      store.patchSensor(sensor!.id, { name });
+      setSheet(null);
+      toast.success('Sensor renamed');
+    } catch (err) { toast.error(api.errText(err, 'Failed to rename')); }
+    finally { setBusy(null); }
+  }
 
-  const confirmDelete = () => {
-    Alert.alert(
-      'Remove Sensor',
-      `Remove "${name}" and all its readings? This cannot be undone.`,
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Remove',
-          style: 'destructive',
-          onPress: async () => {
-            try {
-              await deleteSensor(sensorId);
-              navigation.goBack();
-            } catch {
-              Alert.alert('Error', 'Failed to remove sensor.');
-            }
-          },
-        },
-      ]
-    );
-  };
+  // Which cells are in the holder decides which pack voltage the % is read
+  // from (backend/src/battery.js); the backend recomputes and returns it.
+  async function setType(type: 'lithium' | 'alkaline') {
+    if (type === batteryType) return;
+    setBusy('battery');
+    try {
+      const res = await api.setBatteryType(sensor!.id, type);
+      store.patchSensor(sensor!.id, { battery_type: type });
+      if (res.data.battery != null) store.setReading(sensor!.mac, { battery: res.data.battery });
+      toast.success(`Battery type: ${BATTERY_TYPE_LABEL[type]}`);
+    } catch { toast.error('Failed to change battery type'); }
+    finally { setBusy(null); }
+  }
 
-  // Update header title on name change
-  useEffect(() => {
-    navigation.setOptions({ title: name });
-  }, [name, navigation]);
+  // A sleeping node can't be woken on demand: this extends a wake it was going
+  // to have anyway, so the wait is up to one reporting interval.
+  async function startLive() {
+    setBusy('live');
+    try {
+      const res = await api.requestLive(sensor!.id);
+      store.patchSensor(sensor!.id, { live_requested_at: new Date().toISOString() });
+      const mins = Math.round((res.data.starts_within_secs || 900) / 60);
+      const n = Math.round(res.data.duration_s / res.data.interval_s);
+      setLiveNote(`Queued — ${n} readings, one every ${res.data.interval_s}s. Starts on the sensor's next wake (up to ~${mins} min), or press its button to start now.`);
+    } catch { setLiveNote('Live request failed.'); }
+    finally { setBusy(null); }
+  }
 
-  const hasHumData = readings.some((r) => r.hum !== -999);
+  async function endLive() {
+    setBusy('live');
+    try {
+      await api.stopLive(sensor!.id);
+      store.patchSensor(sensor!.id, { live_until: null, live_requested_at: null });
+      store.clearLiveSeen(sensor!.mac);
+      setLiveNote('Stopped.');
+    } catch { setLiveNote('Stop failed.'); }
+    finally { setBusy(null); }
+  }
+
+  async function remove() {
+    const ok = await confirm({
+      title: 'Remove sensor?',
+      message: `"${sensorLabel(sensor!)}" and all its readings will be permanently deleted.`,
+      confirmLabel: 'Remove', danger: true,
+    });
+    if (!ok) return;
+    setBusy('delete');
+    try {
+      await api.deleteSensor(sensor!.id);
+      navigation.goBack();
+      store.removeSensor(sensor!.id);
+      toast.success('Sensor removed');
+    } catch { toast.error('Failed to remove sensor'); setBusy(null); }
+  }
+
+  async function exportCsv() {
+    setBusy('csv');
+    try {
+      const { text, filename } = await api.getCsv(`/sensors/${sensor!.id}/readings/export.csv`,
+        { from: win.from.toISOString(), to: win.to.toISOString() });
+      await shareCsv(text, filename ?? `${sensorLabel(sensor!)}-readings.csv`);
+    } catch { toast.error('Export failed — try again'); }
+    finally { setBusy(null); }
+  }
+
+  async function exportPdf() {
+    if (!rows) return;
+    setBusy('pdf');
+    try {
+      const statItems = stats ? [
+        { label: 'Min', value: `${stats.min.toFixed(1)}°` }, { label: 'Max', value: `${stats.max.toFixed(1)}°` },
+        { label: 'Avg', value: `${stats.avg.toFixed(1)}°` }, { label: 'MKT', value: `${stats.mkt.toFixed(1)}°` },
+        ...(stats.inRange != null ? [{ label: 'In range', value: `${stats.inRange.toFixed(1)}%`, alarm: stats.inRange < 100 }] : []),
+      ] : [];
+      const chart = chartSvg(points.filter((p) => p.temp != null).map((p) => ({ t: p.t, v: p.temp as number })), high, low);
+      const table = tableHtml(
+        ['#', 'Time', 'Temp °C', ...(hasHum ? ['RH %'] : []), 'RSSI', 'Battery'],
+        [...rows].reverse().map((r, i) => [
+          rows.length - i, formatDateTime(r.recorded_at), r.temp != null ? r.temp.toFixed(2) : null,
+          ...(hasHum ? [validHum(r.hum) ? r.hum.toFixed(1) : null] : []),
+          r.rssi != null ? `${r.rssi} dBm` : null, r.battery != null && r.battery !== 255 ? `${r.battery}%` : null,
+        ]));
+      const html = reportHtml('Temperature history report',
+        `${sensorLabel(sensor!)} · ${sensor!.mac}${sensor!.hub_name ? ` · Hub: ${sensor!.hub_name}` : ''} · Range: ${rangeText}${limits ? ` · Limits: ${limits}` : ''}`,
+        statsHtml(statItems) + chart + table);
+      await sharePdf(html, `${sensorLabel(sensor!)}-report.pdf`);
+    } catch { toast.error("Couldn't create the PDF"); }
+    finally { setBusy(null); }
+  }
+
+  const t = fmt(reading?.temp);
+  const actions: { key: string; icon: IconName; label: string; onPress: () => void; show: boolean; danger?: boolean }[] = [
+    { key: 'rename', icon: 'edit-2', label: 'Rename', show: canEdit, onPress: () => { setDraft(sensor.name || ''); setSheet('rename'); } },
+    { key: 'rule', icon: 'bell', label: rule ? 'Alert rule' : 'Add alert', show: canEdit, onPress: () => setSheet('rule') },
+    { key: 'live', icon: live.isLive || live.livePending ? 'stop-circle' : 'radio', label: live.isLive ? 'Stop live' : live.livePending ? 'Cancel live' : 'Live mode', show: canEdit, onPress: live.isLive || live.livePending ? endLive : startLive },
+    { key: 'config', icon: 'sliders', label: 'Calibration', show: isSuperadmin, onPress: () => setSheet('config') },
+    { key: 'delete', icon: 'trash-2', label: 'Remove', show: canEdit, danger: true, onPress: remove },
+  ];
 
   return (
-    <ScrollView
-      style={styles.container}
-      contentContainerStyle={styles.content}
-      refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor="#38bdf8" />}
-    >
-      {/* Name row */}
-      <View style={styles.nameRow}>
-        {editing ? (
-          <>
-            <TextInput
-              style={styles.nameInput}
-              value={nameInput}
-              onChangeText={setNameInput}
-              autoFocus
-              maxLength={19}
-            />
-            <TouchableOpacity onPress={saveName} disabled={saving} style={styles.iconBtn}>
-              {saving ? (
-                <ActivityIndicator size={18} color="#38bdf8" />
-              ) : (
-                <Ionicons name="checkmark-circle" size={24} color="#22c55e" />
-              )}
-            </TouchableOpacity>
-            <TouchableOpacity onPress={() => { setEditing(false); setNameInput(name); }} style={styles.iconBtn}>
-              <Ionicons name="close-circle" size={24} color="#ef4444" />
-            </TouchableOpacity>
-          </>
-        ) : (
-          <>
-            <Text style={styles.sensorName}>{name}</Text>
-            {editor && (
-              <TouchableOpacity onPress={() => { setEditing(true); setNameInput(name); }} style={styles.iconBtn}>
-                <Ionicons name="pencil-outline" size={20} color="#64748b" />
-              </TouchableOpacity>
-            )}
-            {editor && (
-              <TouchableOpacity onPress={confirmDelete} style={styles.iconBtn}>
-                <Ionicons name="trash-outline" size={20} color="#ef4444" />
-              </TouchableOpacity>
-            )}
-          </>
-        )}
-      </View>
-
-      {/* Alerts */}
-      <View style={styles.alertCard}>
-        <View style={styles.alertHeader}>
-          <View style={styles.alertTitleRow}>
-            <Ionicons name="notifications-outline" size={16} color="#94a3b8" />
-            <Text style={styles.alertTitle}>Alerts</Text>
-          </View>
-          {editor && (
-            <TouchableOpacity onPress={() => setShowAlertModal(true)}>
-              <Text style={styles.alertEdit}>{rule ? 'Edit' : 'Set up'}</Text>
-            </TouchableOpacity>
-          )}
+    <Screen>
+      <Card tone={alert ? 'alarm' : undefined}>
+        <Row style={{ justifyContent: 'space-between' }}>
+          <T v="caption" numberOfLines={1} style={{ flex: 1 }}>{sensor.hub_name || sensor.hub_mac} · {sensor.mac}</T>
+          <Chip tone={chip.tone} label={chip.label} />
+        </Row>
+        <View style={styles.bigRow}>
+          <Text style={[styles.big, !!alert && { color: C.alarm }, t == null && { color: C.ink3 }]}>{t ?? '--'}</Text>
+          {t != null && <Text style={styles.bigUnit}>°C</Text>}
+          {validHum(reading?.hum) && <Text style={styles.hum}>RH {fmt(reading!.hum, 0)}%</Text>}
         </View>
-        {rule && rule.enabled ? (
-          <Text style={styles.alertSummary}>
-            {[
-              rule.high_limit != null ? `Max ${rule.high_limit}°C` : null,
-              rule.low_limit != null ? `Min ${rule.low_limit}°C` : null,
-            ].filter(Boolean).join('   ·   ')}
-            {'    via '}{rule.channels.join(', ')}
-          </Text>
-        ) : (
-          <Text style={styles.alertMuted}>{rule ? 'Disabled' : 'No alerts set'}</Text>
-        )}
-      </View>
+        <Row gap={6} style={{ flexWrap: 'wrap' }}>
+          {limits ? <Chip tone="plain" icon="bell" label={limits} /> : <Chip tone="plain" label="No alert rule" />}
+          <LiveChips sensor={sensor} reading={reading} liveSeenAt={store.liveSeen[sensor.mac] ?? 0} />
+        </Row>
+        <View style={styles.metaGrid}>
+          <Meta icon="clock" text={timeAgo(reading?.recorded_at)} />
+          {reading?.rssi != null && <Meta icon="wifi" text={`${reading.rssi} dBm`} />}
+          {sensor.fw_version ? <Meta icon="cpu" text={`v${sensor.fw_version}`} /> : null}
+        </View>
+        <View style={{ marginTop: S.sm }}><BatteryLine reading={reading} type={batteryType} /></View>
+        <Row style={{ marginTop: S.md, justifyContent: 'space-between' }}>
+          <T v="small">Batteries</T>
+          {canEdit ? (
+            <Segmented
+              style={{ width: 190, opacity: busy === 'battery' ? 0.5 : 1 }}
+              value={batteryType}
+              onChange={(v) => setType(v as 'lithium' | 'alkaline')}
+              options={[{ value: 'lithium', label: 'Lithium' }, { value: 'alkaline', label: 'Alkaline' }]}
+            />
+          ) : <T v="body">{BATTERY_TYPE_LABEL[batteryType]}</T>}
+        </Row>
+      </Card>
 
-      <AlertRuleModal
-        sensorId={sensorId}
-        sensorName={name}
-        visible={showAlertModal}
-        onClose={(changed) => {
-          setShowAlertModal(false);
-          if (changed) fetchRule();
-        }}
-      />
-
-      {/* Time range selector */}
-      <View style={styles.rangeRow}>
-        {TIME_RANGES.map((r) => (
-          <TouchableOpacity
-            key={r}
-            style={[styles.rangeBtn, range === r && styles.rangeBtnActive]}
-            onPress={() => setRange(r)}
-          >
-            <Text style={[styles.rangeBtnText, range === r && styles.rangeBtnTextActive]}>{r}</Text>
-          </TouchableOpacity>
-        ))}
-      </View>
-
-      {loading ? (
-        <ActivityIndicator size="large" color="#38bdf8" style={{ marginTop: 40 }} />
-      ) : (
-        <>
-          <ReadingChart readings={readings} field="temp" />
-          {hasHumData && <ReadingChart readings={readings} field="hum" />}
-
-          {/* Readings data table */}
-          {readings.length > 0 && (
-            <View style={styles.tableSection}>
-              <Text style={styles.tableTitle}>Readings ({readings.length})</Text>
-              <View style={styles.tableHeader}>
-                <Text style={[styles.tableHeaderCell, { flex: 2 }]}>Time</Text>
-                <Text style={styles.tableHeaderCell}>Temp</Text>
-                <Text style={styles.tableHeaderCell}>Hum</Text>
-                <Text style={styles.tableHeaderCell}>RSSI</Text>
-                <Text style={styles.tableHeaderCell}>Bat</Text>
-              </View>
-              {[...readings].reverse().slice(0, 100).map((r, i) => (
-                <View key={r.id ?? i} style={[styles.tableRow, i % 2 === 0 && styles.tableRowAlt]}>
-                  <Text style={[styles.tableCell, { flex: 2 }]}>
-                    {new Date(r.recorded_at).toLocaleString([], { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
-                  </Text>
-                  <Text style={styles.tableCell}>
-                    {r.temp === -999 ? 'ERR' : r.temp?.toFixed(2) ?? '—'}
-                  </Text>
-                  <Text style={styles.tableCell}>
-                    {r.hum === -999 ? 'N/A' : r.hum?.toFixed(1) ?? '—'}
-                  </Text>
-                  <Text style={styles.tableCell}>
-                    {r.rssi ?? '—'}
-                  </Text>
-                  <Text style={styles.tableCell}>
-                    {r.battery != null && r.battery !== 255 ? `${r.battery}%` : '—'}
-                  </Text>
-                </View>
-              ))}
-            </View>
-          )}
-        </>
+      {actions.some((a) => a.show) && (
+        <View style={styles.actions}>
+          {actions.filter((a) => a.show).map((a) => (
+            <Pressable key={a.key} onPress={a.onPress} disabled={busy === a.key}
+              style={({ pressed }) => [styles.action, pressed && { opacity: 0.7 }, busy === a.key && { opacity: 0.5 }]}>
+              <Icon name={a.icon} size={18} color={a.danger ? C.alarmDeep : C.ice} />
+              <Text style={[styles.actionText, a.danger && { color: C.alarmDeep }]} numberOfLines={1}>{a.label}</Text>
+            </Pressable>
+          ))}
+        </View>
       )}
-    </ScrollView>
+      {liveNote ? <View style={{ marginTop: S.sm }}><Notice tone="ice" icon="radio">{liveNote}</Notice></View> : null}
+
+      <Section title="History" right={<T v="caption">{rangeText}</T>}>
+        <Segmented
+          value={range}
+          onChange={(v) => { if (v === 'custom') setSheet('range'); else setRange(v); }}
+          options={RANGES}
+        />
+        <Card style={{ marginTop: S.sm, paddingHorizontal: S.sm }}>
+          {histErr ? <Notice tone="alarm">{histErr}</Notice>
+            : rows == null ? <Loading label="Loading chart data…" />
+            : rows.length === 0 ? <Empty icon="bar-chart-2" title="No readings" body="No data for the selected range." />
+            : <TempChart points={points} high={high} low={low} />}
+        </Card>
+        {stats && (
+          <View style={styles.stats}>
+            <Stat label="Min" value={`${stats.min.toFixed(1)}°`} />
+            <Stat label="Max" value={`${stats.max.toFixed(1)}°`} />
+            <Stat label="Avg" value={`${stats.avg.toFixed(1)}°`} />
+            <Stat label="MKT" value={`${stats.mkt.toFixed(1)}°`} />
+            {stats.inRange != null && <Stat label="In range" value={`${stats.inRange.toFixed(1)}%`} tone={stats.inRange < 100 ? 'amber' : 'ok'} />}
+          </View>
+        )}
+        {stats && <T v="caption" style={{ marginTop: 6 }}>MKT is the mean kinetic temperature — the Arrhenius-weighted average used for cold-chain compliance.</T>}
+        <Row style={{ marginTop: S.md }}>
+          <Button label="Export CSV" icon="download" small onPress={exportCsv} busy={busy === 'csv'} />
+          <Button label="PDF report" icon="file-text" small onPress={exportPdf} busy={busy === 'pdf'} disabled={!rows?.length} />
+        </Row>
+      </Section>
+
+      {rows && rows.length > 0 && (
+        <Section title={`Readings · ${rows.length}`}>
+          <Card style={{ padding: 0, overflow: 'hidden' }}>
+            <View style={[styles.tr, styles.th]}>
+              <Text style={[styles.tdTime, styles.thText]}>Time</Text>
+              <Text style={[styles.td, styles.thText]}>°C</Text>
+              {hasHum && <Text style={[styles.td, styles.thText]}>RH</Text>}
+              <Text style={[styles.td, styles.thText]}>RSSI</Text>
+              <Text style={[styles.td, styles.thText]}>Bat</Text>
+            </View>
+            {[...rows].reverse().slice(0, shown).map((r, i) => (
+              <View key={r.id ?? r.recorded_at} style={[styles.tr, i % 2 === 1 && { backgroundColor: C.page }]}>
+                <Text style={styles.tdTime}>{formatDateTime(r.recorded_at)}</Text>
+                <Text style={[styles.td, { color: C.ink, fontFamily: F.monoMedium }]}>{r.temp != null ? r.temp.toFixed(2) : '—'}</Text>
+                {hasHum && <Text style={styles.td}>{validHum(r.hum) ? r.hum.toFixed(1) : '—'}</Text>}
+                <Text style={styles.td}>{r.rssi ?? '—'}</Text>
+                <Text style={styles.td}>{r.battery != null && r.battery !== 255 ? `${r.battery}%` : '—'}</Text>
+              </View>
+            ))}
+          </Card>
+          {shown < rows.length && (
+            <Button label={`Show ${Math.min(TABLE_PAGE, rows.length - shown)} more`} variant="ghost" small style={{ alignSelf: 'center', marginTop: S.sm }}
+              onPress={() => setShown((n) => n + TABLE_PAGE)} />
+          )}
+        </Section>
+      )}
+
+      <Sheet visible={sheet === 'rename'} onClose={() => setSheet(null)} title="Rename sensor" subtitle={sensor.mac}
+        footer={<><Button label="Cancel" small onPress={() => setSheet(null)} /><Button label="Save" variant="primary" small busy={busy === 'rename'} onPress={rename} /></>}>
+        <Field label="Name" value={draft} onChangeText={setDraft} maxLength={64} autoFocus onSubmitEditing={rename} returnKeyType="done" />
+      </Sheet>
+      <AlertRuleSheet visible={sheet === 'rule'} onClose={() => setSheet(null)} sensor={sensor} onSaved={store.setRule} />
+      {isSuperadmin && <SensorConfigSheet visible={sheet === 'config'} onClose={() => setSheet(null)} sensor={sensor} />}
+      <DateRangeSheet visible={sheet === 'range'} onClose={() => setSheet(null)} initial={custom}
+        onApply={(from, to) => { setCustom({ from, to }); setRange('custom'); }} />
+    </Screen>
+  );
+}
+
+function Meta({ icon, text }: { icon: IconName; text: string }) {
+  return (
+    <Row gap={5}>
+      <Icon name={icon} size={13} color={C.ink3} />
+      <Text style={styles.metaText}>{text}</Text>
+    </Row>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#0f172a' },
-  content: { padding: 16 },
-  nameRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginBottom: 16,
-  },
-  sensorName: { color: '#f1f5f9', fontSize: 20, fontWeight: '700', flex: 1 },
-  nameInput: {
-    flex: 1,
-    backgroundColor: '#1e293b',
-    borderRadius: 8,
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    color: '#f1f5f9',
-    fontSize: 18,
-    fontWeight: '700',
-    borderWidth: 1,
-    borderColor: '#0284c7',
-    marginRight: 4,
-  },
-  iconBtn: { padding: 4, marginLeft: 4 },
-  alertCard: {
-    backgroundColor: '#1e293b',
-    borderRadius: 12,
-    padding: 14,
-    marginBottom: 16,
-    borderWidth: 1,
-    borderColor: '#334155',
-  },
-  alertHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
-  alertTitleRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
-  alertTitle: { color: '#94a3b8', fontSize: 13, fontWeight: '700' },
-  alertEdit: { color: '#38bdf8', fontSize: 14, fontWeight: '600' },
-  alertSummary: { color: '#e2e8f0', fontSize: 14, marginTop: 8 },
-  alertMuted: { color: '#64748b', fontSize: 13, marginTop: 8 },
-  rangeRow: {
-    flexDirection: 'row',
-    backgroundColor: '#1e293b',
-    borderRadius: 10,
-    padding: 4,
-    marginBottom: 20,
-  },
-  rangeBtn: {
-    flex: 1,
-    paddingVertical: 8,
-    alignItems: 'center',
-    borderRadius: 8,
-  },
-  rangeBtnActive: { backgroundColor: '#0284c7' },
-  rangeBtnText: { color: '#64748b', fontWeight: '600' },
-  rangeBtnTextActive: { color: '#fff' },
-  tableSection: {
-    marginTop: 24,
-    backgroundColor: '#1e293b',
-    borderRadius: 12,
-    padding: 12,
-    borderWidth: 1,
-    borderColor: '#334155',
-  },
-  tableTitle: { color: '#94a3b8', fontSize: 13, fontWeight: '700', marginBottom: 8 },
-  tableHeader: {
-    flexDirection: 'row',
-    borderBottomWidth: 1,
-    borderBottomColor: '#334155',
-    paddingBottom: 6,
-    marginBottom: 4,
-  },
-  tableHeaderCell: { flex: 1, color: '#64748b', fontSize: 11, fontWeight: '700' },
-  tableRow: { flexDirection: 'row', paddingVertical: 5 },
-  tableRowAlt: { backgroundColor: '#0f172a', borderRadius: 4 },
-  tableCell: { flex: 1, color: '#cbd5e1', fontSize: 12 },
+  bigRow: { flexDirection: 'row', alignItems: 'flex-start', marginTop: S.sm, marginBottom: S.sm },
+  big: { fontFamily: F.monoMedium, fontSize: 56, color: C.ink, letterSpacing: -2, lineHeight: 64 },
+  bigUnit: { fontFamily: F.mono, fontSize: 18, color: C.ink2, marginTop: 10, marginLeft: 4 },
+  hum: { fontFamily: F.mono, fontSize: 14, color: C.ink2, marginTop: 14, marginLeft: 'auto' },
+  metaGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: S.lg, marginTop: S.md },
+  metaText: { fontFamily: F.mono, fontSize: 12, color: C.ink2 },
+  actions: { flexDirection: 'row', flexWrap: 'wrap', gap: S.sm, marginTop: S.md },
+  action: { flexGrow: 1, flexBasis: 90, backgroundColor: C.surface, borderRadius: R.control, paddingVertical: 12, alignItems: 'center', gap: 4 },
+  actionText: { fontFamily: F.medium, fontSize: 12, color: C.ink },
+  stats: { flexDirection: 'row', flexWrap: 'wrap', gap: S.sm, marginTop: S.sm },
+  tr: { flexDirection: 'row', paddingHorizontal: S.md, paddingVertical: 7, alignItems: 'center' },
+  th: { borderBottomWidth: 1, borderBottomColor: C.line },
+  thText: { fontFamily: F.medium, color: C.ink3, fontSize: 11 },
+  tdTime: { flex: 2.6, fontFamily: F.mono, fontSize: 11, color: C.ink2 },
+  td: { flex: 1, fontFamily: F.mono, fontSize: 11, color: C.ink2, textAlign: 'right' },
 });

@@ -1,179 +1,90 @@
-import React, { useEffect, useState, useCallback } from 'react';
-import {
-  View, FlatList, Text, StyleSheet, RefreshControl, ActivityIndicator,
-  ScrollView, TouchableOpacity,
-} from 'react-native';
-import { getAuditLog } from '../services/api';
-import { AuditEntry } from '../types';
+import React, { useCallback, useEffect, useState } from 'react';
+import { View } from 'react-native';
+import { Screen, Card, T, Row, Button, Picker, Loading, ErrorState, Empty, PageHeader } from '../ui';
+import * as api from '../services/api';
+import { formatDateTime } from '../utils/time';
+import type { AuditEntry } from '../types';
+import { C, S } from '../theme';
 
-function formatDate(iso: string): string {
-  return new Date(iso).toLocaleString();
-}
+const ACTION_LABELS: Record<string, string> = {
+  'auth.login': 'Login',
+  'user.create': 'User created',
+  'user.update': 'User updated',
+  'user.delete': 'User deleted',
+  'member.add': 'Member added',
+  'member.remove': 'Member removed',
+  'member.permissions_update': 'Permissions updated',
+  'device.register': 'Device registered',
+  'device.rename': 'Device renamed',
+  'device.assign': 'Device assigned',
+  'sensor.rename': 'Sensor renamed',
+  'sensor.delete': 'Sensor deleted',
+  'pairing.approve': 'Pairing approved',
+  'pairing.reject': 'Pairing rejected',
+  'org.rename': 'Org renamed',
+  'account.update': 'Profile updated',
+  'account.password_change': 'Password changed',
+};
+// Colour marks the kind of change, never red: red is for temperature alarms.
+const ACTION_TONE: Record<string, string> = {
+  'member.add': C.ok, 'device.register': C.ok, 'pairing.approve': C.ok,
+  'member.remove': C.amber, 'sensor.delete': C.amber, 'pairing.reject': C.amber, 'user.delete': C.amber,
+  'member.permissions_update': C.ice, 'auth.login': C.ice,
+};
+const PAGE = 30;
 
-const ACTION_FILTERS = [
-  { key: '', label: 'All' },
-  { key: 'auth', label: 'Auth' },
-  { key: 'user', label: 'User' },
-  { key: 'device', label: 'Device' },
-  { key: 'sensor', label: 'Sensor' },
-  { key: 'pairing', label: 'Pairing' },
-  { key: 'member', label: 'Member' },
-  { key: 'account', label: 'Account' },
-  { key: 'org', label: 'Org' },
-];
+/** Every user action in the org (superadmin: everywhere). (AuditLog.jsx) */
+export default function AuditLogScreen({ tab }: { tab?: boolean }) {
+  const [rows, setRows] = useState<AuditEntry[] | null>(null);
+  const [total, setTotal] = useState(0);
+  const [page, setPage] = useState(0);
+  const [action, setAction] = useState('');
+  const [error, setError] = useState<string | null>(null);
 
-function getActionColor(action: string): string {
-  if (action.startsWith('auth')) return '#3b82f6';
-  if (action.includes('delete') || action.includes('remove') || action.includes('reject')) return '#ef4444';
-  if (action.includes('create') || action.includes('register') || action.includes('approve') || action.includes('add')) return '#22c55e';
-  if (action.includes('update') || action.includes('rename') || action.includes('permissions')) return '#eab308';
-  return '#64748b';
-}
+  const load = useCallback(() => {
+    setRows(null);
+    api.getAuditLog({ limit: PAGE, offset: page * PAGE, ...(action ? { action } : {}) })
+      .then((r) => { setRows(r.data.rows); setTotal(r.data.total); setError(null); })
+      .catch(() => setError('Failed to load audit log'));
+  }, [page, action]);
+  useEffect(load, [load]);
 
-export default function AuditLogScreen() {
-  const [entries, setEntries] = useState<AuditEntry[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [refreshing, setRefreshing] = useState(false);
-  const [page, setPage] = useState(1);
-  const [hasMore, setHasMore] = useState(true);
-  const [loadingMore, setLoadingMore] = useState(false);
-  const [activeFilter, setActiveFilter] = useState('');
-
-  const fetchPage = useCallback(async (p: number, append: boolean, filter: string) => {
-    try {
-      const { data } = await getAuditLog(p, 50, filter || undefined);
-      setEntries((prev) => append ? [...prev, ...data] : data);
-      setHasMore(data.length === 50);
-    } catch {
-      // keep existing
-    }
-  }, []);
-
-  useEffect(() => {
-    setLoading(true);
-    setPage(1);
-    fetchPage(1, false, activeFilter).finally(() => setLoading(false));
-  }, [fetchPage, activeFilter]);
-
-  const onRefresh = async () => {
-    setRefreshing(true);
-    setPage(1);
-    await fetchPage(1, false, activeFilter);
-    setRefreshing(false);
-  };
-
-  const loadMore = async () => {
-    if (!hasMore || loadingMore) return;
-    setLoadingMore(true);
-    const next = page + 1;
-    setPage(next);
-    await fetchPage(next, true, activeFilter);
-    setLoadingMore(false);
-  };
-
-  const handleFilterChange = (filter: string) => {
-    setActiveFilter(filter);
-  };
-
-  if (loading) {
-    return (
-      <View style={styles.centered}>
-        <ActivityIndicator size="large" color="#38bdf8" />
-      </View>
-    );
-  }
-
+  const pages = Math.ceil(total / PAGE);
   return (
-    <View style={styles.container}>
-      {/* Filter chips */}
-      <ScrollView
-        horizontal
-        showsHorizontalScrollIndicator={false}
-        style={styles.filterBar}
-        contentContainerStyle={styles.filterContent}
-      >
-        {ACTION_FILTERS.map((f) => (
-          <TouchableOpacity
-            key={f.key}
-            style={[styles.filterChip, activeFilter === f.key && styles.filterChipActive]}
-            onPress={() => handleFilterChange(f.key)}
-          >
-            <Text style={[styles.filterChipText, activeFilter === f.key && styles.filterChipTextActive]}>
-              {f.label}
-            </Text>
-          </TouchableOpacity>
-        ))}
-      </ScrollView>
-
-      <FlatList
-        data={entries}
-        keyExtractor={(item) => String(item.id)}
-        renderItem={({ item }) => {
-          const borderColor = getActionColor(item.action);
-          return (
-            <View style={[styles.entry, { borderLeftColor: borderColor, borderLeftWidth: 3 }]}>
-              <View style={styles.entryHeader}>
-                <Text style={styles.actor}>{item.actor}</Text>
-                <Text style={styles.date}>{formatDate(item.createdAt)}</Text>
-              </View>
-              <Text style={styles.action}>{item.action}</Text>
-              {item.target && <Text style={styles.target}>→ {item.target}</Text>}
-              {item.detail && <Text style={styles.detail}>{item.detail}</Text>}
-            </View>
-          );
-        }}
-        contentContainerStyle={styles.list}
-        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor="#38bdf8" />}
-        onEndReached={loadMore}
-        onEndReachedThreshold={0.3}
-        ListFooterComponent={loadingMore ? <ActivityIndicator color="#38bdf8" style={{ margin: 16 }} /> : null}
-        ListEmptyComponent={<Text style={styles.empty}>No audit entries found.</Text>}
-      />
+    <View style={{ flex: 1, backgroundColor: C.page }}>
+      {tab && <PageHeader title="Audit log" subtitle={`${total} ${total === 1 ? 'entry' : 'entries'}`} />}
+      <Screen>
+        <Picker label="Action" value={action} onChange={(v) => { setAction(v); setPage(0); }}
+          options={[{ value: '', label: 'All actions' }, ...Object.entries(ACTION_LABELS).map(([value, label]) => ({ value, label }))]} />
+        {!tab && <T v="caption" style={{ marginBottom: S.sm }}>{total} {total === 1 ? 'entry' : 'entries'}</T>}
+        {error ? <ErrorState message={error} onRetry={load} />
+          : rows == null ? <Loading />
+          : rows.length === 0 ? <Card><Empty icon="list" title="No entries" body={action ? 'Nothing for this filter.' : 'No activity recorded yet.'} /></Card>
+          : (
+            <Card style={{ paddingVertical: S.xs }}>
+              {rows.map((e, i) => (
+                <View key={e.id} style={[{ paddingVertical: 10, flexDirection: 'row', gap: S.md }, i > 0 && { borderTopWidth: 1, borderTopColor: C.line }]}>
+                  <View style={{ width: 3, borderRadius: 2, backgroundColor: ACTION_TONE[e.action] ?? C.lineStrong }} />
+                  <View style={{ flex: 1 }}>
+                    <Row style={{ justifyContent: 'space-between' }}>
+                      <T v="h3">{ACTION_LABELS[e.action] || e.action}</T>
+                      <T v="caption">{e.username || '—'}</T>
+                    </Row>
+                    <T v="monoSmall">{formatDateTime(e.created_at)}{e.target_type ? ` · ${e.target_type} #${e.target_id}` : ''}</T>
+                    {e.details ? <T v="caption" numberOfLines={3} selectable>{JSON.stringify(e.details)}</T> : null}
+                  </View>
+                </View>
+              ))}
+            </Card>
+          )}
+        {pages > 1 && (
+          <Row style={{ justifyContent: 'center', marginTop: S.md }}>
+            <Button label="Previous" small disabled={page === 0} onPress={() => setPage(page - 1)} />
+            <T v="small">Page {page + 1} of {pages}</T>
+            <Button label="Next" small disabled={page >= pages - 1} onPress={() => setPage(page + 1)} />
+          </Row>
+        )}
+      </Screen>
     </View>
   );
 }
-
-const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#0f172a' },
-  list: { padding: 16 },
-  centered: { flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: '#0f172a' },
-  filterBar: {
-    maxHeight: 48,
-    borderBottomWidth: 1,
-    borderBottomColor: '#1e293b',
-  },
-  filterContent: {
-    paddingHorizontal: 16,
-    paddingVertical: 8,
-    gap: 8,
-  },
-  filterChip: {
-    backgroundColor: '#1e293b',
-    borderRadius: 16,
-    paddingHorizontal: 14,
-    paddingVertical: 6,
-    borderWidth: 1,
-    borderColor: '#334155',
-  },
-  filterChipActive: {
-    backgroundColor: '#0284c7',
-    borderColor: '#0284c7',
-  },
-  filterChipText: { color: '#94a3b8', fontSize: 13, fontWeight: '600' },
-  filterChipTextActive: { color: '#fff' },
-  entry: {
-    backgroundColor: '#1e293b',
-    borderRadius: 10,
-    padding: 12,
-    marginBottom: 8,
-    borderWidth: 1,
-    borderColor: '#334155',
-  },
-  entryHeader: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 4 },
-  actor: { color: '#38bdf8', fontSize: 13, fontWeight: '700' },
-  date: { color: '#475569', fontSize: 11 },
-  action: { color: '#f1f5f9', fontSize: 14, fontWeight: '600' },
-  target: { color: '#94a3b8', fontSize: 13, marginTop: 2 },
-  detail: { color: '#64748b', fontSize: 12, marginTop: 2 },
-  empty: { color: '#475569', textAlign: 'center', marginTop: 40 },
-});

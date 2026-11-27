@@ -1,243 +1,123 @@
-import React, { useEffect, useState, useCallback } from 'react';
-import {
-  View, FlatList, Text, StyleSheet, RefreshControl,
-  TouchableOpacity, Alert, ActivityIndicator, TextInput,
-} from 'react-native';
-import { Ionicons } from '@expo/vector-icons';
-import { getUsers, deleteUser, createUser } from '../services/api';
-import { User } from '../types';
+import React, { useCallback, useEffect, useState } from 'react';
+import { View } from 'react-native';
+import { Screen, Card, T, Row, Button, Field, Chip, Segmented, Loading, ErrorState, Empty, Notice, Sheet, PageHeader } from '../ui';
+import { confirm, useToast } from '../ui/feedback';
+import * as api from '../services/api';
+import { formatDateTimeShort } from '../utils/time';
+import type { User } from '../types';
+import { C, S } from '../theme';
 
-const ROLE_COLORS: Record<string, string> = {
-  superadmin: '#7c3aed',
-  owner: '#0284c7',
-  member: '#334155',
-};
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
-export default function UsersScreen() {
-  const [users, setUsers] = useState<User[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [refreshing, setRefreshing] = useState(false);
-
-  // Create user form
-  const [showForm, setShowForm] = useState(false);
-  const [formEmail, setFormEmail] = useState('');
-  const [formPassword, setFormPassword] = useState('');
-  const [formOrgName, setFormOrgName] = useState('');
+/** System owners — superadmin only. (Users.jsx + EditUserModal.jsx) */
+export default function UsersScreen({ tab }: { tab?: boolean }) {
+  const toast = useToast();
+  const [users, setUsers] = useState<User[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
+  const [newForm, setNewForm] = useState({ email: '', password: '', orgName: '' });
+  const [editing, setEditing] = useState<User | null>(null);
+  const [edit, setEdit] = useState({ email: '', username: '', role: 'owner', password: '' });
+  const [formErr, setFormErr] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
 
-  const fetchUsers = useCallback(async () => {
-    try {
-      const { data } = await getUsers();
-      setUsers(data);
-    } catch {
-      // keep existing
-    }
+  const load = useCallback(() => {
+    api.getUsers().then((r) => { setUsers(r.data); setError(null); }).catch(() => setError('Failed to load users'));
   }, []);
+  useEffect(load, [load]);
 
-  useEffect(() => {
-    fetchUsers().finally(() => setLoading(false));
-  }, [fetchUsers]);
-
-  const onRefresh = async () => {
-    setRefreshing(true);
-    await fetchUsers();
-    setRefreshing(false);
-  };
-
-  const confirmDelete = (user: User) => {
-    Alert.alert('Remove User', `Remove "${user.username}" (${user.email ?? user.username})?`, [
-      { text: 'Cancel', style: 'cancel' },
-      {
-        text: 'Remove',
-        style: 'destructive',
-        onPress: async () => {
-          try {
-            await deleteUser(user.id);
-            setUsers((prev) => prev.filter((u) => u.id !== user.id));
-          } catch {
-            Alert.alert('Error', 'Failed to remove user.');
-          }
-        },
-      },
-    ]);
-  };
-
-  const handleCreate = async () => {
-    if (!formEmail.trim()) {
-      Alert.alert('Error', 'Email is required.');
-      return;
-    }
-    if (formPassword.length < 10) {
-      Alert.alert('Error', 'Password must be at least 10 characters.');
-      return;
-    }
-    setCreating(true);
+  async function create() {
+    setFormErr(null);
+    if (!EMAIL_RE.test(newForm.email.trim())) return setFormErr('Enter a valid email');
+    if (newForm.password.length < 10) return setFormErr('Password must be at least 10 characters');
+    setBusy(true);
     try {
-      await createUser({
-        email: formEmail.trim(),
-        password: formPassword,
-        name: formOrgName.trim() || formEmail.trim(),
-        role: 'owner',
-      });
-      setFormEmail('');
-      setFormPassword('');
-      setFormOrgName('');
-      setShowForm(false);
-      await fetchUsers();
-    } catch (err: any) {
-      Alert.alert('Error', err?.response?.data?.error ?? 'Failed to create user.');
-    } finally {
-      setCreating(false);
-    }
-  };
-
-  if (loading) {
-    return (
-      <View style={styles.centered}>
-        <ActivityIndicator size="large" color="#38bdf8" />
-      </View>
-    );
+      await api.createOwner({ email: newForm.email.trim(), password: newForm.password, orgName: newForm.orgName.trim() || undefined });
+      setNewForm({ email: '', password: '', orgName: '' }); setCreating(false);
+      toast.success('Owner created');
+      load();
+    } catch (err) { setFormErr(api.errText(err, 'Failed to create user')); }
+    finally { setBusy(false); }
   }
 
-  return (
-    <View style={styles.container}>
-      <FlatList
-        data={users}
-        keyExtractor={(item) => String(item.id)}
-        ListHeaderComponent={
-          <View>
-            {/* Create user section */}
-            <TouchableOpacity
-              style={styles.createToggle}
-              onPress={() => setShowForm(!showForm)}
-            >
-              <Ionicons name={showForm ? 'close-circle-outline' : 'person-add-outline'} size={18} color="#38bdf8" />
-              <Text style={styles.createToggleText}>{showForm ? 'Cancel' : 'Create New User'}</Text>
-            </TouchableOpacity>
+  function openEdit(u: User) {
+    setFormErr(null);
+    setEdit({ email: u.email || '', username: u.username || '', role: u.role === 'member' ? 'member' : 'owner', password: '' });
+    setEditing(u);
+  }
 
-            {showForm && (
-              <View style={styles.formCard}>
-                <TextInput
-                  style={styles.input}
-                  value={formEmail}
-                  onChangeText={setFormEmail}
-                  placeholder="Email"
-                  placeholderTextColor="#64748b"
-                  autoCapitalize="none"
-                  keyboardType="email-address"
-                />
-                <TextInput
-                  style={styles.input}
-                  value={formPassword}
-                  onChangeText={setFormPassword}
-                  placeholder="Password (min 10 chars)"
-                  placeholderTextColor="#64748b"
-                  secureTextEntry
-                />
-                <TextInput
-                  style={styles.input}
-                  value={formOrgName}
-                  onChangeText={setFormOrgName}
-                  placeholder="Organization name (optional)"
-                  placeholderTextColor="#64748b"
-                />
-                <TouchableOpacity
-                  style={styles.createBtn}
-                  onPress={handleCreate}
-                  disabled={creating}
-                >
-                  {creating ? (
-                    <ActivityIndicator size={14} color="#fff" />
-                  ) : (
-                    <Text style={styles.createBtnText}>Create Owner Account</Text>
-                  )}
-                </TouchableOpacity>
-              </View>
-            )}
-          </View>
-        }
-        renderItem={({ item }) => (
-          <View style={styles.row}>
-            <Ionicons name="person-circle-outline" size={32} color="#64748b" />
-            <View style={{ flex: 1, marginLeft: 12 }}>
-              <Text style={styles.name}>{item.username}</Text>
-              <Text style={styles.email}>{item.email ?? ''}</Text>
-              {item.created_at && (
-                <Text style={styles.joinDate}>
-                  Joined: {new Date(item.created_at).toLocaleDateString()}
-                </Text>
+  async function save() {
+    if (!editing) return;
+    setFormErr(null);
+    const email = edit.email.trim().toLowerCase();
+    if (!EMAIL_RE.test(email)) return setFormErr('Enter a valid email');
+    if (edit.username.trim().length < 2) return setFormErr('Username must be at least 2 characters');
+    if (edit.password && edit.password.length < 10) return setFormErr('New password must be at least 10 characters');
+    setBusy(true);
+    try {
+      await api.updateUser(editing.id, { email, username: edit.username.trim(), role: edit.role, ...(edit.password ? { password: edit.password } : {}) });
+      setEditing(null);
+      toast.success('User saved');
+      load();
+    } catch (err) { setFormErr(api.errText(err, 'Failed to save')); }
+    finally { setBusy(false); }
+  }
+
+  async function remove(u: User) {
+    const who = u.email || u.username;
+    if (!(await confirm({ title: 'Delete user?', message: `"${who}" will be deleted and their devices left unassigned.`, confirmLabel: 'Delete', danger: true }))) return;
+    try { await api.deleteUser(u.id); setUsers((p) => p?.filter((x) => x.id !== u.id) ?? p); toast.success('User deleted'); }
+    catch { toast.error('Failed to delete user'); }
+  }
+
+  const newButton = <Button label="New owner" icon="user-plus" variant="primary" small onPress={() => { setFormErr(null); setCreating(true); }} />;
+  return (
+    <View style={{ flex: 1, backgroundColor: C.page }}>
+      {tab && <PageHeader title="Users" subtitle="System owners" right={newButton} />}
+      <Screen>
+        {!tab && <View style={{ marginBottom: S.md }}>{newButton}</View>}
+        {error ? <ErrorState message={error} onRetry={load} />
+          : users == null ? <Loading />
+          : users.length === 0 ? <Card><Empty icon="users" title="No users yet" body="Create the first system owner." /></Card>
+          : users.map((u) => (
+            <Card key={u.id} style={{ marginBottom: S.sm }}>
+              <Row style={{ alignItems: 'flex-start' }}>
+                <View style={{ flex: 1 }}>
+                  <T v="h3">{u.email || u.username}</T>
+                  {u.email ? <T v="caption">{u.username}</T> : null}
+                  <T v="monoSmall" style={{ marginTop: 2 }}>Joined {formatDateTimeShort(u.created_at)}</T>
+                  {!!u.organizations?.length && <T v="small">Orgs: {u.organizations.map((o) => o.org_name).join(', ')}</T>}
+                </View>
+                <Chip tone={u.role === 'superadmin' ? 'ice' : 'muted'} label={u.role} />
+              </Row>
+              {u.role !== 'superadmin' && (
+                <Row style={{ marginTop: S.md }}>
+                  <Button label="Edit" icon="edit-2" small onPress={() => openEdit(u)} />
+                  <Button label="Delete" variant="danger" small onPress={() => remove(u)} />
+                </Row>
               )}
-            </View>
-            <View style={[styles.roleBadge, { backgroundColor: ROLE_COLORS[item.role] ?? '#334155' }]}>
-              <Text style={styles.roleText}>{item.role}</Text>
-            </View>
-            {item.role !== 'superadmin' && (
-              <TouchableOpacity onPress={() => confirmDelete(item)} style={styles.deleteBtn}>
-                <Ionicons name="trash-outline" size={18} color="#ef4444" />
-              </TouchableOpacity>
-            )}
-          </View>
-        )}
-        contentContainerStyle={styles.list}
-        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor="#38bdf8" />}
-        ListEmptyComponent={<Text style={styles.empty}>No users found.</Text>}
-      />
+            </Card>
+          ))}
+      </Screen>
+
+      <Sheet visible={creating} onClose={() => setCreating(false)} title="New owner" subtitle="Creates their organization too"
+        footer={<><Button label="Cancel" small onPress={() => setCreating(false)} /><Button label="Create owner" variant="primary" small busy={busy} onPress={create} /></>}>
+        {formErr && <Notice tone="alarm">{formErr}</Notice>}
+        <Field label="Email" value={newForm.email} onChangeText={(v) => setNewForm({ ...newForm, email: v })} autoCapitalize="none" keyboardType="email-address" placeholder="john@example.com" />
+        <Field label="Password" value={newForm.password} onChangeText={(v) => setNewForm({ ...newForm, password: v })} secureTextEntry autoCapitalize="none" hint="At least 10 characters" />
+        <Field label="Organization name (optional)" value={newForm.orgName} onChangeText={(v) => setNewForm({ ...newForm, orgName: v })} placeholder="John's coldstore" />
+      </Sheet>
+
+      <Sheet visible={!!editing} onClose={() => setEditing(null)} title="Edit user" subtitle={editing?.email || editing?.username}
+        footer={<><Button label="Cancel" small onPress={() => setEditing(null)} /><Button label="Save" variant="primary" small busy={busy} onPress={save} /></>}>
+        {formErr && <Notice tone="alarm">{formErr}</Notice>}
+        <Field label="Email" value={edit.email} onChangeText={(v) => setEdit({ ...edit, email: v })} autoCapitalize="none" keyboardType="email-address" />
+        <Field label="Username" value={edit.username} onChangeText={(v) => setEdit({ ...edit, username: v })} autoCapitalize="none" maxLength={64} />
+        <T v="label" style={{ marginBottom: 6 }}>Role</T>
+        <Segmented value={edit.role} onChange={(v) => setEdit({ ...edit, role: v })} options={[{ value: 'owner', label: 'Owner' }, { value: 'member', label: 'Member' }]} />
+        <Field style={{ marginTop: S.md }} label="New password (optional)" value={edit.password} onChangeText={(v) => setEdit({ ...edit, password: v })} secureTextEntry autoCapitalize="none"
+          placeholder="Leave blank to keep the current one" hint="Sets a new password. The existing one can't be shown — it's stored hashed." />
+      </Sheet>
     </View>
   );
 }
-
-const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#0f172a' },
-  list: { padding: 16 },
-  centered: { flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: '#0f172a' },
-  createToggle: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-    marginBottom: 12,
-  },
-  createToggleText: { color: '#38bdf8', fontSize: 14, fontWeight: '600' },
-  formCard: {
-    backgroundColor: '#1e293b',
-    borderRadius: 12,
-    padding: 14,
-    marginBottom: 16,
-    borderWidth: 1,
-    borderColor: '#334155',
-    gap: 10,
-  },
-  input: {
-    backgroundColor: '#0f172a',
-    borderRadius: 8,
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-    color: '#f1f5f9',
-    fontSize: 14,
-    borderWidth: 1,
-    borderColor: '#334155',
-  },
-  createBtn: {
-    backgroundColor: '#0284c7',
-    borderRadius: 8,
-    paddingVertical: 12,
-    alignItems: 'center',
-  },
-  createBtnText: { color: '#fff', fontWeight: '700', fontSize: 14 },
-  row: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#1e293b',
-    borderRadius: 10,
-    padding: 12,
-    marginBottom: 8,
-    borderWidth: 1,
-    borderColor: '#334155',
-  },
-  name: { color: '#f1f5f9', fontSize: 15, fontWeight: '600' },
-  email: { color: '#64748b', fontSize: 12, marginTop: 2 },
-  joinDate: { color: '#475569', fontSize: 11, marginTop: 1 },
-  roleBadge: { borderRadius: 6, paddingHorizontal: 8, paddingVertical: 3, marginRight: 8 },
-  roleText: { color: '#f1f5f9', fontSize: 11, fontWeight: '700', textTransform: 'capitalize' },
-  deleteBtn: { padding: 4 },
-  empty: { color: '#475569', textAlign: 'center', marginTop: 40 },
-});

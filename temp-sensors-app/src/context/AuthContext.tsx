@@ -1,31 +1,39 @@
-import React, { createContext, useContext, useState, useEffect, useRef, ReactNode } from 'react';
-import * as SecureStore from 'expo-secure-store';
+import React, { createContext, useContext, useState, useEffect, useRef, ReactNode, useCallback } from 'react';
 import { User } from '../types';
-import { login as apiLogin, getAccount, setImpersonatedOrg, registerPushToken, unregisterPushToken } from '../services/api';
+import {
+  login as apiLogin, getAccount, setImpersonatedOrg, registerPushToken, unregisterPushToken, onSessionEnded,
+} from '../services/api';
 import { connectSocket, disconnectSocket } from '../services/socket';
 import { registerForPushNotifications } from '../services/push';
+import { getItem, setItem, deleteItem } from '../services/storage';
 
-interface ImpersonatedOrg {
-  id: number;
-  name: string;
-}
+interface ImpersonatedOrg { id: number; name: string }
 
 interface AuthContextValue {
   user: User | null;
-  token: string | null;
   loading: boolean;
   impersonatedOrg: ImpersonatedOrg | null;
-  login: (email: string, password: string) => Promise<void>;
+  login: (identifier: string, password: string) => Promise<void>;
   logout: () => Promise<void>;
+  refreshUser: () => Promise<void>;
   impersonateOrg: (id: number, name: string) => void;
   stopImpersonating: () => void;
+  // Role gates, matching the web dashboard (frontend/src/components/Layout.jsx)
+  isSuperadmin: boolean;
+  /** Org permission level from the first membership; null for superadmin. */
+  permissionLevel: 'viewer' | 'editor' | 'admin' | null;
+  /** Rename, delete, pair, set alert rules, acknowledge… — everyone but viewers. */
+  canEdit: boolean;
+  /** Org page + audit log: owners, org admins, superadmin. */
+  isOrgAdmin: boolean;
+  /** Sensor screens need an org: always for org users, for superadmin only while viewing one. */
+  hasOrgContext: boolean;
 }
 
 const AuthContext = createContext<AuthContextValue | null>(null);
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
-  const [token, setToken] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [impersonatedOrg, setImpersonatedOrgState] = useState<ImpersonatedOrg | null>(null);
   const pushTokenRef = useRef<string | null>(null);
@@ -44,52 +52,45 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   };
 
-  // Restore session on app start
+  const clearLocal = useCallback(async () => {
+    disconnectSocket();
+    setImpersonatedOrg(null);
+    setImpersonatedOrgState(null);
+    await deleteItem('jwt_token');
+    await deleteItem('jwt_refresh');
+    setUser(null);
+  }, []);
+
+  // A refresh that fails mid-session (revoked, expired) ends it here too.
+  useEffect(() => {
+    onSessionEnded(() => { clearLocal(); });
+    return () => onSessionEnded(null);
+  }, [clearLocal]);
+
+  // Restore session on app start. getAccount() goes through the 401
+  // interceptor, which refreshes an expired access token by itself.
   useEffect(() => {
     (async () => {
       try {
-        const storedToken = await SecureStore.getItemAsync('jwt_token');
-        if (storedToken) {
-          setToken(storedToken);
-          try {
-            const { data } = await getAccount();
-            setUser(data);
-            connectSocket(storedToken);
-            setupPush();
-          } catch (err: any) {
-            // Access token expired — the response interceptor in api.ts will have
-            // already attempted a refresh and stored a new jwt_token if successful.
-            // Try once more with whatever token is now in SecureStore.
-            if (err.response?.status === 401) {
-              const refreshedToken = await SecureStore.getItemAsync('jwt_token');
-              if (refreshedToken && refreshedToken !== storedToken) {
-                setToken(refreshedToken);
-                const { data } = await getAccount();
-                setUser(data);
-                connectSocket(refreshedToken);
-                setupPush();
-              } else {
-                throw err; // refresh also failed → clear tokens below
-              }
-            } else {
-              throw err;
-            }
-          }
+        if (await getItem('jwt_token')) {
+          const { data } = await getAccount();
+          setUser(data);
+          connectSocket((await getItem('jwt_token')) ?? '');
+          setupPush();
         }
       } catch {
-        await SecureStore.deleteItemAsync('jwt_token');
-        await SecureStore.deleteItemAsync('jwt_refresh');
+        await deleteItem('jwt_token');
+        await deleteItem('jwt_refresh');
       } finally {
         setLoading(false);
       }
     })();
   }, []);
 
-  const login = async (email: string, password: string) => {
-    const { data } = await apiLogin(email, password);
-    await SecureStore.setItemAsync('jwt_token', data.accessToken);
-    await SecureStore.setItemAsync('jwt_refresh', data.refreshToken);
-    setToken(data.accessToken);
+  const login = async (identifier: string, password: string) => {
+    const { data } = await apiLogin(identifier.trim(), password);
+    await setItem('jwt_token', data.accessToken);
+    await setItem('jwt_refresh', data.refreshToken);
     const { data: userData } = await getAccount();
     setUser(userData);
     connectSocket(data.accessToken);
@@ -102,13 +103,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       try { await unregisterPushToken(pushTokenRef.current); } catch { /* best-effort */ }
       pushTokenRef.current = null;
     }
-    disconnectSocket();
-    setImpersonatedOrg(null);
-    setImpersonatedOrgState(null);
-    await SecureStore.deleteItemAsync('jwt_token');
-    await SecureStore.deleteItemAsync('jwt_refresh');
-    setToken(null);
-    setUser(null);
+    await clearLocal();
+  };
+
+  const refreshUser = async () => {
+    const { data } = await getAccount();
+    setUser(data);
   };
 
   const impersonateOrg = (id: number, name: string) => {
@@ -121,8 +121,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setImpersonatedOrgState(null);
   };
 
+  const isSuperadmin = user?.role === 'superadmin';
+  const permissionLevel = user?.memberships?.[0]?.permission_level ?? null;
+  const canEdit = !!user && permissionLevel !== 'viewer';
+  const isOrgAdmin = isSuperadmin || user?.role === 'owner' || permissionLevel === 'admin';
+  const hasOrgContext = !!user && (!isSuperadmin || !!impersonatedOrg);
+
   return (
-    <AuthContext.Provider value={{ user, token, loading, impersonatedOrg, login, logout, impersonateOrg, stopImpersonating }}>
+    <AuthContext.Provider value={{
+      user, loading, impersonatedOrg, login, logout, refreshUser, impersonateOrg, stopImpersonating,
+      isSuperadmin, permissionLevel, canEdit, isOrgAdmin, hasOrgContext,
+    }}>
       {children}
     </AuthContext.Provider>
   );

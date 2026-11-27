@@ -1,145 +1,53 @@
 import React, { useState } from 'react';
-import {
-  View, Text, TextInput, TouchableOpacity,
-  StyleSheet, KeyboardAvoidingView, Platform, ActivityIndicator, Alert,
-} from 'react-native';
-import { Ionicons } from '@expo/vector-icons';
+import { View, Text, StyleSheet, KeyboardAvoidingView, Platform, ScrollView } from 'react-native';
+import Svg, { Path, Circle } from 'react-native-svg';
+import { Button, Field, Notice, T } from '../ui';
 import { useAuth } from '../context/AuthContext';
+import { errText } from '../services/api';
+import { C, F, R, S } from '../theme';
 
 export default function LoginScreen() {
   const { login } = useAuth();
-  const [email, setEmail] = useState('');
+  const [identifier, setIdentifier] = useState('');
   const [password, setPassword] = useState('');
-  const [showPass, setShowPass] = useState(false);
-  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
 
-  const handleLogin = async () => {
-    if (!email.trim() || !password) {
-      Alert.alert('Error', 'Please enter email and password.');
-      return;
-    }
-    setLoading(true);
-    try {
-      await login(email.trim(), password);
-    } catch (err: any) {
-      const msg = err?.response?.data?.error
-        ?? (err?.message ? `Network error: ${err.message}` : 'Login failed. Check credentials.');
-      Alert.alert('Login Failed', msg);
-    } finally {
-      setLoading(false);
-    }
-  };
+  async function submit() {
+    if (!identifier.trim() || !password) return setError('Enter your email and password');
+    setError(null); setBusy(true);
+    try { await login(identifier, password); }
+    catch (err) { setError(errText(err, "Couldn't sign in. Check your connection and try again.")); }
+    finally { setBusy(false); }
+  }
 
   return (
-    <KeyboardAvoidingView
-      style={styles.container}
-      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-    >
-      <View style={styles.card}>
-        <Ionicons name="thermometer" size={48} color="#38bdf8" style={styles.icon} />
-        <Text style={styles.title}>Temp Sensors</Text>
-        <Text style={styles.subtitle}>Sign in to your account</Text>
-
-        <TextInput
-          style={styles.input}
-          placeholder="Email address"
-          placeholderTextColor="#64748b"
-          autoCapitalize="none"
-          keyboardType="email-address"
-          value={email}
-          onChangeText={setEmail}
-          editable={!loading}
-        />
-
-        <View style={styles.passRow}>
-          <TextInput
-            style={[styles.input, styles.passInput]}
-            placeholder="Password"
-            placeholderTextColor="#64748b"
-            secureTextEntry={!showPass}
-            value={password}
-            onChangeText={setPassword}
-            editable={!loading}
-          />
-          <TouchableOpacity style={styles.eyeBtn} onPress={() => setShowPass((v) => !v)}>
-            <Ionicons name={showPass ? 'eye-off-outline' : 'eye-outline'} size={20} color="#64748b" />
-          </TouchableOpacity>
+    <KeyboardAvoidingView style={{ flex: 1, backgroundColor: C.page }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+      <ScrollView contentContainerStyle={styles.wrap} keyboardShouldPersistTaps="handled">
+        <View style={styles.mark}>
+          <Svg width={34} height={34} viewBox="0 0 24 24" fill="none" stroke={C.onDark} strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+            <Path d="M14 14.76V3.5a2.5 2.5 0 0 0-5 0v11.26a4.5 4.5 0 1 0 5 0z" />
+            <Circle cx={11.5} cy={17.5} r={1.5} fill={C.onDark} />
+          </Svg>
         </View>
-
-        <TouchableOpacity style={styles.loginBtn} onPress={handleLogin} disabled={loading}>
-          {loading ? (
-            <ActivityIndicator color="#fff" />
-          ) : (
-            <Text style={styles.loginBtnText}>Sign In</Text>
-          )}
-        </TouchableOpacity>
-      </View>
+        <Text style={styles.brand}>Temp Sensors</Text>
+        <T v="small" style={{ marginBottom: S.xl }}>Cold-chain monitoring</T>
+        <View style={styles.card}>
+          {error && <Notice tone="alarm">{error}</Notice>}
+          <Field label="Email" value={identifier} onChangeText={setIdentifier} autoCapitalize="none" autoCorrect={false}
+            keyboardType="email-address" autoComplete="email" textContentType="username" placeholder="you@example.com" returnKeyType="next" />
+          <Field label="Password" value={password} onChangeText={setPassword} secureTextEntry autoComplete="password" textContentType="password"
+            placeholder="••••••••••" returnKeyType="go" onSubmitEditing={submit} />
+          <Button label="Sign in" variant="primary" full busy={busy} onPress={submit} style={{ marginTop: S.sm }} />
+        </View>
+      </ScrollView>
     </KeyboardAvoidingView>
   );
 }
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: '#0f172a',
-    justifyContent: 'center',
-    padding: 24,
-  },
-  card: {
-    backgroundColor: '#1e293b',
-    borderRadius: 16,
-    padding: 28,
-    alignItems: 'center',
-  },
-  icon: { marginBottom: 12 },
-  title: {
-    color: '#f1f5f9',
-    fontSize: 26,
-    fontWeight: '700',
-    marginBottom: 4,
-  },
-  subtitle: {
-    color: '#94a3b8',
-    fontSize: 14,
-    marginBottom: 28,
-  },
-  input: {
-    width: '100%',
-    backgroundColor: '#0f172a',
-    borderRadius: 10,
-    paddingHorizontal: 16,
-    paddingVertical: 12,
-    color: '#f1f5f9',
-    fontSize: 16,
-    marginBottom: 12,
-    borderWidth: 1,
-    borderColor: '#334155',
-  },
-  passRow: {
-    width: '100%',
-    position: 'relative',
-    marginBottom: 12,
-  },
-  passInput: {
-    paddingRight: 48,
-    marginBottom: 0,
-  },
-  eyeBtn: {
-    position: 'absolute',
-    right: 14,
-    top: 14,
-  },
-  loginBtn: {
-    width: '100%',
-    backgroundColor: '#0284c7',
-    borderRadius: 10,
-    paddingVertical: 14,
-    alignItems: 'center',
-    marginTop: 8,
-  },
-  loginBtnText: {
-    color: '#fff',
-    fontSize: 16,
-    fontWeight: '700',
-  },
+  wrap: { flexGrow: 1, justifyContent: 'center', alignItems: 'center', padding: S.xl },
+  mark: { width: 64, height: 64, borderRadius: 20, backgroundColor: C.ice, alignItems: 'center', justifyContent: 'center', marginBottom: S.md },
+  brand: { fontFamily: F.bold, fontSize: 28, color: C.ink, letterSpacing: -0.5 },
+  card: { width: '100%', maxWidth: 400, backgroundColor: C.surface, borderRadius: R.card, padding: S.xl },
 });

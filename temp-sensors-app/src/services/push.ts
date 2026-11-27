@@ -18,8 +18,8 @@ Notifications.setNotificationHandler({
  * EAS projectId configured) — callers treat that as "no push", not an error.
  */
 export async function registerForPushNotifications(): Promise<{ token: string; platform: string } | null> {
-  // Remote push only works on physical devices.
-  if (!Device.isDevice) return null;
+  // Remote push only works on physical devices (and not in the web build).
+  if (Platform.OS === 'web' || !Device.isDevice) return null;
 
   // Android requires an explicit channel for the notification to show.
   if (Platform.OS === 'android') {

@@ -1,9 +1,7 @@
+import { useEffect, useRef } from 'react';
 import { io, Socket } from 'socket.io-client';
-import * as SecureStore from 'expo-secure-store';
-import { Sensor } from '../types';
-import { getAccount } from './api';
-
-const BASE_URL = 'https://temp.majdabed.com';
+import { getItem } from './storage';
+import { getAccount, BASE_URL } from './api';
 
 let socket: Socket | null = null;
 
@@ -15,10 +13,10 @@ export function connectSocket(token: string): Socket {
   // The server checks the access token in the handshake, on every reconnect.
   // A fixed token would be refused on the first reconnect after it expired
   // (an hour) -- routine on a phone that sleeps or changes network -- so read
-  // the current one each time; api.ts keeps it refreshed in SecureStore.
+  // the current one each time; api.ts keeps it refreshed in storage.
   const s = io(BASE_URL, {
     auth: (cb) => {
-      SecureStore.getItemAsync('jwt_token')
+      getItem('jwt_token')
         .then((stored) => cb({ token: stored ?? token }))
         .catch(() => cb({ token }));
     },
@@ -56,11 +54,39 @@ export function getSocket(): Socket | null {
   return socket;
 }
 
-// Typed event subscriptions used in DashboardScreen
-export type SensorUpdateHandler = (sensor: Partial<Sensor> & { mac: string }) => void;
-export type SensorOfflineHandler = (mac: string) => void;
+/**
+ * Subscribe to a socket event for the life of the component. The handler is
+ * read through a ref, so it always sees current state without resubscribing.
+ */
+export function useSocketEvent<T = any>(event: string, handler: (data: T) => void) {
+  const ref = useRef(handler);
+  ref.current = handler;
+  useEffect(() => {
+    const s = socket;
+    if (!s) return;
+    const fn = (d: T) => ref.current(d);
+    s.on(event, fn);
+    return () => { s.off(event, fn); };
+  }, [event]);
+}
 
-// Hub & pairing events used in DevicesScreen / PairingScreen
-export type HubStatusHandler = (data: { mac: string; online: boolean; ip?: string }) => void;
-export type PairingRequestHandler = (request: import('../types').PairingRequest) => void;
-export type PairingModeStatusHandler = (data: { hub_mac: string; enabled: boolean }) => void;
+/**
+ * Join the rooms of these hubs, and re-join after every reconnect: the server
+ * forgets a socket's rooms when it drops, and replays the cached hubStatus on
+ * each join.
+ */
+export function useHubRooms(macs: string[]) {
+  const key = macs.join(',');
+  useEffect(() => {
+    const s = socket;
+    if (!s || !key) return;
+    const list = key.split(',');
+    const join = () => list.forEach((m) => s.emit('join', m));
+    join();
+    s.on('connect', join);
+    return () => {
+      s.off('connect', join);
+      list.forEach((m) => s.emit('leave', m));
+    };
+  }, [key]);
+}

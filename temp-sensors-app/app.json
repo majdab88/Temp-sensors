@@ -4,9 +4,9 @@
     "slug": "temp-sensors-app",
     "version": "1.0.0",
     "orientation": "portrait",
-    "userInterfaceStyle": "automatic",
+    "userInterfaceStyle": "light",
     "splash": {
-      "backgroundColor": "#ffffff"
+      "backgroundColor": "#F2F6F8"
     },
     "android": {
       "permissions": [

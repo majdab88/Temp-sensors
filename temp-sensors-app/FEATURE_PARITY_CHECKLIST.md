@@ -6,7 +6,7 @@
 > Verified: `tsc --noEmit` clean; Android Metro/Hermes bundle builds; every
 > screen exercised in the Expo web build against mocked API data (owner and
 > superadmin roles, "View as"). **Not yet verified on a phone or against the
-> live server:** BLE hub setup, push registration, the CSV/PDF share sheet,
+> live server:** BLE hub setup, push registration, saving CSV/PDF exports,
 > and live Socket.IO updates. Needs an EAS build to test.
 
 Every feature of the web dashboard (`temp-sensors-cloud/frontend/src`) and what
@@ -73,7 +73,7 @@ A superadmin who is not viewing an org ("View as") sees only the admin screens
 - [x] **Chart** — temperature (and humidity when present), threshold bands + dashed limit lines from the enabled rule, minimum 25 °C axis window snapped to 5 °C. `GET /sensors/:id/readings?from&to&limit=500`.
 - [x] **Stats** — Min, Max, Avg, **MKT** (ΔH/R = 10000 K), **In range %** (when limits exist).
 - [x] **Readings table** — newest first: #, time (dd/mm/yyyy HH:MM:SS), temp (2 dp), RH, RSSI, battery.
-- [x] **PDF report** (web: print) — app: generate a PDF and open the share sheet.
+- [x] **PDF report** (web: print) — app: generate a PDF and save it to the phone (Android: a folder chosen once, Downloads offered; iOS: share sheet → Save to Files).
 
 ## Alert rules (`AlertRules.jsx`) — *all*, edits *editor*
 
@@ -88,8 +88,8 @@ A superadmin who is not viewing an org ("View as") sees only the admin screens
 - [x] **Summary** — Excursions, Ongoing, Unacknowledged.
 - [x] **Filters** — sensor, status (All / Ongoing / Unacknowledged), range 7 d / 30 d / 90 d / All. `GET /excursions?sensor_id&active&unacked&from&limit=500`.
 - [x] **List** — sensor + hub, Over/Under, started, duration or "ongoing", peak, limit, ack status / *Acknowledge*.
-- [x] **Export CSV** — `GET /excursions/export.csv` (same filters) → share sheet.
-- [x] **Print / PDF** of the log → generated PDF + share sheet.
+- [x] **Export CSV** — `GET /excursions/export.csv` (same filters) → saved to the phone.
+- [x] **Print / PDF** of the log → generated PDF saved to the phone.
 - [x] **Excursion detail** — peak / limit / duration, started / ended / ack (who, when), *Acknowledge*, breach chart (shaded window, limit line, peak marker). `GET /excursions/:id`.
 - [x] Detail **Export readings CSV** (window ± 30 min) — `GET /sensors/:id/readings/export.csv?from&to`.
 - [x] Detail **Print / PDF**.
@@ -107,12 +107,15 @@ A superadmin who is not viewing an org ("View as") sees only the admin screens
 
 ## Setup — add a hub (`Provision.jsx`) — *editor*
 
-- [x] BLE scan for `TempHub-*` → connect → read MAC (`PROV_INFO`) or enter it manually.
-- [x] Optional hub name → **register** — `POST /devices/register` `{mac, name}` returns `api_key` + `mqtt_user`.
-- [x] Broker from `GET /provision/config` (error banner if missing).
-- [x] WiFi network scan (`PROV_NETWORKS`) with signal bars + lock, or manual SSID; password (hidden for open networks), show/hide.
-- [x] Write WiFi + cloud credentials; follow `PROV_STATUS` (connecting / connected / failed); success screen; "set up another".
-- [x] Activity log of the steps.
+The app keeps this deliberately non-technical (agreed 2026-11-27): the person
+setting up a hub sees "find hub → choose WiFi → password → progress → done",
+never a MAC, broker or log. Same backend calls as the web page.
+
+- [x] BLE scan for `TempHub-*` → connect → MAC read from `PROV_INFO` behind the scenes.
+- [x] **Register** — `POST /devices/register` returns `api_key` + `mqtt_user`; broker from `GET /provision/config`. Not shown to the user.
+- [x] WiFi network scan (`PROV_NETWORKS`) with signal bars + lock, "my network isn't listed", password (skipped for open networks), show/hide.
+- [x] Write WiFi + cloud credentials; follow `PROV_STATUS` as three progress steps; errors worded as what to do; success screen.
+- [—] Manual MAC entry, hub name field, broker details, activity log — left out of the app on purpose (hub can be renamed on the Hubs tab).
 
 ## Organizations (`Organizations.jsx`) — *org-admin*; "View as" *SA*
 

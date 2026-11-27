@@ -38,3 +38,7 @@ sensor-ntc/enclosure/NTC_SENSOR.kicad_pcb
 # and configuration for every node. Only the template is versioned.
 secrets/*
 !secrets/*.example.h
+
+# sensor-wifi enclosure: board STEPs exported from the KiCad projects (regenerate,
+# then component.update_links)
+sensor-wifi/enclosure/*-board.step

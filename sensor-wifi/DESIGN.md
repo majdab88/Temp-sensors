@@ -529,6 +529,16 @@ and reverts after 3 boots without that, or after 5 minutes in mains mode.
     it keeps the gasket seal.
 - Not done yet: a test print of the USB opening and the printed thread with a
   real cable and gland.
+- **v2 enclosure** (`sensor-wifi-enclosure-v2.sc`, for PCB v2): a copy of this one with
+  the board import swapped for `sensor-wifi-v2-board.step` at the same transform
+  and `usb_zoff` raised from 3.2 to 4.2 mm, centring the opening on the TP4056
+  module's receptacle (it sits on the module's own 1 mm board). Its face is on
+  the inner wall face as before, centred on `usb_y`. Interference check: the
+  module clears everything; the remaining pairs are the intended ones (gasket,
+  standoff tops, the reference cell in its holder) plus the reference cell
+  touching the PCB underside by 0.27 mm, which v1 has too: `cell_drop` (9.185) is
+  less than the 18.9 mm cell's radius (9.45). Check a fat protected cell in the
+  real holder.
 
 ## 7. Cloud changes
 

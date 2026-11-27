@@ -5,7 +5,7 @@ import { useToast } from '../ui/feedback';
 import { BreachChart } from '../components/charts';
 import { useAuth } from '../context/AuthContext';
 import * as api from '../services/api';
-import { shareCsv, sharePdf, reportHtml, statsHtml, tableHtml, chartSvg } from '../services/export';
+import { saveCsv, savePdf, reportHtml, statsHtml, tableHtml, chartSvg } from '../services/export';
 import { formatDayMonthTime, formatDuration, formatDateTime, formatDateTimeShort } from '../utils/time';
 import type { ScreenProps } from '../navigation/types';
 import type { Excursion } from '../types';
@@ -53,7 +53,8 @@ export default function ExcursionDetailScreen({ route, navigation }: ScreenProps
       const from = new Date(new Date(ex.started_at).getTime() - PAD_MS).toISOString();
       const to = new Date((ex.ended_at ? new Date(ex.ended_at).getTime() : Date.now()) + PAD_MS).toISOString();
       const { text } = await api.getCsv(`/sensors/${ex.sensor_id}/readings/export.csv`, { from, to });
-      await shareCsv(text, `excursion-${id}-readings.csv`);
+      const saved = await saveCsv(text, `excursion-${id}-readings.csv`);
+      if (saved) toast.success(saved);
     } catch { toast.error('Export failed — try again'); }
     finally { setBusy(null); }
   }
@@ -71,7 +72,8 @@ export default function ExcursionDetailScreen({ route, navigation }: ScreenProps
         ]]) +
         chartSvg(pts, ex.kind === 'high' ? ex.limit_value : null, ex.kind === 'low' ? ex.limit_value : null) +
         tableHtml(['Time', 'Temp °C'], data!.readings.map((r) => [formatDateTimeShort(r.recorded_at), r.temp != null ? r.temp.toFixed(2) : null])));
-      await sharePdf(html, `excursion-${id}.pdf`);
+      const saved = await savePdf(html, `excursion-${id}.pdf`);
+      if (saved) toast.success(saved);
     } catch { toast.error("Couldn't create the PDF"); }
     finally { setBusy(null); }
   }
@@ -101,7 +103,7 @@ export default function ExcursionDetailScreen({ route, navigation }: ScreenProps
       <Row style={{ marginTop: S.lg, flexWrap: 'wrap' }}>
         {canEdit && !ex.ack_at && <Button label="Acknowledge" variant="primary" icon="check" onPress={ack} busy={busy === 'ack'} />}
         <Button label="Readings CSV" icon="download" small onPress={exportCsv} busy={busy === 'csv'} />
-        <Button label="PDF" icon="file-text" small onPress={exportPdf} busy={busy === 'pdf'} />
+        <Button label="PDF" icon="download" small onPress={exportPdf} busy={busy === 'pdf'} />
       </Row>
     </Screen>
   );

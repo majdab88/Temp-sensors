@@ -515,6 +515,24 @@ instead of browning out with 75% capacity remaining.
 ESP-PROG's UART ribbon — no adapter PCB or transistors on the sensor board.
 Set the **ESP-PROG VDD jumper to 3.3 V** before connecting; 5 V will damage the C6.
 
+### Sensor — NTC probe variant v3 (`sensor-ntc/pcb-v3/`, ESP32-C6-MINI-1U-H4) — designed, not built
+
+KiCad project in `sensor-ntc/pcb-v3/`, placed and routed, DRC clean; see its
+README. v2's outline, mounting holes and TPS63802 section are kept, so it fits
+the same enclosure. Changes from v2:
+
+- **ESP32-C6-MINI-1U-H4** instead of the WROOM-1U, which JLCPCB does not stock.
+  Same GPIOs as the v2 table above.
+- **NTC back on the high side**, as v1: `3V3 → NTC → GPIO1 → R5 → GPIO22`. The
+  firmware needs a `BOARD_REV 3` that uses v2's pins with the v1 formula, or a +4 °C
+  probe reads about +41 °C.
+- **Panel button connector `J_BTN`** (JST XH 4: LED+ = 3V3, LED−, SW = GPIO0, GND).
+  The LED ring is driven low-side by a BSS138 on **GPIO23**, with a 100 kΩ gate
+  pull-down so it stays off through reset and deep sleep.
+- Every SMD part has an `LCSC` field, Basic/Preferred except the module, the
+  TPS63802 and the inductor (no Basic equivalent exists). Through-hole parts
+  (connectors, buttons, 1000 µF) are hand-soldered.
+
 ---
 
 ## Key Configuration Constants
@@ -558,7 +576,7 @@ Set the **ESP-PROG VDD jumper to 3.3 V** before connecting; 5 V will damage the 
 | `NTC_SAMPLES` | 20 | ADC readings averaged per measurement |
 | `CFG_COEF_ABS_MAX` | 1e-1 | Magnitude bound on A/B/C |
 | `CFG_RSERIES_MIN` / `MAX` | 1000 / 1000000 Ω | Deliberately wide — 47 kΩ and 100 kΩ are both in use |
-| `BOARD_REV` | 1 or 2 | Selects pins **and** divider orientation |
+| `BOARD_REV` | 1 or 2 (3 = v3 PCB, not in firmware yet) | Selects pins **and** divider orientation |
 
 All four calibration values are settable per sensor from the dashboard; the
 compiled values are only defaults. Bounds on A/B/C are magnitude-only and are

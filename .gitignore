@@ -65,3 +65,16 @@ sensor-wifi/enclosure/*-board.step
 # KiCad Fabrication Toolkit output (Gerbers, BOM, CPL) — regenerate from the
 # board before every order; a committed copy goes stale with the next edit.
 **/production/
+
+# Mobile app: local build output. temp-sensors-app/.gitignore and
+# android/.gitignore already keep these out of git, but `eas build` uploads the
+# whole repository and reads only THIS file -- a leftover 1 GB android/app/build
+# made one upload 408 MB, and an android/ folder in the upload can make EAS
+# treat the project as bare and skip prebuild. Exclude them here, not in a
+# root .easignore: that would replace this file for EAS, secrets/ and *.pem
+# exclusions included.
+temp-sensors-app/android/
+temp-sensors-app/ios/
+temp-sensors-app/dist/
+temp-sensors-app/.expo/
+temp-sensors-app/.idea/

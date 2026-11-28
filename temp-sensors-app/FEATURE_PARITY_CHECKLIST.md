@@ -6,7 +6,7 @@
 > Verified: `tsc --noEmit` clean; Android Metro/Hermes bundle builds; every
 > screen exercised in the Expo web build against mocked API data (owner and
 > superadmin roles, "View as"). **Not yet verified on a phone or against the
-> live server:** BLE hub setup, push registration, saving CSV/PDF exports,
+> live server:** BLE hub setup, push registration, saving CSV exports, opening PDF exports,
 > and live Socket.IO updates. Needs an EAS build to test.
 
 Every feature of the web dashboard (`temp-sensors-cloud/frontend/src`) and what
@@ -73,7 +73,7 @@ A superadmin who is not viewing an org ("View as") sees only the admin screens
 - [x] **Chart** — temperature (and humidity when present), threshold bands + dashed limit lines from the enabled rule, minimum 25 °C axis window snapped to 5 °C. `GET /sensors/:id/readings?from&to&limit=500`.
 - [x] **Stats** — Min, Max, Avg, **MKT** (ΔH/R = 10000 K), **In range %** (when limits exist).
 - [x] **Readings table** — newest first: #, time (dd/mm/yyyy HH:MM:SS), temp (2 dp), RH, RSSI, battery.
-- [x] **PDF report** (web: print) — app: generate a PDF and save it to the phone (Android: a folder chosen once, Downloads offered; iOS: share sheet → Save to Files).
+- [x] **PDF report** (web: print) — app: generate a PDF and open it in the phone's PDF viewer, which offers download/print/share (Android; share sheet if no viewer is installed); iOS: share sheet → Save to Files.
 
 ## Alert rules (`AlertRules.jsx`) — *all*, edits *editor*
 
@@ -89,7 +89,7 @@ A superadmin who is not viewing an org ("View as") sees only the admin screens
 - [x] **Filters** — sensor, status (All / Ongoing / Unacknowledged), range 7 d / 30 d / 90 d / All. `GET /excursions?sensor_id&active&unacked&from&limit=500`.
 - [x] **List** — sensor + hub, Over/Under, started, duration or "ongoing", peak, limit, ack status / *Acknowledge*.
 - [x] **Export CSV** — `GET /excursions/export.csv` (same filters) → saved to the phone.
-- [x] **Print / PDF** of the log → generated PDF saved to the phone.
+- [x] **Print / PDF** of the log → generated PDF opened in the phone's PDF viewer.
 - [x] **Excursion detail** — peak / limit / duration, started / ended / ack (who, when), *Acknowledge*, breach chart (shaded window, limit line, peak marker). `GET /excursions/:id`.
 - [x] Detail **Export readings CSV** (window ± 30 min) — `GET /sensors/:id/readings/export.csv?from&to`.
 - [x] Detail **Print / PDF**.

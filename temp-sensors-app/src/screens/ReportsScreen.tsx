@@ -114,7 +114,7 @@ export default function ReportsScreen() {
           <Segmented style={{ marginTop: S.sm }} value={days} onChange={setDays} options={RANGES} />
           <Row style={{ marginTop: S.md }}>
             <Button label="Export CSV" icon="download" small onPress={exportCsv} busy={busy === 'csv'} disabled={!rows?.length} />
-            <Button label="PDF" icon="download" small onPress={exportPdf} busy={busy === 'pdf'} disabled={!rows?.length} />
+            <Button label="PDF" icon="file-text" small onPress={exportPdf} busy={busy === 'pdf'} disabled={!rows?.length} />
           </Row>
         </View>
 

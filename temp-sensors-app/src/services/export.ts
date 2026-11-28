@@ -1,11 +1,14 @@
-// CSV and PDF exports, saved to the phone like a browser download.
+// CSV and PDF exports.
 //
-// Android: the first export asks once for a folder (Downloads is offered) and
-// every later one writes straight into it. iOS has no Downloads folder, so the
-// file goes to the share sheet, whose "Save to Files" is the equivalent. The
-// web build of the app downloads the CSV and opens print for the PDF.
+// CSV on Android is saved like a browser download: the first export asks once
+// for a folder (Downloads is offered) and every later one writes straight into
+// it. A PDF on Android opens in the phone's PDF viewer, the way other apps hand
+// one over — the viewer offers download, print and share itself. iOS has no
+// Downloads folder, so both go to the share sheet, whose "Save to Files" is the
+// equivalent. The web build downloads the CSV and opens print for the PDF.
 import { Platform } from 'react-native';
 import * as FileSystem from 'expo-file-system';
+import * as IntentLauncher from 'expo-intent-launcher';
 import * as Sharing from 'expo-sharing';
 import * as Print from 'expo-print';
 import { getItem, setItem, deleteItem } from './storage';
@@ -64,20 +67,26 @@ export async function saveCsv(text: string, filename: string): Promise<string | 
   return null;
 }
 
-/** Render HTML to a PDF and save it. Resolves like saveCsv. */
+/** Render HTML to a PDF and open it (Android) or share it (iOS). Resolves like saveCsv. */
 export async function savePdf(html: string, filename: string): Promise<string | null> {
   if (Platform.OS === 'web') { await Print.printAsync({ html }); return null; }
   const { uri } = await Print.printToFileAsync({ html });
-  const name = safe(filename);
-  if (Platform.OS === 'android') {
-    const b64 = await FileSystem.readAsStringAsync(uri, { encoding: FileSystem.EncodingType.Base64 });
-    FileSystem.deleteAsync(uri, { idempotent: true }).catch(() => {});
-    const where = await saveAndroid(name, 'application/pdf', b64, FileSystem.EncodingType.Base64);
-    return where ? `Saved ${name} to ${where}` : null;
-  }
-  const target = `${FileSystem.cacheDirectory}${name}`;
+  // printToFileAsync names the file with a UUID; the viewer shows the name.
+  const target = `${FileSystem.cacheDirectory}${safe(filename)}`;
   await FileSystem.deleteAsync(target, { idempotent: true });
   await FileSystem.moveAsync({ from: uri, to: target });
+  if (Platform.OS === 'android') {
+    try {
+      await IntentLauncher.startActivityAsync('android.intent.action.VIEW', {
+        data: await FileSystem.getContentUriAsync(target),
+        type: 'application/pdf',
+        flags: 1, // FLAG_GRANT_READ_URI_PERMISSION: the viewer reads our cache file
+      });
+      return null;
+    } catch {
+      // No app on the phone can view a PDF: fall through to the share sheet.
+    }
+  }
   await Sharing.shareAsync(target, { mimeType: 'application/pdf', UTI: 'com.adobe.pdf' });
   return null;
 }

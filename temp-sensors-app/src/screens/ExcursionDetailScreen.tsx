@@ -103,7 +103,7 @@ export default function ExcursionDetailScreen({ route, navigation }: ScreenProps
       <Row style={{ marginTop: S.lg, flexWrap: 'wrap' }}>
         {canEdit && !ex.ack_at && <Button label="Acknowledge" variant="primary" icon="check" onPress={ack} busy={busy === 'ack'} />}
         <Button label="Readings CSV" icon="download" small onPress={exportCsv} busy={busy === 'csv'} />
-        <Button label="PDF" icon="download" small onPress={exportPdf} busy={busy === 'pdf'} />
+        <Button label="PDF" icon="file-text" small onPress={exportPdf} busy={busy === 'pdf'} />
       </Row>
     </Screen>
   );

@@ -268,7 +268,7 @@ export default function SensorDetailScreen({ route, navigation }: ScreenProps<'S
         {stats && <T v="caption" style={{ marginTop: 6 }}>MKT is the mean kinetic temperature — the Arrhenius-weighted average used for cold-chain compliance.</T>}
         <Row style={{ marginTop: S.md }}>
           <Button label="Export CSV" icon="download" small onPress={exportCsv} busy={busy === 'csv'} />
-          <Button label="PDF report" icon="download" small onPress={exportPdf} busy={busy === 'pdf'} disabled={!rows?.length} />
+          <Button label="PDF report" icon="file-text" small onPress={exportPdf} busy={busy === 'pdf'} disabled={!rows?.length} />
         </Row>
       </Section>
 
